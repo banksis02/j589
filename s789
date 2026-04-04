@@ -1,0 +1,270 @@
+local HttpService = game:GetService("HttpService")
+local Players     = game:GetService("Players")
+local LogService  = game:GetService("LogService")
+local player      = Players.LocalPlayer
+
+local BACKEND_URL = "https://overload-backend-production.up.railway.app"
+
+local placeId = game.PlaceId
+local GAME_NAME, GAME_ID
+if placeId == 16146832113 then
+    GAME_NAME = "Anime Vanguards"
+    GAME_ID   = "anime_vanguards"
+elseif placeId == 80353351682367 then
+    GAME_NAME = "Anime Overload"
+    GAME_ID   = "anime_overload"
+else
+    GAME_NAME = "Unknown (" .. placeId .. ")"
+    GAME_ID   = "unknown"
+end
+print("[OV] Game:", GAME_NAME)
+
+-- ============================================================
+-- Asset ID → Item Name Map
+-- ============================================================
+local ITEM_NAMES = {
+    ["rbxassetid://83332308606244"]  = "Crystal",
+    ["rbxassetid://18410905863"]     = "Gold",
+    ["rbxassetid://102037405949146"] = "Bloodied Chains",
+    ["rbxassetid://125019585910098"] = "Crystalline Shells",
+    ["rbxassetid://106764375820901"] = "Grimoires",
+}
+
+local function getItemNameFromImage(imageId)
+    return ITEM_NAMES[imageId] or nil
+end
+
+-- ============================================================
+-- State
+-- ============================================================
+local roundCount      = 0
+local lastVictoryTime = 0
+local isSending       = false
+
+local lastAct      = "N/A"
+local lastFile     = "N/A"
+local lastPlayTime = "00:00"
+local lastRewards  = {}
+
+-- ============================================================
+-- Send
+-- ============================================================
+local function sendToBackend(data)
+    -- timestamp ตอนส่ง (ISO 8601 UTC)
+    local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+
+    local payload = {
+        username     = player.Name,
+        userId       = player.UserId,
+        serviceName  = GAME_NAME,
+        gameId       = GAME_ID,
+        progress     = 0,
+        currentStats = { level = 0, bp = 0 },
+        matchInfo    = { map = data.file or "Unknown", wave = 0 },
+        endScreen    = {
+            act      = data.act,
+            file     = data.file,
+            playTime = data.playTime,
+            quantity = data.quantity,
+        },
+        recentLog = {
+            act      = data.act,
+            file     = data.file,
+            playTime = data.playTime,
+            quantity = data.quantity,
+            status   = "COMPLETED",
+            time     = timestamp,   -- ← เวลาจริงตอนส่ง
+            rewards  = data.quantity,
+        },
+    }
+    local ok, response = pcall(function()
+        return HttpService:RequestAsync({
+            Url     = BACKEND_URL .. "/api/overload/update",
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = HttpService:JSONEncode(payload)
+        })
+    end)
+    if ok and response.Success then
+        print("[OV] ✅ Sent! Act=" .. tostring(data.act) .. " | Time=" .. tostring(data.playTime) .. " | Rewards=" .. tostring(data.quantity))
+    else
+        warn("[OV] ❌ Send FAIL:", response and response.StatusCode)
+    end
+end
+
+-- ============================================================
+-- Scan Rewards
+-- ============================================================
+local SKIP_NAMES = {
+    layer1     = true,
+    layer2     = true,
+    layer3     = true,
+    ImageLabel = true,
+    Quantity   = true,
+    isLoading  = true,
+    InputArea  = true,
+}
+
+local function scanRewards(scroll)
+    local rewards = {}
+    for _, frame in ipairs(scroll:GetChildren()) do
+        for _, rarity in ipairs(frame:GetChildren()) do
+            local qty = rarity:FindFirstChild("Quantity")
+            local img = rarity:FindFirstChild("ImageLabel")
+            if qty and qty.Text ~= "" and qty.Text ~= "0" then
+                local itemName = nil
+
+                if img then
+                    itemName = getItemNameFromImage(img.Image)
+                end
+
+                if not itemName then
+                    for _, sub in ipairs(rarity:GetChildren()) do
+                        if sub:IsA("ImageLabel") and not SKIP_NAMES[sub.Name] then
+                            itemName = sub.Name
+                            break
+                        end
+                    end
+                end
+
+                local entry = itemName and (itemName .. " " .. qty.Text) or qty.Text
+                table.insert(rewards, entry)
+                print("[OV] reward →", entry)
+            end
+        end
+    end
+    return rewards
+end
+
+-- ============================================================
+-- Watchers
+-- ============================================================
+local function setupWatchers()
+    local gui = player.PlayerGui
+    local ok, err = pcall(function()
+        local ct = gui.statusGui.endScreens.story.mid.leftBase.content
+
+        ct.act:GetPropertyChangedSignal("Text"):Connect(function()
+            local t = ct.act.Text
+            if t ~= "" and t ~= "N/A" then
+                lastAct = t
+                print("[OV] act →", lastAct)
+            end
+        end)
+
+        ct.file:GetPropertyChangedSignal("Text"):Connect(function()
+            local t = ct.file.Text
+            if t ~= "" and t ~= "N/A" then
+                lastFile = t
+                print("[OV] file →", lastFile)
+            end
+        end)
+
+        local amount = ct.stats.play.content.amount
+        amount:GetPropertyChangedSignal("Text"):Connect(function()
+            local t = amount.Text
+            if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
+                lastPlayTime = t
+                print("[OV] playTime →", lastPlayTime)
+            end
+        end)
+    end)
+
+    if not ok then warn("[OV] setupWatchers error:", err) end
+end
+
+local function setupRewardWatcher()
+    local gui = player.PlayerGui
+    local ok, err = pcall(function()
+        local scroll = gui.statusGui.endScreens.story.mid.rewardsBase.scroll
+
+        scroll.ChildAdded:Connect(function(_)
+            task.wait(0.1)
+            lastRewards = scanRewards(scroll)
+        end)
+    end)
+
+    if not ok then warn("[OV] setupRewardWatcher error:", err) end
+end
+
+task.spawn(function()
+    task.wait(5)
+    setupWatchers()
+    setupRewardWatcher()
+    print("[OV] ✅ Watchers ready!")
+end)
+
+-- ============================================================
+-- Victory Trigger
+-- ============================================================
+LogService.MessageOut:Connect(function(message, messageType)
+    if not message:lower():find("load victory screen") then return end
+
+    local now = tick()
+    if now - lastVictoryTime < 30 then
+        print("[OV] Skipped (cooldown)")
+        return
+    end
+    if isSending then
+        print("[OV] Skipped (already sending)")
+        return
+    end
+
+    lastVictoryTime = now
+    isSending = true
+    roundCount = roundCount + 1
+    print("[OV] 🏆 Victory! Round " .. roundCount)
+
+    task.spawn(function()
+        local waited = 0
+        while waited < 5 do
+            pcall(function()
+                local ct = player.PlayerGui.statusGui.endScreens.story.mid.leftBase.content
+
+                local a = ct.act.Text
+                if a ~= "" and a ~= "N/A" then lastAct = a end
+
+                local f = ct.file.Text
+                if f ~= "" and f ~= "N/A" then lastFile = f end
+
+                local t = ct.stats.play.content.amount.Text
+                if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
+                    lastPlayTime = t
+                end
+            end)
+
+            local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
+            local hasAct  = lastAct ~= "N/A"
+            local hasFile = lastFile ~= "N/A"
+            if hasTime and hasAct and hasFile then break end
+
+            task.wait(0.1)
+            waited = waited + 0.1
+        end
+
+        -- capture ทุกค่าก่อน reset
+        local rewardsStr  = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
+        local sendAct     = lastAct
+        local sendFile    = lastFile
+        local sendPlayTime = lastPlayTime
+
+        print("[OV] Final → Act:", sendAct, "| File:", sendFile,
+              "| Time:", sendPlayTime, "| Rewards:", rewardsStr)
+
+        -- reset ก่อนส่ง
+        lastRewards  = {}
+        lastPlayTime = "00:00"
+        lastAct      = "N/A"
+        lastFile     = "N/A"
+        isSending    = false
+
+        sendToBackend({
+            act      = sendAct,
+            file     = sendFile,
+            playTime = sendPlayTime,
+            quantity = rewardsStr,
+        })
+    end)
+end)
+
+print("[OV] 🚀 Ready! Game:", GAME_NAME)
