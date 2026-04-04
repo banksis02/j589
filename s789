@@ -7,7 +7,7 @@ local BACKEND_URL = "https://overload-backend-production.up.railway.app"
 
 local placeId = game.PlaceId
 local GAME_NAME, GAME_ID
-if placeId == 16146832113 then
+if placeId == 16277809958 then
     GAME_NAME = "Anime Vanguards"
     GAME_ID   = "anime_vanguards"
 elseif placeId == 80353351682367 then
@@ -20,7 +20,7 @@ end
 print("[OV] Game:", GAME_NAME)
 
 -- ============================================================
--- Asset ID → Item Name Map
+-- Asset ID → Item Name Map (Anime Overload)
 -- ============================================================
 local ITEM_NAMES = {
     ["rbxassetid://83332308606244"]  = "Crystal",
@@ -41,17 +41,34 @@ local roundCount      = 0
 local lastVictoryTime = 0
 local isSending       = false
 
-local lastAct      = "N/A"
-local lastFile     = "N/A"
-local lastPlayTime = "00:00"
-local lastRewards  = {}
+local lastAct        = "N/A"
+local lastFile       = "N/A"
+local lastPlayTime   = "00:00"
+local lastRewards    = {}
+local lockPlayTime   = false
+local lastLevel      = 0
+local lastWave       = 0
+
+-- ============================================================
+-- Helper — ดึง Level และ Wave ปัจจุบัน
+-- ============================================================
+local function getCurrentStats()
+    local level = 0
+    if GAME_ID == "anime_vanguards" then
+        pcall(function()
+            local lvlText = player.PlayerGui.Hotbar.Main.Level.Level.Text
+            level = tonumber(lvlText:match("%d+")) or 0
+        end)
+    end
+    return level, lastWave
+end
 
 -- ============================================================
 -- Send
 -- ============================================================
 local function sendToBackend(data)
-    -- timestamp ตอนส่ง (ISO 8601 UTC)
     local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    local level, wave = getCurrentStats()
 
     local payload = {
         username     = player.Name,
@@ -59,8 +76,8 @@ local function sendToBackend(data)
         serviceName  = GAME_NAME,
         gameId       = GAME_ID,
         progress     = 0,
-        currentStats = { level = 0, bp = 0 },
-        matchInfo    = { map = data.file or "Unknown", wave = 0 },
+        currentStats = { level = level, bp = 0 },
+        matchInfo    = { map = data.file or "Unknown", wave = wave },
         endScreen    = {
             act      = data.act,
             file     = data.file,
@@ -73,7 +90,7 @@ local function sendToBackend(data)
             playTime = data.playTime,
             quantity = data.quantity,
             status   = "COMPLETED",
-            time     = timestamp,   -- ← เวลาจริงตอนส่ง
+            time     = timestamp,
             rewards  = data.quantity,
         },
     }
@@ -86,14 +103,14 @@ local function sendToBackend(data)
         })
     end)
     if ok and response.Success then
-        print("[OV] ✅ Sent! Act=" .. tostring(data.act) .. " | Time=" .. tostring(data.playTime) .. " | Rewards=" .. tostring(data.quantity))
+        print("[OV] ✅ Sent! Act=" .. tostring(data.act) .. " | File=" .. tostring(data.file) .. " | Time=" .. tostring(data.playTime) .. " | Rewards=" .. tostring(data.quantity) .. " | LVL=" .. level .. " | Wave=" .. wave)
     else
         warn("[OV] ❌ Send FAIL:", response and response.StatusCode)
     end
 end
 
 -- ============================================================
--- Scan Rewards
+-- [Anime Overload] Scan Rewards (scroll-based)
 -- ============================================================
 local SKIP_NAMES = {
     layer1     = true,
@@ -105,7 +122,7 @@ local SKIP_NAMES = {
     InputArea  = true,
 }
 
-local function scanRewards(scroll)
+local function scanRewards_AO(scroll)
     local rewards = {}
     for _, frame in ipairs(scroll:GetChildren()) do
         for _, rarity in ipairs(frame:GetChildren()) do
@@ -113,11 +130,9 @@ local function scanRewards(scroll)
             local img = rarity:FindFirstChild("ImageLabel")
             if qty and qty.Text ~= "" and qty.Text ~= "0" then
                 local itemName = nil
-
                 if img then
                     itemName = getItemNameFromImage(img.Image)
                 end
-
                 if not itemName then
                     for _, sub in ipairs(rarity:GetChildren()) do
                         if sub:IsA("ImageLabel") and not SKIP_NAMES[sub.Name] then
@@ -126,7 +141,6 @@ local function scanRewards(scroll)
                         end
                     end
                 end
-
                 local entry = itemName and (itemName .. " " .. qty.Text) or qty.Text
                 table.insert(rewards, entry)
                 print("[OV] reward →", entry)
@@ -137,9 +151,44 @@ local function scanRewards(scroll)
 end
 
 -- ============================================================
--- Watchers
+-- [Anime Vanguards] Scan Rewards (fixed nodes)
+-- Path: EndScreen.Holder.Main.StageRewards.Main
+--   Gold.Holder.Main.Amount  → e.g. "x100"
+--   Gems.Holder.Main.Amount  → e.g. "x180"
+--   GreenBean (folder)       → children each have Amount + ItemName
 -- ============================================================
-local function setupWatchers()
+local function scanRewards_AV()
+    local rewards = {}
+    local ok, err = pcall(function()
+        local sr = player.PlayerGui.EndScreen.Holder.Main.StageRewards.Main
+
+        -- loop ทุก reward frame ไม่ hardcode
+        for _, rewardFrame in ipairs(sr:GetChildren()) do
+            if rewardFrame:IsA("Frame") then
+                local main = rewardFrame:FindFirstChild("Holder")
+                             and rewardFrame.Holder:FindFirstChild("Main")
+                if main then
+                    local amtLabel  = main:FindFirstChild("Amount")
+                    local nameLabel = main:FindFirstChild("ItemName")
+                    local amt  = amtLabel  and amtLabel.Text or ""
+                    local name = nameLabel and nameLabel.Text or rewardFrame.Name
+                    if amt ~= "" and amt ~= "x0" then
+                        local entry = name .. " " .. amt
+                        table.insert(rewards, entry)
+                        print("[AV] reward →", entry)
+                    end
+                end
+            end
+        end
+    end)
+    if not ok then warn("[AV] scanRewards_AV error:", err) end
+    return rewards
+end
+
+-- ============================================================
+-- [Anime Overload] Watchers
+-- ============================================================
+local function setupWatchers_AO()
     local gui = player.PlayerGui
     local ok, err = pcall(function()
         local ct = gui.statusGui.endScreens.story.mid.leftBase.content
@@ -169,102 +218,347 @@ local function setupWatchers()
             end
         end)
     end)
-
-    if not ok then warn("[OV] setupWatchers error:", err) end
+    if not ok then warn("[OV] setupWatchers_AO error:", err) end
 end
 
-local function setupRewardWatcher()
+local function setupRewardWatcher_AO()
     local gui = player.PlayerGui
     local ok, err = pcall(function()
         local scroll = gui.statusGui.endScreens.story.mid.rewardsBase.scroll
-
         scroll.ChildAdded:Connect(function(_)
             task.wait(0.1)
-            lastRewards = scanRewards(scroll)
+            lastRewards = scanRewards_AO(scroll)
         end)
     end)
-
-    if not ok then warn("[OV] setupRewardWatcher error:", err) end
+    if not ok then warn("[OV] setupRewardWatcher_AO error:", err) end
 end
 
+-- ============================================================
+-- [Anime Vanguards] Watchers
+-- ============================================================
+local function setupWatchers_AV()
+    local gui = player.PlayerGui
+    local ok, err = pcall(function()
+        local stageInfo  = gui.EndScreen.Holder.Main.StageInfo.Main
+        local stageStats = gui.EndScreen.Holder.Main.StageStatistics
+        local playTime   = stageStats.PlayTime.Amount
+
+        -- ActName  → lastAct
+        stageInfo.ActName:GetPropertyChangedSignal("Text"):Connect(function()
+            local t = stageInfo.ActName.Text
+            if t ~= "" then
+                lastAct = t
+                print("[AV] act →", lastAct)
+            end
+        end)
+
+        -- StageName → lastFile  (e.g. "Planet Namak")
+        stageInfo.StageName:GetPropertyChangedSignal("Text"):Connect(function()
+            local t = stageInfo.StageName.Text
+            if t ~= "" then
+                lastFile = t
+                print("[AV] stage →", lastFile)
+            end
+        end)
+
+        -- Watch SessionTimer ระหว่างเกม เก็บค่าล่าสุดเสมอ
+        -- (ย้ายไป setupSessionTimer แล้ว)
+
+        -- EndScreen becomes visible → scan rewards
+        gui.EndScreen:GetPropertyChangedSignal("Enabled"):Connect(function()
+            if gui.EndScreen.Enabled then
+                task.wait(0.3)  -- ให้ rewards โหลดก่อน
+                lastRewards = scanRewards_AV()
+            end
+        end)
+    end)
+    if not ok then warn("[AV] setupWatchers_AV error:", err) end
+end
+
+-- ============================================================
+-- [Anime Vanguards] SessionTimer + Wave Watcher
+-- ============================================================
+local function setupSessionTimer()
+    local gui = player.PlayerGui
+    -- SessionTimer
+    local ok1, err1 = pcall(function()
+        local sessionTimer = gui.HUD.Map.SessionTimer.Label
+        sessionTimer:GetPropertyChangedSignal("Text"):Connect(function()
+            if lockPlayTime then return end
+            local t = sessionTimer.Text
+            -- เก็บเฉพาะค่าที่มากกว่า 00:00 และไม่ใช่ค่าว่าง
+            if t ~= "" and t ~= "00:00" and t ~= "00:00:00" then
+                lastPlayTime = t
+            end
+            -- ถ้า reset กลับเป็น 00:00 ไม่ทับค่าเดิม (lastPlayTime ยังเป็นค่าเก่า)
+        end)
+        print("[AV] ✅ SessionTimer watcher ready!")
+    end)
+    if not ok1 then warn("[AV] SessionTimer error:", err1) end
+
+    -- Wave
+    local ok2, err2 = pcall(function()
+        local wavesAmount = gui.HUD.Map.WavesAmount
+        local function parseWave(text)
+            -- ดึงตัวเลขสุดท้ายออกจาก RichText เช่น ">11</font>" หรือ ">15</font>"
+            local nums = {}
+            for n in text:gmatch(">(%d+)<") do
+                table.insert(nums, tonumber(n))
+            end
+            -- ถ้าไม่มี tag ลอง match ตัวเลขธรรมดา
+            if #nums == 0 then
+                for n in text:gmatch("%d+") do
+                    table.insert(nums, tonumber(n))
+                end
+            end
+            -- เอาค่ามากสุด (wave total มักเป็นตัวสุดท้าย)
+            local max = 0
+            for _, v in ipairs(nums) do
+                if v > max then max = v end
+            end
+            return max
+        end
+
+        wavesAmount:GetPropertyChangedSignal("Text"):Connect(function()
+            if lockPlayTime then return end
+            local w = parseWave(wavesAmount.Text)
+            if w > 0 then lastWave = w end
+        end)
+        lastWave = parseWave(wavesAmount.Text)
+        print("[AV] ✅ Wave watcher ready! Current wave:", lastWave)
+    end)
+    if not ok2 then warn("[AV] Wave watcher error:", err2) end
+end
 task.spawn(function()
     task.wait(5)
-    setupWatchers()
-    setupRewardWatcher()
-    print("[OV] ✅ Watchers ready!")
+    if GAME_ID == "anime_overload" then
+        setupWatchers_AO()
+        setupRewardWatcher_AO()
+        print("[OV] ✅ Anime Overload watchers ready!")
+    elseif GAME_ID == "anime_vanguards" then
+        setupWatchers_AV()
+        setupSessionTimer()
+        print("[AV] ✅ Anime Vanguards watchers ready!")
+    end
 end)
 
 -- ============================================================
--- Victory Trigger
+-- [Anime Overload] Victory Trigger → log "load victory screen"
 -- ============================================================
-LogService.MessageOut:Connect(function(message, messageType)
-    if not message:lower():find("load victory screen") then return end
+if GAME_ID == "anime_overload" then
+    LogService.MessageOut:Connect(function(message, messageType)
+        if not message:lower():find("load victory screen") then return end
 
-    local now = tick()
-    if now - lastVictoryTime < 30 then
-        print("[OV] Skipped (cooldown)")
-        return
-    end
-    if isSending then
-        print("[OV] Skipped (already sending)")
-        return
-    end
+        local now = tick()
+        if now - lastVictoryTime < 30 then
+            print("[OV] Skipped (cooldown)")
+            return
+        end
+        if isSending then
+            print("[OV] Skipped (already sending)")
+            return
+        end
 
-    lastVictoryTime = now
-    isSending = true
-    roundCount = roundCount + 1
-    print("[OV] 🏆 Victory! Round " .. roundCount)
+        lastVictoryTime = now
+        isSending = true
+        roundCount = roundCount + 1
+        print("[OV] 🏆 Victory! Round " .. roundCount)
 
+        task.spawn(function()
+            local waited = 0
+            while waited < 5 do
+                pcall(function()
+                    local ct = player.PlayerGui.statusGui.endScreens.story.mid.leftBase.content
+                    local a = ct.act.Text
+                    if a ~= "" and a ~= "N/A" then lastAct = a end
+                    local f = ct.file.Text
+                    if f ~= "" and f ~= "N/A" then lastFile = f end
+                    local t = ct.stats.play.content.amount.Text
+                    if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
+                        lastPlayTime = t
+                    end
+                end)
+
+                local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
+                local hasAct  = lastAct ~= "N/A"
+                local hasFile = lastFile ~= "N/A"
+                if hasTime and hasAct and hasFile then break end
+
+                task.wait(0.1)
+                waited = waited + 0.1
+            end
+
+            local rewardsStr   = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
+            local sendAct      = lastAct
+            local sendFile     = lastFile
+            local sendPlayTime = lastPlayTime
+
+            print("[OV] Final → Act:", sendAct, "| File:", sendFile, "| Time:", sendPlayTime, "| Rewards:", rewardsStr)
+
+            lastRewards  = {}
+            lastPlayTime = "00:00"
+            lastAct      = "N/A"
+            lastFile     = "N/A"
+            isSending    = false
+
+            sendToBackend({
+                act      = sendAct,
+                file     = sendFile,
+                playTime = sendPlayTime,
+                quantity = rewardsStr,
+            })
+        end)
+    end)
+end
+
+-- ============================================================
+-- [Anime Vanguards] Victory Trigger → EndScreen.Enabled = true
+-- ============================================================
+if GAME_ID == "anime_vanguards" then
     task.spawn(function()
-        local waited = 0
-        while waited < 5 do
-            pcall(function()
-                local ct = player.PlayerGui.statusGui.endScreens.story.mid.leftBase.content
+        task.wait(6)
+        print("[AV] 👀 Watching for EndScreen...")
+        local lastEndScreenState = false
 
-                local a = ct.act.Text
-                if a ~= "" and a ~= "N/A" then lastAct = a end
+        while true do
+            local ok = pcall(function()
+                local gui = player.PlayerGui
+                local endScreen = gui:FindFirstChild("EndScreen")
+                local isVisible = endScreen ~= nil and endScreen.Enabled == true
 
-                local f = ct.file.Text
-                if f ~= "" and f ~= "N/A" then lastFile = f end
+                if isVisible and not lastEndScreenState then
+                    lastEndScreenState = true
 
-                local t = ct.stats.play.content.amount.Text
-                if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
-                    lastPlayTime = t
+                    local now = tick()
+                    if now - lastVictoryTime < 30 then
+                        print("[AV] Skipped (cooldown)")
+                        return
+                    end
+                    if isSending then
+                        print("[AV] Skipped (already sending)")
+                        return
+                    end
+
+                    lastVictoryTime = now
+                    isSending = true
+                    lockPlayTime = true
+                    roundCount = roundCount + 1
+
+                    -- ดึง wave จาก EndScreen ทันทีที่โผล่
+                    pcall(function()
+                        local wc = player.PlayerGui.EndScreen.Holder.Main.StageStatistics.WavesCompleted.Amount.Text
+                        local w = tonumber(wc) or 0
+                        if w > 0 then lastWave = w end
+                    end)
+
+                    print("[AV] 🏆 Victory! Round " .. roundCount)
+                    print("[AV] playTime locked at:", lastPlayTime, "| wave locked at:", lastWave)
+
+                    task.spawn(function()
+                        task.wait(0.1) -- รอแค่ 0.1 วิ
+
+                        local waited = 0
+                        while waited < 8 do
+                            pcall(function()
+                                local es = player.PlayerGui:FindFirstChild("EndScreen")
+                                if not es then return end
+                                local si = es.Holder.Main.StageInfo.Main
+                                local ss = es.Holder.Main.StageStatistics
+
+                                local a = si.ActName.Text
+                                if a ~= "" then lastAct = a end
+
+                                local f = si.StageName.Text
+                                if f ~= "" then lastFile = f end
+
+                                -- playTime ถูก watch จาก SessionTimer แล้ว ไม่ต้องดึงซ้ำ
+
+                                -- scan rewards ทันที
+                                if #lastRewards == 0 then
+                                    lastRewards = scanRewards_AV()
+                                end
+                            end)
+
+                            local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
+                            local hasAct  = lastAct ~= "N/A"
+                            local hasFile = lastFile ~= "N/A"
+                            local hasRewards = #lastRewards > 0
+                            if hasTime and hasAct and hasFile and hasRewards then break end
+
+                            task.wait(0.1)
+                            waited = waited + 0.1
+                        end
+
+                        local rewardsStr   = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
+                        local sendAct      = lastAct
+                        local sendFile     = lastFile
+                        local sendPlayTime = lastPlayTime
+                        local sendWave = lastWave  -- ใช้ค่าที่ lock ไว้ตอน EndScreen โผล่
+                        local sendLevel    = 0
+                        pcall(function()
+                            local lvlText = player.PlayerGui.Hotbar.Main.Level.Level.Text
+                            sendLevel = tonumber(lvlText:match("%d+")) or 0
+                        end)
+
+                        print("[AV] Final → Act:", sendAct, "| Stage:", sendFile, "| Time:", sendPlayTime, "| Wave:", sendWave, "| LVL:", sendLevel, "| Rewards:", rewardsStr)
+
+                        lastRewards  = {}
+                        lastPlayTime = "00:00"
+                        lastAct      = "N/A"
+                        lastFile     = "N/A"
+                        -- ไม่ reset lastWave เพราะ watcher จะ update ให้เอง
+                        lockPlayTime = false
+                        isSending    = false
+
+                        -- ส่งพร้อม level และ wave ที่ capture ไว้
+                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        local payload = {
+                            username     = player.Name,
+                            userId       = player.UserId,
+                            serviceName  = GAME_NAME,
+                            gameId       = GAME_ID,
+                            progress     = 0,
+                            currentStats = { level = sendLevel, bp = 0 },
+                            matchInfo    = { map = sendFile or "Unknown", wave = sendWave },
+                            endScreen    = {
+                                act      = sendAct,
+                                file     = sendFile,
+                                playTime = sendPlayTime,
+                                quantity = rewardsStr,
+                            },
+                            recentLog = {
+                                act      = sendAct,
+                                file     = sendFile,
+                                playTime = sendPlayTime,
+                                quantity = rewardsStr,
+                                status   = "COMPLETED",
+                                time     = timestamp,
+                                rewards  = rewardsStr,
+                            },
+                        }
+                        local ok2, response = pcall(function()
+                            return HttpService:RequestAsync({
+                                Url     = BACKEND_URL .. "/api/overload/update",
+                                Method  = "POST",
+                                Headers = { ["Content-Type"] = "application/json" },
+                                Body    = HttpService:JSONEncode(payload)
+                            })
+                        end)
+                        if ok2 and response.Success then
+                            print("[AV] ✅ Sent! LVL=" .. sendLevel .. " | Wave=" .. sendWave)
+                        else
+                            warn("[AV] ❌ Send FAIL:", response and response.StatusCode)
+                        end
+                    end)
+
+                elseif not isVisible then
+                    lastEndScreenState = false
                 end
             end)
 
-            local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
-            local hasAct  = lastAct ~= "N/A"
-            local hasFile = lastFile ~= "N/A"
-            if hasTime and hasAct and hasFile then break end
-
-            task.wait(0.1)
-            waited = waited + 0.1
+            task.wait(0.1) -- poll ทุก 0.1 วิ แทน 0.5 วิ
         end
-
-        -- capture ทุกค่าก่อน reset
-        local rewardsStr  = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
-        local sendAct     = lastAct
-        local sendFile    = lastFile
-        local sendPlayTime = lastPlayTime
-
-        print("[OV] Final → Act:", sendAct, "| File:", sendFile,
-              "| Time:", sendPlayTime, "| Rewards:", rewardsStr)
-
-        -- reset ก่อนส่ง
-        lastRewards  = {}
-        lastPlayTime = "00:00"
-        lastAct      = "N/A"
-        lastFile     = "N/A"
-        isSending    = false
-
-        sendToBackend({
-            act      = sendAct,
-            file     = sendFile,
-            playTime = sendPlayTime,
-            quantity = rewardsStr,
-        })
     end)
-end)
+end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
