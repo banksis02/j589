@@ -59,6 +59,11 @@ local function getCurrentStats()
             local lvlText = player.PlayerGui.Hotbar.Main.Level.Level.Text
             level = tonumber(lvlText:match("%d+")) or 0
         end)
+    elseif GAME_ID == "anime_overload" then
+        pcall(function()
+            local lvlText = player.PlayerGui.ExperienceGui.container.levelFrame.bg.inside.levelAmount.Text
+            level = tonumber(lvlText:match("%d+")) or 0
+        end)
     end
     return level, lastWave
 end
