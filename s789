@@ -13,6 +13,9 @@ if placeId == 16277809958 then
 elseif placeId == 80353351682367 then
     GAME_NAME = "Anime Overload"
     GAME_ID   = "anime_overload"
+elseif placeId == 80877167393789 then
+    GAME_NAME = "Summon Heroes"
+    GAME_ID   = "summon_heroes"
 else
     GAME_NAME = "Unknown (" .. placeId .. ")"
     GAME_ID   = "unknown"
@@ -63,6 +66,11 @@ local function getCurrentStats()
         pcall(function()
             local lvlText = player.PlayerGui.ExperienceGui.container.levelFrame.bg.inside.levelAmount.Text
             level = tonumber(lvlText:match("%d+")) or 0
+        end)
+    elseif GAME_ID == "summon_heroes" then
+        pcall(function()
+            local lvlText = player.PlayerGui.Hotbar.Frame.PlayerLevel.LevelInfo.Text
+            level = tonumber(lvlText:match("Lv%. (%d+)")) or 0
         end)
     end
     return level, lastWave
@@ -562,6 +570,125 @@ if GAME_ID == "anime_vanguards" then
             end)
 
             task.wait(0.1) -- poll ทุก 0.1 วิ แทน 0.5 วิ
+        end
+    end)
+end
+
+-- ============================================================
+-- [Summon Heroes] Victory Trigger — poll RoundEnd GUI
+-- ============================================================
+if GAME_ID == "summon_heroes" then
+    task.spawn(function()
+        task.wait(5)
+        print("[SH] 👀 Watching for RoundEnd...")
+        local lastRoundEndState = false
+
+        while true do
+            pcall(function()
+                local gui = player.PlayerGui
+                local roundEnd = gui:FindFirstChild("RoundEnd")
+                local isVisible = roundEnd ~= nil and roundEnd.Enabled == true
+
+                if isVisible and not lastRoundEndState then
+                    lastRoundEndState = true
+
+                    local now = tick()
+                    if now - lastVictoryTime < 30 then
+                        print("[SH] Skipped (cooldown)")
+                        return
+                    end
+                    if isSending then
+                        print("[SH] Skipped (already sending)")
+                        return
+                    end
+
+                    lastVictoryTime = now
+                    isSending = true
+                    roundCount = roundCount + 1
+                    print("[SH] 🏆 Victory! Round " .. roundCount)
+
+                    task.spawn(function()
+                        task.wait(0.3)
+
+                        local act, file_, playTime, rewards = "N/A", "N/A", "N/A", "N/A"
+                        local level = 0
+
+                        pcall(function()
+                            local summary = roundEnd.Frame.Contents.Summary
+                            act   = summary.StageName.Text or "N/A"
+                            file_ = summary.MapName.Text or "N/A"
+                            playTime = summary.RoundStats.PlayTime.Amount.Text or "N/A"
+                        end)
+
+                        -- rewards
+                        pcall(function()
+                            local rewardList = roundEnd.Frame.Contents.Rewards.List
+                            local gems  = rewardList.Gems.Container.InventoryCount.Text or "0"
+                            local coins = rewardList.Coins.Container.InventoryCount.Text or "0"
+                            local candy = rewardList:FindFirstChild("Candy") and 
+                                          rewardList.Candy.Container.InventoryCount.Text or nil
+                            rewards = "Gems " .. gems .. ", Coins " .. coins
+                            if candy then rewards = rewards .. ", Candy " .. candy end
+                        end)
+
+                        -- level
+                        pcall(function()
+                            local lvlText = player.PlayerGui.Hotbar.Frame.PlayerLevel.LevelInfo.Text
+                            level = tonumber(lvlText:match("Lv%. (%d+)")) or 0
+                        end)
+
+                        print("[SH] Final → Act:", act, "| Map:", file_, "| Time:", playTime, "| Rewards:", rewards, "| LVL:", level)
+
+                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        local payload = {
+                            username     = player.Name,
+                            userId       = player.UserId,
+                            serviceName  = GAME_NAME,
+                            gameId       = GAME_ID,
+                            progress     = 0,
+                            currentStats = { level = level, bp = 0 },
+                            matchInfo    = { map = file_ or "Unknown", wave = 0 },
+                            endScreen    = {
+                                act      = act,
+                                file     = file_,
+                                playTime = playTime,
+                                quantity = rewards,
+                            },
+                            recentLog = {
+                                act      = act,
+                                file     = file_,
+                                playTime = playTime,
+                                quantity = rewards,
+                                status   = "COMPLETED",
+                                time     = timestamp,
+                                rewards  = rewards,
+                            },
+                        }
+
+                        local ok, response = pcall(function()
+                            return HttpService:RequestAsync({
+                                Url     = BACKEND_URL .. "/api/overload/update",
+                                Method  = "POST",
+                                Headers = { ["Content-Type"] = "application/json" },
+                                Body    = HttpService:JSONEncode(payload)
+                            })
+                        end)
+
+                        if ok and response.Success then
+                            print("[SH] ✅ Sent!")
+                        else
+                            warn("[SH] ❌ Send FAIL:", response and response.StatusCode)
+                        end
+
+                        isSending = false
+                    end)
+
+                elseif not isVisible then
+                    lastRoundEndState = false
+                end
+            end)
+
+            task.wait(0.2)
         end
     end)
 end
