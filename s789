@@ -16,6 +16,9 @@ elseif placeId == 80353351682367 then
 elseif placeId == 80877167393789 then
     GAME_NAME = "Summon Heroes"
     GAME_ID   = "summon_heroes"
+elseif placeId == 106402284955512 then
+    GAME_NAME = "Universal Tower Defense X"
+    GAME_ID   = "utdx"
 else
     GAME_NAME = "Unknown (" .. placeId .. ")"
     GAME_ID   = "unknown"
@@ -67,10 +70,10 @@ local function getCurrentStats()
             local lvlText = player.PlayerGui.ExperienceGui.container.levelFrame.bg.inside.levelAmount.Text
             level = tonumber(lvlText:match("%d+")) or 0
         end)
-    elseif GAME_ID == "summon_heroes" then
+    elseif GAME_ID == "utdx" then
         pcall(function()
-            local lvlText = player.PlayerGui.Hotbar.Frame.PlayerLevel.LevelInfo.Text
-            level = tonumber(lvlText:match("Lv%. (%d+)")) or 0
+            local lvlText = player.PlayerGui.GameUI.HUD.Bottom.Hotbar.LevelBar.Level.Text
+            level = tonumber(lvlText:match("Level (%d+)")) or 0
         end)
     end
     return level, lastWave
@@ -691,6 +694,142 @@ if GAME_ID == "summon_heroes" then
             task.wait(0.2)
         end
     end)
+end
+
+-- ============================================================
+-- [Universal Tower Defense X] Victory Trigger — จับ "open MatchFinished"
+-- ============================================================
+if GAME_ID == "utdx" then
+    local ITEM_NAMES_UTDX = {
+        ["rbxassetid://85775841880015"] = "Gems",
+        ["rbxassetid://93499184204977"] = "Gold",
+        ["rbxassetid://79485605398734"] = "Family Eye Currency",
+    }
+
+    LogService.MessageOut:Connect(function(message, messageType)
+        if not message:find("open MatchFinished") then return end
+
+        local now = tick()
+        if now - lastVictoryTime < 30 then
+            print("[UTDX] Skipped (cooldown)")
+            return
+        end
+        if isSending then
+            print("[UTDX] Skipped (already sending)")
+            return
+        end
+
+        lastVictoryTime = now
+        isSending = true
+        roundCount = roundCount + 1
+        print("[UTDX] 🏆 Victory! Round " .. roundCount)
+
+        task.spawn(function()
+            task.wait(1) -- รอให้ MissionResultFrame โหลด
+
+            local gui = player.PlayerGui
+            local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
+            local rewards = "N/A"
+
+            -- Act + Difficulty
+            pcall(function()
+                local banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
+                act = banner.ActName.Text or "N/A"
+                difficulty = banner.DifficultyPercent.Text or ""
+            end)
+
+            -- PlayTime
+            pcall(function()
+                local statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
+                for _, child in ipairs(statsFrame:GetChildren()) do
+                    local statName = child:FindFirstChild("StatName")
+                    local statValue = child:FindFirstChild("StatValue")
+                    if statName and statName.Text == "Play Time" and statValue then
+                        playTime = statValue.Text
+                    end
+                end
+            end)
+
+            -- Wave
+            pcall(function()
+                local waveText = gui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text
+                wave = tonumber(waveText:match("Wave (%d+)")) or 0
+            end)
+
+            -- Level
+            pcall(function()
+                local lvlText = gui.GameUI.HUD.Bottom.Hotbar.LevelBar.Level.Text
+                level = tonumber(lvlText:match("Level (%d+)")) or 0
+            end)
+
+            -- Rewards
+            pcall(function()
+                local rewardFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
+                local parts = {}
+                for _, child in ipairs(rewardFrame:GetChildren()) do
+                    if child:IsA("Frame") and child.Name ~= "PaddingTop" then
+                        local icon = child:FindFirstChild("ItemIcon")
+                        local unitName = child:FindFirstChild("UnitName", true)
+                        if icon and unitName and unitName.Text ~= "" then
+                            local itemName = ITEM_NAMES_UTDX[icon.Image] or "Item"
+                            table.insert(parts, itemName .. " " .. unitName.Text)
+                        end
+                    end
+                end
+                if #parts > 0 then rewards = table.concat(parts, ", ") end
+            end)
+
+            local actFull = act
+            if difficulty ~= "" then actFull = act .. " " .. difficulty end
+
+            print("[UTDX] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
+
+            local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            local payload = {
+                username     = player.Name,
+                userId       = player.UserId,
+                serviceName  = GAME_NAME,
+                gameId       = GAME_ID,
+                progress     = 0,
+                currentStats = { level = level, bp = 0 },
+                matchInfo    = { map = act or "Unknown", wave = wave },
+                endScreen    = {
+                    act      = actFull,
+                    file     = act,
+                    playTime = playTime,
+                    quantity = rewards,
+                },
+                recentLog = {
+                    act      = actFull,
+                    file     = act,
+                    playTime = playTime,
+                    quantity = rewards,
+                    status   = "COMPLETED",
+                    time     = timestamp,
+                    rewards  = rewards,
+                },
+            }
+
+            local ok, response = pcall(function()
+                return HttpService:RequestAsync({
+                    Url     = BACKEND_URL .. "/api/overload/update",
+                    Method  = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body    = HttpService:JSONEncode(payload)
+                })
+            end)
+
+            if ok and response.Success then
+                print("[UTDX] ✅ Sent! LVL=" .. level .. " | Wave=" .. wave)
+            else
+                warn("[UTDX] ❌ Send FAIL:", response and response.StatusCode)
+            end
+
+            isSending = false
+        end)
+    end)
+
+    print("[UTDX] ✅ Ready!")
 end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
