@@ -701,9 +701,11 @@ end
 -- ============================================================
 if GAME_ID == "utdx" then
     local ITEM_NAMES_UTDX = {
-        ["rbxassetid://85775841880015"] = "Gems",
-        ["rbxassetid://93499184204977"] = "Gold",
-        ["rbxassetid://79485605398734"] = "Family Eye Currency",
+        ["rbxassetid://85775841880015"]  = "Sukuna",
+        ["rbxassetid://118622829363922"] = "Cursed Finger",
+        ["rbxassetid://99445539698599"]  = "Boundless Orb",
+        ["rbxassetid://93499184204977"]  = "Gold",
+        ["rbxassetid://79485605398734"]  = "Family Eye Currency",
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
