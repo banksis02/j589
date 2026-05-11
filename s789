@@ -1,7 +1,8 @@
-local HttpService = game:GetService("HttpService")
-local Players     = game:GetService("Players")
-local LogService  = game:GetService("LogService")
-local player      = Players.LocalPlayer
+local HttpService        = game:GetService("HttpService")
+local Players            = game:GetService("Players")
+local LogService         = game:GetService("LogService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player             = Players.LocalPlayer
 
 local BACKEND_URL = "https://overload-backend-production.up.railway.app"
 
@@ -832,6 +833,57 @@ if GAME_ID == "utdx" then
     end)
 
     print("[UTDX] ✅ Ready!")
+
+    -- Anti AFK
+    task.spawn(function()
+        while true do
+            task.wait(300) -- 5 นาที
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            print("[ANTI-AFK] Jumped!")
+        end
+    end)
+
+    -- Auto Activate Hand
+    task.spawn(function()
+        while true do
+            for _, obj in ipairs(game.Workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") and obj.ActionText == "Activate Hand" then
+                    local attachment = obj.Parent
+                    if attachment and attachment:IsA("Attachment") then
+                        local pos = attachment.WorldPosition
+                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+                            task.wait(0.3)
+                            fireproximityprompt(obj)
+                            print("[UTDX] Activated:", obj.ObjectText)
+                            task.wait(1)
+                        end
+                    end
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+
+    -- Auto GreenZone
+    task.spawn(function()
+        while true do
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local zone = workspace:FindFirstChild("ShinobiAllianceRuntime")
+            if zone and hrp then
+                local greenZone = zone:FindFirstChild("GreenZone")
+                if greenZone then
+                    print("[UTDX] Found GreenZone! Warping...")
+                    hrp.CFrame = CFrame.new(greenZone.Position + Vector3.new(0, 3, 0))
+                    task.wait(6)
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
 end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
