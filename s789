@@ -990,8 +990,16 @@ do
         Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
         local ms = Instance.new("UIStroke",frame); ms.Color=Color3.fromRGB(255,107,53); ms.Thickness=2
 
-        local ttl = Instance.new("TextLabel",frame)
-        ttl.Size=UDim2.new(1,0,0,20); ttl.Position=UDim2.new(0,0,0,4)
+        -- TitleBar สำหรับลาก (แยกออกจากปุ่ม)
+        local dragBar = Instance.new("TextButton", frame)
+        dragBar.Name = "DragBar"
+        dragBar.Size = UDim2.new(1, 0, 0, 24)
+        dragBar.Position = UDim2.new(0, 0, 0, 0)
+        dragBar.BackgroundTransparency = 1
+        dragBar.Text = ""; dragBar.ZIndex = 10
+
+        local ttl = Instance.new("TextLabel", dragBar)
+        ttl.Size=UDim2.new(1,0,1,0); ttl.Position=UDim2.new(0,0,0,0)
         ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
         ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
 
@@ -1013,18 +1021,25 @@ do
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
-        -- Drag
-        local dragging,dragStart,startPos
-        frame.InputBegan:Connect(function(i)
-            if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true;dragStart=i.Position;startPos=frame.Position end
-        end)
-        frame.InputChanged:Connect(function(i)
-            if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then
-                local d=i.Position-dragStart
-                frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+        -- Drag (ลากได้ผ่าน DragBar เท่านั้น ไม่ขัดกับปุ่ม)
+        local UIS = game:GetService("UserInputService")
+        local dragging, dragStart, startPos = false, nil, nil
+        dragBar.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                dragStart = i.Position
+                startPos = frame.Position
             end
         end)
-        frame.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
+        UIS.InputChanged:Connect(function(i)
+            if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+                local d = i.Position - dragStart
+                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end)
+        UIS.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+        end)
 
         -- Toggle
         local function makeToggle(btn,stroke,saveName,runFn,label)
