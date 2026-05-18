@@ -888,3 +888,168 @@ if GAME_ID == "utdx" then
 end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
+
+
+-- ============================================================
+-- UTDX UI (รันเฉพาะใน UTDX เท่านั้น)
+-- ============================================================
+do
+    local UTDX_LOBBY_ID = 133410800847665
+    local UTDX_GAME_ID  = 106402284955512
+    local curPlace = game.PlaceId
+    if curPlace ~= UTDX_LOBBY_ID and curPlace ~= UTDX_GAME_ID then
+        -- ไม่ใช่ UTDX ข้ามไป
+    else
+        local RS_UI = game:GetService("ReplicatedStorage")
+        local playerGui = player.PlayerGui
+
+        local function saveFile(name, state) pcall(writefile, name, state and "1" or "0") end
+        local function loadFile(name) local ok,c = pcall(readfile,name); return ok and c=="1" end
+        local function getMacro()
+            return RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
+                :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
+                :WaitForChild("Services"):WaitForChild("MacroService"):WaitForChild("RF")
+        end
+
+        -- นารูโตะ ดัน4 (มาโคร1)
+        local function runNarutoLobby()
+            task.wait(1)
+            RS_UI:WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.7.0")
+                :WaitForChild("knit"):WaitForChild("Services"):WaitForChild("ItemService")
+                :WaitForChild("RF"):WaitForChild("UseItem"):InvokeServer("KuramaFightKey4")
+            print("[นารูโตะ] Lobby done!")
+        end
+        local function runNarutoInGame()
+            local m = getMacro(); task.wait(1)
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(1); task.wait(1)
+            m:WaitForChild("Playback"):InvokeServer(1, true)
+            print("[นารูโตะ] In-game done!")
+        end
+        local function runNaruto()
+            if game.PlaceId == UTDX_LOBBY_ID then runNarutoLobby()
+            elseif game.PlaceId == UTDX_GAME_ID then runNarutoInGame() end
+        end
+
+        -- คาตาคุริ (มาโคร2)
+        local function runKatakuriLobby()
+            task.wait(1)
+            RS_UI:WaitForChild("ByteNetReliable"):FireServer(
+                buffer.fromstring(")\n\000KatakuriFC\001\003\a\000Special\000\000\128?\001\0001\000\004\000Easy\000\000\t\000Challenge\000\000"))
+            task.wait(1)
+            RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\000"))
+            print("[คาตาคุริ] Lobby done!")
+        end
+        local function runKatakuriInGame()
+            local m = getMacro(); task.wait(1)
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(2); task.wait(1)
+            m:WaitForChild("Playback"):InvokeServer(2, true)
+            print("[คาตาคุริ] In-game done!")
+        end
+        local function runKatakuri()
+            if game.PlaceId == UTDX_LOBBY_ID then runKatakuriLobby()
+            elseif game.PlaceId == UTDX_GAME_ID then runKatakuriInGame() end
+        end
+
+        -- ใคโด (มาโคร4) - วนทุก 1 นาทีในล็อบบี้
+        local function runKaidoLobby()
+            RS_UI:WaitForChild("ByteNetReliable"):FireServer(
+                buffer.fromstring(")\005\000Kaido\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
+            task.wait(1)
+            RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\001"))
+            print("[ใคโด] Lobby done!")
+        end
+        local function runKaidoInGame()
+            local m = getMacro()
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(4); task.wait(1)
+            m:WaitForChild("Playback"):InvokeServer(4, true)
+            print("[ใคโด] In-game done!")
+        end
+        local function runKaido()
+            if game.PlaceId == UTDX_LOBBY_ID then
+                while game.PlaceId == UTDX_LOBBY_ID do
+                    runKaidoLobby()
+                    print("[ใคโด] Waiting 60s before retry...")
+                    task.wait(60)
+                end
+            elseif game.PlaceId == UTDX_GAME_ID then
+                runKaidoInGame()
+            end
+        end
+
+        -- UI Frame
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "KaidoUI"; screenGui.ResetOnSpawn = false
+        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        screenGui.Parent = playerGui
+
+        local frame = Instance.new("Frame")
+        frame.Name = "Main"; frame.Size = UDim2.new(0,160,0,180)
+        frame.Position = UDim2.new(0,10,0.5,-90)
+        frame.BackgroundColor3 = Color3.fromRGB(10,10,20)
+        frame.BorderSizePixel = 0; frame.Parent = screenGui
+        Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
+        local ms = Instance.new("UIStroke",frame); ms.Color=Color3.fromRGB(255,107,53); ms.Thickness=2
+
+        local ttl = Instance.new("TextLabel",frame)
+        ttl.Size=UDim2.new(1,0,0,20); ttl.Position=UDim2.new(0,0,0,4)
+        ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
+        ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
+
+        local function makeButton(text, posY)
+            local b = Instance.new("TextButton",frame)
+            b.Size=UDim2.new(1,-16,0,28); b.Position=UDim2.new(0,8,0,posY)
+            b.BackgroundColor3=Color3.fromRGB(30,30,50); b.TextColor3=Color3.fromRGB(200,200,200)
+            b.Text=text; b.TextSize=11; b.Font=Enum.Font.GothamBold; b.BorderSizePixel=0
+            Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
+            local s=Instance.new("UIStroke",b); s.Color=Color3.fromRGB(80,80,100); s.Thickness=1
+            return b,s
+        end
+
+        local btnN,sN   = makeButton("▶ นารูโตะ ดัน4", 26)
+        local btnK,sK   = makeButton("▶ คาตาคุริ",     62)
+        local btnE,sE   = makeButton("— ว่าง —",        98)
+        local btnKd,sKd = makeButton("▶ ใคโด",          134)
+
+        btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
+        btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
+
+        -- Drag
+        local dragging,dragStart,startPos
+        frame.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true;dragStart=i.Position;startPos=frame.Position end
+        end)
+        frame.InputChanged:Connect(function(i)
+            if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then
+                local d=i.Position-dragStart
+                frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+            end
+        end)
+        frame.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
+
+        -- Toggle
+        local function makeToggle(btn,stroke,saveName,runFn,label)
+            local isOn=false; local lp=nil
+            local function start()
+                isOn=true; btn.Text="⏹ "..label
+                btn.BackgroundColor3=Color3.fromRGB(180,40,40); stroke.Color=Color3.fromRGB(255,80,80)
+                saveFile(saveName,true)
+                lp=task.spawn(function() while isOn do runFn(); task.wait(2) end end)
+            end
+            local function stop()
+                isOn=false; if lp then task.cancel(lp);lp=nil end
+                btn.Text="▶ "..label
+                btn.BackgroundColor3=Color3.fromRGB(30,30,50); stroke.Color=Color3.fromRGB(80,80,100)
+                saveFile(saveName,false)
+            end
+            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
+            return function() if loadFile(saveName) then print("[UI] Auto:",label); start() end end
+        end
+
+        local autoN  = makeToggle(btnN,  sN,  "naruto_state.txt",   runNaruto,   "นารูโตะ ดัน4")
+        local autoK  = makeToggle(btnK,  sK,  "katakuri_state.txt", runKatakuri, "คาตาคุริ")
+        local autoKd = makeToggle(btnKd, sKd, "kaido_state.txt",    runKaido,    "ใคโด")
+
+        task.wait(1); autoN(); autoK(); autoKd()
+        print("[UI] Ready! PlaceId:", game.PlaceId)
+    end
+end
