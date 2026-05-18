@@ -1021,28 +1021,31 @@ do
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
-        -- Drag (ใช้ RunService + MouseButton1Down ลากลื่น 100%)
+        -- Drag (จับ offset ณ จุดที่กด แล้วลากตามเมาส์อย่างถูกต้อง)
         local UIS2 = game:GetService("UserInputService")
-        local RS2  = game:GetService("RunService")
         local dragging2 = false
-        local dragOffsetX, dragOffsetY = 0, 0
+        local dragStart, frameStart
 
-        dragBar.MouseButton1Down:Connect(function(x, y)
-            dragging2 = true
-            dragOffsetX = frame.AbsolutePosition.X - x
-            dragOffsetY = frame.AbsolutePosition.Y - y
+        dragBar.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging2 = true
+                dragStart  = UIS2:GetMouseLocation()
+                frameStart = frame.AbsolutePosition
+            end
+        end)
+
+        UIS2.InputChanged:Connect(function(i)
+            if dragging2 and i.UserInputType == Enum.UserInputType.MouseMovement then
+                local mp = UIS2:GetMouseLocation()
+                local dx = mp.X - dragStart.X
+                local dy = mp.Y - dragStart.Y
+                frame.Position = UDim2.new(0, frameStart.X + dx, 0, frameStart.Y + dy)
+            end
         end)
 
         UIS2.InputEnded:Connect(function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1 then
                 dragging2 = false
-            end
-        end)
-
-        RS2.RenderStepped:Connect(function()
-            if dragging2 then
-                local mp = UIS2:GetMouseLocation()
-                frame.Position = UDim2.new(0, mp.X + dragOffsetX, 0, mp.Y + dragOffsetY)
             end
         end)
 
