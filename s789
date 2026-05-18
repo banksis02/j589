@@ -990,16 +990,8 @@ do
         Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
         local ms = Instance.new("UIStroke",frame); ms.Color=Color3.fromRGB(255,107,53); ms.Thickness=2
 
-        -- TitleBar สำหรับลาก (แยกออกจากปุ่ม)
-        local dragBar = Instance.new("TextButton", frame)
-        dragBar.Name = "DragBar"
-        dragBar.Size = UDim2.new(1, 0, 0, 24)
-        dragBar.Position = UDim2.new(0, 0, 0, 0)
-        dragBar.BackgroundTransparency = 1
-        dragBar.Text = ""; dragBar.ZIndex = 10
-
-        local ttl = Instance.new("TextLabel", dragBar)
-        ttl.Size=UDim2.new(1,0,1,0); ttl.Position=UDim2.new(0,0,0,0)
+        local ttl = Instance.new("TextLabel",frame)
+        ttl.Size=UDim2.new(1,0,0,20); ttl.Position=UDim2.new(0,0,0,4)
         ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
         ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
 
@@ -1021,31 +1013,36 @@ do
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
-        -- Drag (จับ offset ณ จุดที่กด แล้วลากตามเมาส์อย่างถูกต้อง)
-        local UIS2 = game:GetService("UserInputService")
-        local dragging2 = false
-        local dragStart, frameStart
+        -- Drag ที่ title bar
+        local UIS = game:GetService("UserInputService")
+        ttl.Active = true
+        local dragging = false
+        local dragStart = Vector2.new(0,0)
+        local startPos = frame.Position
 
-        dragBar.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging2 = true
-                dragStart  = UIS2:GetMouseLocation()
-                frameStart = frame.AbsolutePosition
+        ttl.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or
+               i.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = Vector2.new(i.Position.X, i.Position.Y)
+                startPos = frame.Position
             end
         end)
-
-        UIS2.InputChanged:Connect(function(i)
-            if dragging2 and i.UserInputType == Enum.UserInputType.MouseMovement then
-                local mp = UIS2:GetMouseLocation()
-                local dx = mp.X - dragStart.X
-                local dy = mp.Y - dragStart.Y
-                frame.Position = UDim2.new(0, frameStart.X + dx, 0, frameStart.Y + dy)
+        ttl.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or
+               i.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
             end
         end)
-
-        UIS2.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging2 = false
+        UIS.InputChanged:Connect(function(i)
+            if not dragging then return end
+            if i.UserInputType == Enum.UserInputType.MouseMovement or
+               i.UserInputType == Enum.UserInputType.Touch then
+                local delta = Vector2.new(i.Position.X, i.Position.Y) - dragStart
+                frame.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + delta.X,
+                    startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                )
             end
         end)
 
@@ -1075,4 +1072,6 @@ do
         task.wait(1); autoN(); autoK(); autoKd()
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
+end
+
 end
