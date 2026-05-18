@@ -1,7 +1,8 @@
-local HttpService = game:GetService("HttpService")
-local Players     = game:GetService("Players")
-local LogService  = game:GetService("LogService")
-local player      = Players.LocalPlayer
+local HttpService        = game:GetService("HttpService")
+local Players            = game:GetService("Players")
+local LogService         = game:GetService("LogService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local player             = Players.LocalPlayer
 
 local BACKEND_URL = "https://overload-backend-production.up.railway.app"
 
@@ -706,6 +707,7 @@ if GAME_ID == "utdx" then
         ["rbxassetid://99445539698599"]  = "Boundless Orb",
         ["rbxassetid://93499184204977"]  = "Gold",
         ["rbxassetid://79485605398734"]  = "Family Eye Currency",
+        ["rbxassetid://121805709165537"] = "Moon",
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
@@ -832,9 +834,61 @@ if GAME_ID == "utdx" then
     end)
 
     print("[UTDX] ✅ Ready!")
+
+    -- Anti AFK
+    task.spawn(function()
+        while true do
+            task.wait(300) -- 5 นาที
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            print("[ANTI-AFK] Jumped!")
+        end
+    end)
+
+    -- Auto Activate Hand
+    task.spawn(function()
+        while true do
+            for _, obj in ipairs(game.Workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") and obj.ActionText == "Activate Hand" then
+                    local attachment = obj.Parent
+                    if attachment and attachment:IsA("Attachment") then
+                        local pos = attachment.WorldPosition
+                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+                            task.wait(0.3)
+                            fireproximityprompt(obj)
+                            print("[UTDX] Activated:", obj.ObjectText)
+                            task.wait(1)
+                        end
+                    end
+                end
+            end
+            task.wait(0.2)
+        end
+    end)
+
+    -- Auto GreenZone
+    task.spawn(function()
+        while true do
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local zone = workspace:FindFirstChild("ShinobiAllianceRuntime")
+            if zone and hrp then
+                local greenZone = zone:FindFirstChild("GreenZone")
+                if greenZone then
+                    print("[UTDX] Found GreenZone! Warping...")
+                    hrp.CFrame = CFrame.new(greenZone.Position + Vector3.new(0, 3, 0))
+                    task.wait(6)
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
 end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
+
 
 -- ============================================================
 -- UTDX UI (รันเฉพาะใน UTDX เท่านั้น)
@@ -936,10 +990,27 @@ do
         Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
         local ms = Instance.new("UIStroke",frame); ms.Color=Color3.fromRGB(255,107,53); ms.Thickness=2
 
-        local ttl = Instance.new("TextLabel",frame)
-        ttl.Size=UDim2.new(1,0,0,20); ttl.Position=UDim2.new(0,0,0,4)
+        -- TitleBar สำหรับลาก + ปุ่มย่อ
+        local dragBar = Instance.new("TextButton", frame)
+        dragBar.Name = "DragBar"
+        dragBar.Size = UDim2.new(1, 0, 0, 24)
+        dragBar.Position = UDim2.new(0, 0, 0, 0)
+        dragBar.BackgroundTransparency = 1
+        dragBar.Text = ""; dragBar.ZIndex = 10
+
+        local ttl = Instance.new("TextLabel", dragBar)
+        ttl.Size=UDim2.new(1,-26,1,0); ttl.Position=UDim2.new(0,0,0,0)
         ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
         ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
+
+        -- ปุ่มย่อ/ขยาย
+        local btnMin = Instance.new("TextButton", frame)
+        btnMin.Size = UDim2.new(0,18,0,18); btnMin.Position = UDim2.new(1,-22,0,3)
+        btnMin.BackgroundColor3 = Color3.fromRGB(50,50,70); btnMin.BorderSizePixel = 0
+        btnMin.Text = "—"; btnMin.TextColor3 = Color3.fromRGB(200,200,200)
+        btnMin.TextSize = 11; btnMin.Font = Enum.Font.GothamBold; btnMin.ZIndex = 15
+        Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0,4)
+
 
         local function makeButton(text, posY)
             local b = Instance.new("TextButton",frame)
@@ -959,36 +1030,51 @@ do
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
-        -- Drag ที่ title bar
-        local UIS = game:GetService("UserInputService")
-        ttl.Active = true
-        local dragging = false
-        local dragStart = Vector2.new(0,0)
-        local startPos = frame.Position
+        -- ย่อ/ขยาย UI
+        local isMinimized = false
+        local FULL_SIZE   = UDim2.new(0,160,0,180)
+        local MINI_SIZE   = UDim2.new(0,160,0,24)
 
-        ttl.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 or
-               i.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-                dragStart = Vector2.new(i.Position.X, i.Position.Y)
-                startPos = frame.Position
+        btnMin.MouseButton1Click:Connect(function()
+            isMinimized = not isMinimized
+            if isMinimized then
+                frame.Size  = MINI_SIZE
+                btnMin.Text = "□"
+                btnN.Visible  = false; btnK.Visible  = false
+                btnE.Visible  = false; btnKd.Visible = false
+            else
+                frame.Size  = FULL_SIZE
+                btnMin.Text = "—"
+                btnN.Visible  = true; btnK.Visible  = true
+                btnE.Visible  = true; btnKd.Visible = true
             end
         end)
-        ttl.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 or
-               i.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
+
+        -- Drag (จับ offset ณ จุดที่กด แล้วลากตามเมาส์อย่างถูกต้อง)
+        local UIS2 = game:GetService("UserInputService")
+        local dragging2 = false
+        local dragStart, frameStart
+
+        dragBar.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging2 = true
+                dragStart  = UIS2:GetMouseLocation()
+                frameStart = frame.AbsolutePosition
             end
         end)
-        UIS.InputChanged:Connect(function(i)
-            if not dragging then return end
-            if i.UserInputType == Enum.UserInputType.MouseMovement or
-               i.UserInputType == Enum.UserInputType.Touch then
-                local delta = Vector2.new(i.Position.X, i.Position.Y) - dragStart
-                frame.Position = UDim2.new(
-                    startPos.X.Scale, startPos.X.Offset + delta.X,
-                    startPos.Y.Scale, startPos.Y.Offset + delta.Y
-                )
+
+        UIS2.InputChanged:Connect(function(i)
+            if dragging2 and i.UserInputType == Enum.UserInputType.MouseMovement then
+                local mp = UIS2:GetMouseLocation()
+                local dx = mp.X - dragStart.X
+                local dy = mp.Y - dragStart.Y
+                frame.Position = UDim2.new(0, frameStart.X + dx, 0, frameStart.Y + dy)
+            end
+        end)
+
+        UIS2.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging2 = false
             end
         end)
 
