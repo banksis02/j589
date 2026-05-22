@@ -889,6 +889,65 @@ end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
 
+-- ============================================================
+-- [UTDX Lobby] Anti AFK
+-- ============================================================
+if game.PlaceId == 133410800847665 then
+    task.spawn(function()
+        while true do
+            task.wait(300) -- 5 นาที
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            print("[ANTI-AFK Lobby] Jumped!")
+        end
+    end)
+end
+
+-- ============================================================
+-- [UTDX] Auto Claim Mission (ทุก 5 นาที)
+-- ============================================================
+if game.PlaceId == 133410800847665 or game.PlaceId == 106402284955512 then
+    task.spawn(function()
+        local MISSIONS = {
+            "weeklySupportClass",
+            "weeklySameClass",
+            "dailyClearStageWithPlayer0",
+            "weeklyFree",
+            "dailyFree",
+        }
+        local function claimAll()
+            local ok, claimRF = pcall(function()
+                return game:GetService("ReplicatedStorage")
+                    :WaitForChild("Packages"):WaitForChild("_Index")
+                    :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
+                    :WaitForChild("Services"):WaitForChild("CalendarEventService")
+                    :WaitForChild("RF"):WaitForChild("claimMission")
+            end)
+            if not ok or not claimRF then
+                warn("[UTDX Claim] ไม่พบ claimMission RF")
+                return
+            end
+            for _, mission in ipairs(MISSIONS) do
+                local ok2, err = pcall(function()
+                    claimRF:InvokeServer("DevilWithin", mission)
+                end)
+                if ok2 then
+                    print("[UTDX Claim] ✅", mission)
+                else
+                    warn("[UTDX Claim] ❌", mission, err)
+                end
+                task.wait(0.5)
+            end
+        end
+        task.wait(5) -- เริ่มหลัง load 5 วิ
+        while true do
+            claimAll()
+            task.wait(300) -- 5 นาที
+        end
+    end)
+end
+
 
 -- ============================================================
 -- UTDX UI (รันเฉพาะใน UTDX เท่านั้น)
@@ -921,7 +980,7 @@ do
         end
         local function runNarutoInGame()
             local m = getMacro(); task.wait(1)
-            m:WaitForChild("LoadMacroSlot"):InvokeServer(1); task.wait(1)
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(1); task.wait(10)
             m:WaitForChild("Playback"):InvokeServer(1, true)
             print("[นารูโตะ] In-game done!")
         end
@@ -941,7 +1000,7 @@ do
         end
         local function runKatakuriInGame()
             local m = getMacro(); task.wait(1)
-            m:WaitForChild("LoadMacroSlot"):InvokeServer(2); task.wait(1)
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(2); task.wait(10)
             m:WaitForChild("Playback"):InvokeServer(2, true)
             print("[คาตาคุริ] In-game done!")
         end
@@ -960,8 +1019,8 @@ do
         end
         local function runKaidoInGame()
             local m = getMacro()
-            m:WaitForChild("LoadMacroSlot"):InvokeServer(4); task.wait(1)
-            m:WaitForChild("Playback"):InvokeServer(4, true)
+            m:WaitForChild("LoadMacroSlot"):InvokeServer(3); task.wait(10)
+            m:WaitForChild("Playback"):InvokeServer(3, true)
             print("[ใคโด] In-game done!")
         end
         local function runKaido()
@@ -1024,16 +1083,22 @@ do
 
         local btnN,sN   = makeButton("▶ นารูโตะ ดัน4", 26)
         local btnK,sK   = makeButton("▶ คาตาคุริ",     62)
-        local btnE,sE   = makeButton("— ว่าง —",        98)
-        local btnKd,sKd = makeButton("▶ ใคโด",          134)
+        local btnKd,sKd = makeButton("▶ ใคโด",          98)
+        local btnE,sE   = makeButton("— ว่าง —",        134)
 
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
         -- ย่อ/ขยาย UI
-        local isMinimized = false
+        local isMinimized = true
         local FULL_SIZE   = UDim2.new(0,160,0,180)
         local MINI_SIZE   = UDim2.new(0,160,0,24)
+
+        -- เริ่มต้นด้วยสถานะย่อ
+        frame.Size    = MINI_SIZE
+        btnMin.Text   = "□"
+        btnN.Visible  = false; btnK.Visible  = false
+        btnE.Visible  = false; btnKd.Visible = false
 
         btnMin.MouseButton1Click:Connect(function()
             isMinimized = not isMinimized
