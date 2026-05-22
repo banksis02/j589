@@ -994,7 +994,7 @@ do
             task.wait(1)
             RS_UI:WaitForChild("ByteNetReliable"):FireServer(
                 buffer.fromstring(")\n\000KatakuriFC\001\003\a\000Special\000\000\128?\001\0001\000\004\000Easy\000\000\t\000Challenge\000\000"))
-            task.wait(1)
+            task.wait(10)
             RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\000"))
             print("[คาตาคุริ] Lobby done!")
         end
