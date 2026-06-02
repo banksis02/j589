@@ -1202,3 +1202,92 @@ do
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
 end
+
+
+local HOME_POS = Vector3.new(194.84361267089844, 3.4146347045898438, -6796.5986328125)
+local ZENO_POS = Vector3.new(161.1033935546875, 4.182663917541504, -6715.64990234375)
+local lastHandle = {}
+local VIS = game:GetService("VirtualInputManager")
+
+local function getCurrentStage()
+    local stage = ""
+    pcall(function()
+        stage = game.Players.LocalPlayer.PlayerGui.GameUI.HUD.RightFrame.Stage.Act.Text
+    end)
+    return stage
+end
+
+local function handlePrompt(obj)
+    if not obj or not obj.Parent then return end
+    if getCurrentStage() ~= "Merciless God Fight" then return end
+    if not obj.Enabled then return end
+
+    local key = tostring(obj)
+    if tick() - (lastHandle[key] or 0) < 5 then return end
+    lastHandle[key] = tick()
+
+    print("[AUTO] Handling:", obj.ActionText)
+    local part = obj.Parent
+    local pos = nil
+    if part:IsA("Attachment") then pos = part.WorldPosition
+    elseif part:IsA("BasePart") then pos = part.Position end
+
+    if pos then
+        local hrp = game.Players.LocalPlayer.Character and
+                    game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+            task.wait(0.3)
+            fireproximityprompt(obj)
+            print("[AUTO] Done:", obj.ActionText)
+
+            if obj.ActionText == "Activate" then
+                -- รอ 2 วิ แล้วไปกด E ค้างที่จุด Zeno
+                task.wait(2)
+                hrp.CFrame = CFrame.new(ZENO_POS)
+                task.wait(0.3)
+                print("[AUTO] Holding E at Zeno position...")
+                VIS:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(5)
+                VIS:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                print("[AUTO] Done holding E!")
+            end
+
+            task.wait(0.5)
+            hrp.CFrame = CFrame.new(HOME_POS)
+            print("[AUTO] Warped back home!")
+        end
+    end
+end
+
+task.spawn(function()
+    local inStage = false
+    while true do
+        local stage = getCurrentStage()
+        if stage == "Merciless God Fight" then
+            if not inStage then
+                inStage = true
+                lastHandle = {}
+                local hrp = game.Players.LocalPlayer.Character and
+                            game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.new(HOME_POS)
+                    print("[AUTO] Warped to home!")
+                end
+            end
+            for _, obj in ipairs(game.Workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") and obj.Enabled and
+                   (obj.ActionText == "Pay 10000 Yen" or obj.ActionText == "Activate") then
+                    task.spawn(function() handlePrompt(obj) end)
+                end
+            end
+        else
+            inStage = false
+        end
+        task.wait(0.1)
+    end
+end)
+
+print("Merciless God Fight watcher ready!")
+
+
