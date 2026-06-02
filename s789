@@ -708,6 +708,7 @@ if GAME_ID == "utdx" then
         ["rbxassetid://93499184204977"]  = "Gold",
         ["rbxassetid://79485605398734"]  = "Family Eye Currency",
         ["rbxassetid://121805709165537"] = "Moon",
+        ["rbxassetid://88547227449378"]  = "MoonGold",
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
