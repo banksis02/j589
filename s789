@@ -708,7 +708,6 @@ if GAME_ID == "utdx" then
         ["rbxassetid://93499184204977"]  = "Gold",
         ["rbxassetid://79485605398734"]  = "Family Eye Currency",
         ["rbxassetid://121805709165537"] = "Moon",
-        ["rbxassetid://88547227449378"]  = "MoonGold",
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
@@ -1074,8 +1073,8 @@ do
         screenGui.Parent = playerGui
 
         local frame = Instance.new("Frame")
-        frame.Name = "Main"; frame.Size = UDim2.new(0,160,0,180)
-        frame.Position = UDim2.new(0,10,0.5,-90)
+        frame.Name = "Main"; frame.Size = UDim2.new(0,160,0,252)
+        frame.Position = UDim2.new(0,10,0.5,-126)
         frame.BackgroundColor3 = Color3.fromRGB(10,10,20)
         frame.BorderSizePixel = 0; frame.Parent = screenGui
         Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
@@ -1113,24 +1112,27 @@ do
             return b,s
         end
 
-        local btnN,sN   = makeButton("▶ นารูโตะ ดัน4", 26)
-        local btnK,sK   = makeButton("▶ คาตาคุริ",     62)
-        local btnKd,sKd = makeButton("▶ ใคโด",          98)
-        local btnE,sE   = makeButton("— ว่าง —",        134)
+        local btnN,sN     = makeButton("▶ นารูโตะ ดัน4", 26)
+        local btnK,sK     = makeButton("▶ คาตาคุริ",     62)
+        local btnKd,sKd   = makeButton("▶ ใคโด",          98)
+        local btnR,sR     = makeButton("▶ Replay",        134)
+        local btnNm,sNm   = makeButton("▶ NextMap",       170)
+        local btnE,sE     = makeButton("— ว่าง —",        206)
 
         btnE.Active=false; btnE.BackgroundColor3=Color3.fromRGB(20,20,30)
         btnE.TextColor3=Color3.fromRGB(60,60,80); sE.Color=Color3.fromRGB(40,40,60)
 
         -- ย่อ/ขยาย UI
         local isMinimized = true
-        local FULL_SIZE   = UDim2.new(0,160,0,180)
+        local FULL_SIZE   = UDim2.new(0,160,0,252)
         local MINI_SIZE   = UDim2.new(0,160,0,24)
 
         -- เริ่มต้นด้วยสถานะย่อ
         frame.Size    = MINI_SIZE
         btnMin.Text   = "□"
         btnN.Visible  = false; btnK.Visible  = false
-        btnE.Visible  = false; btnKd.Visible = false
+        btnKd.Visible = false; btnR.Visible  = false
+        btnNm.Visible = false; btnE.Visible  = false
 
         btnMin.MouseButton1Click:Connect(function()
             isMinimized = not isMinimized
@@ -1138,12 +1140,14 @@ do
                 frame.Size  = MINI_SIZE
                 btnMin.Text = "□"
                 btnN.Visible  = false; btnK.Visible  = false
-                btnE.Visible  = false; btnKd.Visible = false
+                btnKd.Visible = false; btnR.Visible  = false
+                btnNm.Visible = false; btnE.Visible  = false
             else
                 frame.Size  = FULL_SIZE
                 btnMin.Text = "—"
                 btnN.Visible  = true; btnK.Visible  = true
-                btnE.Visible  = true; btnKd.Visible = true
+                btnKd.Visible = true; btnR.Visible  = true
+                btnNm.Visible = true; btnE.Visible  = true
             end
         end)
 
@@ -1198,96 +1202,152 @@ do
         local autoK  = makeToggle(btnK,  sK,  "katakuri_state.txt", runKatakuri, "คาตาคุริ")
         local autoKd = makeToggle(btnKd, sKd, "kaido_state.txt",    runKaido,    "ใคโด")
 
-        task.wait(1); autoN(); autoK(); autoKd()
+        -- Flag toggle (ไม่ run loop, แค่ flip flag ให้ MatchFinished handler เช็ค)
+        local autoFlags = { replay = false, nextMap = false }
+        local function makeFlagToggle(btn, stroke, saveName, label, flagKey)
+            local isOn = false
+            local function start()
+                isOn = true
+                btn.Text = "⏹ " .. label
+                btn.BackgroundColor3 = Color3.fromRGB(180,40,40); stroke.Color = Color3.fromRGB(255,80,80)
+                saveFile(saveName, true)
+                autoFlags[flagKey] = true
+            end
+            local function stop()
+                isOn = false
+                btn.Text = "▶ " .. label
+                btn.BackgroundColor3 = Color3.fromRGB(30,30,50); stroke.Color = Color3.fromRGB(80,80,100)
+                saveFile(saveName, false)
+                autoFlags[flagKey] = false
+            end
+            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
+            return function() if loadFile(saveName) then print("[UI] Auto:", label); start() end end
+        end
+
+        local autoR  = makeFlagToggle(btnR,  sR,  "replay_state.txt",  "Replay",  "replay")
+        local autoNm = makeFlagToggle(btnNm, sNm, "nextmap_state.txt", "NextMap", "nextMap")
+
+        -- Hook MatchFinished → fire Replay/NextMap ตาม flag
+        local LogServiceUI = game:GetService("LogService")
+        local lastFireTime = 0
+        LogServiceUI.MessageOut:Connect(function(message)
+            if not message:find("open MatchFinished") then return end
+            local now = tick()
+            if now - lastFireTime < 10 then return end
+            lastFireTime = now
+
+            task.wait(1) -- รอ UI โหลด
+            if autoFlags.replay then
+                pcall(function()
+                    RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
+                        :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
+                        :WaitForChild("Services"):WaitForChild("WaveService")
+                        :WaitForChild("RE"):WaitForChild("VoteReplay"):FireServer()
+                    print("[UI] ▶ VoteReplay fired")
+                end)
+            elseif autoFlags.nextMap then
+                pcall(function()
+                    RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
+                        :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
+                        :WaitForChild("Services"):WaitForChild("WaveService")
+                        :WaitForChild("RE"):WaitForChild("NextMap"):FireServer()
+                    print("[UI] ▶ NextMap fired")
+                end)
+            end
+        end)
+
+        task.wait(1); autoN(); autoK(); autoKd(); autoR(); autoNm()
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
 end
 
+-- ============================================================
+-- [UTDX] Merciless God Fight Auto Handler
+-- ============================================================
+do
+    local HOME_POS = Vector3.new(194.84361267089844, 3.4146347045898438, -6796.5986328125)
+    local ZENO_POS = Vector3.new(161.1033935546875, 4.182663917541504, -6715.64990234375)
+    local lastHandle = {}
+    local VIS = game:GetService("VirtualInputManager")
 
-local HOME_POS = Vector3.new(194.84361267089844, 3.4146347045898438, -6796.5986328125)
-local ZENO_POS = Vector3.new(161.1033935546875, 4.182663917541504, -6715.64990234375)
-local lastHandle = {}
-local VIS = game:GetService("VirtualInputManager")
+    local function getCurrentStage()
+        local stage = ""
+        pcall(function()
+            stage = game.Players.LocalPlayer.PlayerGui.GameUI.HUD.RightFrame.Stage.Act.Text
+        end)
+        return stage
+    end
 
-local function getCurrentStage()
-    local stage = ""
-    pcall(function()
-        stage = game.Players.LocalPlayer.PlayerGui.GameUI.HUD.RightFrame.Stage.Act.Text
-    end)
-    return stage
-end
+    local function handlePrompt(obj)
+        if not obj or not obj.Parent then return end
+        if getCurrentStage() ~= "Merciless God Fight" then return end
+        if not obj.Enabled then return end
 
-local function handlePrompt(obj)
-    if not obj or not obj.Parent then return end
-    if getCurrentStage() ~= "Merciless God Fight" then return end
-    if not obj.Enabled then return end
+        local key = tostring(obj)
+        if tick() - (lastHandle[key] or 0) < 5 then return end
+        lastHandle[key] = tick()
 
-    local key = tostring(obj)
-    if tick() - (lastHandle[key] or 0) < 5 then return end
-    lastHandle[key] = tick()
+        print("[AUTO] Handling:", obj.ActionText)
+        local part = obj.Parent
+        local pos = nil
+        if part:IsA("Attachment") then pos = part.WorldPosition
+        elseif part:IsA("BasePart") then pos = part.Position end
 
-    print("[AUTO] Handling:", obj.ActionText)
-    local part = obj.Parent
-    local pos = nil
-    if part:IsA("Attachment") then pos = part.WorldPosition
-    elseif part:IsA("BasePart") then pos = part.Position end
-
-    if pos then
-        local hrp = game.Players.LocalPlayer.Character and
-                    game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-            task.wait(0.3)
-            fireproximityprompt(obj)
-            print("[AUTO] Done:", obj.ActionText)
-
-            if obj.ActionText == "Activate" then
-                -- รอ 2 วิ แล้วไปกด E ค้างที่จุด Zeno
-                task.wait(2)
-                hrp.CFrame = CFrame.new(ZENO_POS)
+        if pos then
+            local hrp = game.Players.LocalPlayer.Character and
+                        game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
                 task.wait(0.3)
-                print("[AUTO] Holding E at Zeno position...")
-                VIS:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(5)
-                VIS:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                print("[AUTO] Done holding E!")
-            end
+                fireproximityprompt(obj)
+                print("[AUTO] Done:", obj.ActionText)
 
-            task.wait(0.5)
-            hrp.CFrame = CFrame.new(HOME_POS)
-            print("[AUTO] Warped back home!")
+                if obj.ActionText == "Activate" then
+                    -- รอ 2 วิ แล้วไปกด E ค้างที่จุด Zeno
+                    task.wait(2)
+                    hrp.CFrame = CFrame.new(ZENO_POS)
+                    task.wait(0.3)
+                    print("[AUTO] Holding E at Zeno position...")
+                    VIS:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                    task.wait(5)
+                    VIS:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                    print("[AUTO] Done holding E!")
+                end
+
+                task.wait(0.5)
+                hrp.CFrame = CFrame.new(HOME_POS)
+                print("[AUTO] Warped back home!")
+            end
         end
     end
+
+    task.spawn(function()
+        local inStage = false
+        while true do
+            local stage = getCurrentStage()
+            if stage == "Merciless God Fight" then
+                if not inStage then
+                    inStage = true
+                    lastHandle = {}
+                    local hrp = game.Players.LocalPlayer.Character and
+                                game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.CFrame = CFrame.new(HOME_POS)
+                        print("[AUTO] Warped to home!")
+                    end
+                end
+                for _, obj in ipairs(game.Workspace:GetDescendants()) do
+                    if obj:IsA("ProximityPrompt") and obj.Enabled and
+                       (obj.ActionText == "Pay 10000 Yen" or obj.ActionText == "Activate") then
+                        task.spawn(function() handlePrompt(obj) end)
+                    end
+                end
+            else
+                inStage = false
+            end
+            task.wait(0.1)
+        end
+    end)
+
+    print("Merciless God Fight watcher ready!")
 end
-
-task.spawn(function()
-    local inStage = false
-    while true do
-        local stage = getCurrentStage()
-        if stage == "Merciless God Fight" then
-            if not inStage then
-                inStage = true
-                lastHandle = {}
-                local hrp = game.Players.LocalPlayer.Character and
-                            game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = CFrame.new(HOME_POS)
-                    print("[AUTO] Warped to home!")
-                end
-            end
-            for _, obj in ipairs(game.Workspace:GetDescendants()) do
-                if obj:IsA("ProximityPrompt") and obj.Enabled and
-                   (obj.ActionText == "Pay 10000 Yen" or obj.ActionText == "Activate") then
-                    task.spawn(function() handlePrompt(obj) end)
-                end
-            end
-        else
-            inStage = false
-        end
-        task.wait(0.1)
-    end
-end)
-
-print("Merciless God Fight watcher ready!")
-
-
