@@ -785,9 +785,13 @@ if GAME_ID == "utdx" then
                         if not icon and vpf then
                             local model = vpf:FindFirstChildWhichIsA("Model")
                             if model then
-                                local display = (unitName and unitName.Text ~= "") and unitName.Text or model.Name
+                                -- ใช้ Model.Name เป็นชื่อตัวละครจริง (เช่น "Vegito")
+                                -- ตัด suffix style พวก ":shiny:boundless" ออกให้สวย
+                                local charName = model.Name:match("^([^:]+)") or model.Name
+                                local title    = (unitName and unitName.Text ~= "") and unitName.Text or ""
+                                local display  = (title ~= "") and (charName .. " (" .. title .. ")") or charName
                                 table.insert(units, display)
-                                print("[UTDX] 🎴 UNIT GET →", display, "(model:", model.Name, ")")
+                                print("[UTDX] 🎴 UNIT GET →", display, "| raw model:", model.Name)
                             end
 
                         -- ไอเทมทั่วไป
