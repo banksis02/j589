@@ -119,10 +119,10 @@ local function sendToBackend(data)
             Body    = HttpService:JSONEncode(payload)
         })
     end)
-    if ok and response.Success then
+    if ok and type(response) == "table" and response.Success then
         print("[OV] ✅ Sent! Act=" .. tostring(data.act) .. " | File=" .. tostring(data.file) .. " | Time=" .. tostring(data.playTime) .. " | Rewards=" .. tostring(data.quantity) .. " | LVL=" .. level .. " | Wave=" .. wave)
     else
-        warn("[OV] ❌ Send FAIL:", response and response.StatusCode)
+        warn("[OV] ❌ Send FAIL:", type(response) == "table" and response.StatusCode or tostring(response))
     end
 end
 
@@ -874,15 +874,15 @@ if GAME_ID == "utdx" then
 
     print("[UTDX] ✅ Ready!")
 
-    -- Anti AFK
-    task.spawn(function()
-        while true do
-            task.wait(300) -- 5 นาที
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.1)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            print("[ANTI-AFK] Jumped!")
-        end
+    -- Anti AFK (ใช้ Player.Idled + VirtualUser — วิธีที่ Roblox ไม่ block)
+    pcall(function()
+        local VirtualUser = game:GetService("VirtualUser")
+        player.Idled:Connect(function()
+            print("[ANTI-AFK] Idled detected → reset")
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+        print("[ANTI-AFK] ✅ Ready (in-game)")
     end)
 
     -- Auto Activate Hand
@@ -963,14 +963,14 @@ print("[OV] 🚀 Ready! Game:", GAME_NAME)
 -- [UTDX Lobby] Anti AFK
 -- ============================================================
 if game.PlaceId == 133410800847665 then
-    task.spawn(function()
-        while true do
-            task.wait(300) -- 5 นาที
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.1)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            print("[ANTI-AFK Lobby] Jumped!")
-        end
+    pcall(function()
+        local VirtualUser = game:GetService("VirtualUser")
+        player.Idled:Connect(function()
+            print("[ANTI-AFK Lobby] Idled detected → reset")
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+        print("[ANTI-AFK Lobby] ✅ Ready")
     end)
 end
 
@@ -1314,8 +1314,12 @@ do
                                or nm:find("ok") or nm:find("confirm") or nm:find("dismiss")
                                or tx:find("close") or tx:find("skip") or tx:find("continue")
                                or tx:find("ok") or tx:find("confirm") then
-                                pcall(function() firesignal and firesignal(btn.MouseButton1Click) end)
-                                pcall(function() firesignal and firesignal(btn.Activated) end)
+                                pcall(function()
+                                    if firesignal then firesignal(btn.MouseButton1Click) end
+                                end)
+                                pcall(function()
+                                    if firesignal then firesignal(btn.Activated) end
+                                end)
                                 clicked = true
                                 break
                             end
@@ -1383,14 +1387,19 @@ do
         end
 
         local function fireVote(remoteName, label)
-            local ok = pcall(function()
-                RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
-                    :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
-                    :WaitForChild("Services"):WaitForChild("WaveService")
-                    :WaitForChild("RE"):WaitForChild(remoteName):FireServer()
+            -- ใช้ FindFirstChild ป้องกัน yield ค้าง ถ้า path ไม่มี
+            local ok, err = pcall(function()
+                local pkgs = RS_UI:WaitForChild("Packages", 5)
+                if not pkgs then error("no Packages") end
+                local idx = pkgs:WaitForChild("_Index", 5); if not idx then error("no _Index") end
+                local knit = idx:WaitForChild("sleitnick_knit@1.7.0", 5):WaitForChild("knit", 5)
+                local svc  = knit:WaitForChild("Services", 5):WaitForChild("WaveService", 5)
+                local re   = svc:WaitForChild("RE", 5):WaitForChild(remoteName, 5)
+                if not re then error("no remote " .. remoteName) end
+                re:FireServer()
             end)
             if ok then print("[UI] ▶ " .. label .. " fired")
-            else warn("[UI] ❌ " .. label .. " failed") end
+            else warn("[UI] ❌ " .. label .. " failed:", err) end
         end
 
         LogServiceUI.MessageOut:Connect(function(message)
@@ -1433,7 +1442,7 @@ end
 -- ============================================================
 -- [UTDX] Merciless God Fight Auto Handler
 -- ============================================================
-do
+task.spawn(function()
     local HOME_POS = Vector3.new(194.84361267089844, 3.4146347045898438, -6796.5986328125)
     local ZENO_POS = Vector3.new(161.1033935546875, 4.182663917541504, -6715.64990234375)
     local lastHandle = {}
@@ -1449,7 +1458,7 @@ do
 
     local function handlePrompt(obj)
         if not obj or not obj.Parent then return end
-        if getCurrentStage() ~= "Merciless God Fight" then return end
+        if not getCurrentStage():lower():find("merciless god") then return end
         if not obj.Enabled then return end
 
         local key = tostring(obj)
@@ -1492,12 +1501,19 @@ do
 
     task.spawn(function()
         local inStage = false
+        local lastStage = ""
         while true do
             local stage = getCurrentStage()
-            if stage == "Merciless God Fight" then
+            -- debug: print เมื่อ stage เปลี่ยน
+            if stage ~= lastStage then
+                print("[AUTO DEBUG] Stage:", string.format("%q", stage))
+                lastStage = stage
+            end
+            if stage:lower():find("merciless god") then
                 if not inStage then
                     inStage = true
                     lastHandle = {}
+                    print("[AUTO] 🎯 Entered Merciless God stage!")
                     local hrp = game.Players.LocalPlayer.Character and
                                 game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -1506,9 +1522,12 @@ do
                     end
                 end
                 for _, obj in ipairs(game.Workspace:GetDescendants()) do
-                    if obj:IsA("ProximityPrompt") and obj.Enabled and
-                       (obj.ActionText == "Pay 10000 Yen" or obj.ActionText == "Activate") then
-                        task.spawn(function() handlePrompt(obj) end)
+                    if obj:IsA("ProximityPrompt") and obj.Enabled then
+                        local at = obj.ActionText or ""
+                        if at == "Pay 10000 Yen" or at == "Activate"
+                           or at:lower():find("pay") or at:lower():find("activate") then
+                            task.spawn(function() handlePrompt(obj) end)
+                        end
                     end
                 end
             else
@@ -1519,4 +1538,4 @@ do
     end)
 
     print("Merciless God Fight watcher ready!")
-end
+end)
