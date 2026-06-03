@@ -769,27 +769,56 @@ if GAME_ID == "utdx" then
                 level = tonumber(lvlText:match("Level (%d+)")) or 0
             end)
 
-            -- Rewards
+            -- Rewards (รองรับตัวละคร + ไอเทม)
+            local units = {}   -- ⭐ เก็บรายชื่อตัวละครที่ได้
             pcall(function()
                 local rewardFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
-                local parts = {}
+                local items = {}
                 for _, child in ipairs(rewardFrame:GetChildren()) do
-                    if child:IsA("Frame") and child.Name ~= "PaddingTop" then
-                        local icon = child:FindFirstChild("ItemIcon")
-                        local unitName = child:FindFirstChild("UnitName", true)
-                        if icon and unitName and unitName.Text ~= "" then
+                    if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
+                        local icon      = child:FindFirstChild("ItemIcon")
+                        local rightInfo = child:FindFirstChild("RightInfos")
+                        local unitName  = rightInfo and rightInfo:FindFirstChild("UnitName")
+                        local vpf       = child:FindFirstChild("Unit")
+
+                        -- 🎴 ตัวละคร = ไม่มี ItemIcon แต่ ViewportFrame มี Model
+                        if not icon and vpf then
+                            local model = vpf:FindFirstChildWhichIsA("Model")
+                            if model then
+                                local display = (unitName and unitName.Text ~= "") and unitName.Text or model.Name
+                                table.insert(units, display)
+                                print("[UTDX] 🎴 UNIT GET →", display, "(model:", model.Name, ")")
+                            end
+
+                        -- ไอเทมทั่วไป
+                        elseif icon and unitName then
                             local itemName = ITEM_NAMES_UTDX[icon.Image] or "Item"
-                            table.insert(parts, itemName .. " " .. unitName.Text)
+                            local qty = (unitName.Text ~= "") and unitName.Text or "x1"
+                            table.insert(items, itemName .. " " .. qty)
+                            if not ITEM_NAMES_UTDX[icon.Image] then
+                                warn("[UTDX] ❓ Unknown item ID:", icon.Image, "qty:", qty)
+                            end
                         end
                     end
                 end
-                if #parts > 0 then rewards = table.concat(parts, ", ") end
+
+                local parts = {}
+                if #units > 0 then
+                    table.insert(parts, "🎴 UNIT: " .. table.concat(units, ", "))
+                end
+                if #items > 0 then
+                    table.insert(parts, table.concat(items, ", "))
+                end
+                if #parts > 0 then rewards = table.concat(parts, " | ") end
             end)
 
             local actFull = act
             if difficulty ~= "" then actFull = act .. " " .. difficulty end
 
             print("[UTDX] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
+            if #units > 0 then
+                print("[UTDX] 🎉 ได้ตัวละคร " .. #units .. " ตัว: " .. table.concat(units, ", "))
+            end
 
             local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
             local payload = {
@@ -805,12 +834,14 @@ if GAME_ID == "utdx" then
                     file     = act,
                     playTime = playTime,
                     quantity = rewards,
+                    units    = units,           -- ⭐ ส่ง list ตัวละครที่ได้
                 },
                 recentLog = {
                     act      = actFull,
                     file     = act,
                     playTime = playTime,
                     quantity = rewards,
+                    units    = units,           -- ⭐
                     status   = "COMPLETED",
                     time     = timestamp,
                     rewards  = rewards,
@@ -827,7 +858,8 @@ if GAME_ID == "utdx" then
             end)
 
             if ok and response.Success then
-                print("[UTDX] ✅ Sent! LVL=" .. level .. " | Wave=" .. wave)
+                local unitMsg = (#units > 0) and (" | 🎴UNIT=" .. table.concat(units, ",")) or ""
+                print("[UTDX] ✅ Sent! LVL=" .. level .. " | Wave=" .. wave .. unitMsg)
             else
                 warn("[UTDX] ❌ Send FAIL:", response and response.StatusCode)
             end
