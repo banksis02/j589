@@ -1271,31 +1271,105 @@ do
         local lastFireTime = 0
 
         -- หา MissionResultFrame โผล่มาแล้วหรือยัง (สู้ popup เช่น tamed beast)
+        -- ⚠️ MissionResultFrame เป็น ScreenGui → ใช้ .Enabled (ไม่ใช่ .Visible)
         local function isResultVisible()
             local pg = game.Players.LocalPlayer:FindFirstChild("PlayerGui")
             local ui = pg and pg:FindFirstChild("GameUI")
             local mrf = ui and ui:FindFirstChild("MissionResultFrame")
-            return mrf and mrf.Visible
+            if not mrf then return false end
+            local ok, result = pcall(function()
+                if mrf:IsA("ScreenGui") then return mrf.Enabled end
+                if mrf:IsA("GuiObject") then return mrf.Visible end
+                return false
+            end)
+            return ok and result or false
         end
 
-        -- ส่ง click กลางจอเพื่อปิด popup ที่บัง (เช่น tamed beast)
+        -- ⭐ ปิด popup ที่บัง MissionResultFrame
+        -- ScreenGui ที่มักโผล่บัง: Drops (item drop), UltraBossNotification, Resonance, etc.
         local VIM_UI = game:GetService("VirtualInputManager")
+        local POPUP_NAMES = {
+            "Drops",
+            "UltraBossNotification",
+            "Resonance",
+            "UnrivaledGUI",
+            "Dialogue",              -- ⭐ "Universal Gems Part" / cutscene popup
+            "Rewards",
+            "Finished",
+            "BlackScreen",
+        }
+
+        local function forceDisablePopups()
+            local closed = 0
+            for _, name in ipairs(POPUP_NAMES) do
+                local sg = player.PlayerGui:FindFirstChild(name)
+                if sg then
+                    -- ลองหาปุ่มปิด/skip/continue ใน popup ก่อน
+                    local clicked = false
+                    for _, btn in ipairs(sg:GetDescendants()) do
+                        if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                            local nm = btn.Name:lower()
+                            local tx = (btn:IsA("TextButton") and btn.Text or ""):lower()
+                            if nm:find("close") or nm:find("skip") or nm:find("continue")
+                               or nm:find("ok") or nm:find("confirm") or nm:find("dismiss")
+                               or tx:find("close") or tx:find("skip") or tx:find("continue")
+                               or tx:find("ok") or tx:find("confirm") then
+                                pcall(function() firesignal and firesignal(btn.MouseButton1Click) end)
+                                pcall(function() firesignal and firesignal(btn.Activated) end)
+                                clicked = true
+                                break
+                            end
+                        end
+                    end
+                    -- fallback: disable ScreenGui เลย
+                    if sg:IsA("ScreenGui") and sg.Enabled then
+                        sg.Enabled = false
+                        closed = closed + 1
+                        print("[UI] 🚫 Force-closed popup:", name, clicked and "(via button)" or "(disabled)")
+                    end
+                end
+            end
+            return closed > 0
+        end
+
+        -- เช็ค popup ใดๆ ที่รู้จัก enabled อยู่
+        local function anyPopupEnabled()
+            for _, name in ipairs(POPUP_NAMES) do
+                local sg = player.PlayerGui:FindFirstChild(name)
+                if sg and sg:IsA("ScreenGui") and sg.Enabled then
+                    return name
+                end
+            end
+            return nil
+        end
+
         local function dismissPopups(maxClicks)
             local cam = workspace.CurrentCamera
             if not cam then return false end
             for i = 1, maxClicks do
-                if isResultVisible() then
-                    print("[UI] MissionResult ปรากฏแล้ว (หลัง", i-1, "คลิก)")
+                -- ⭐ ปิด popup ที่รู้จัก "ก่อน" เสมอ (เพราะ Rewards/Drops ทับ MissionResult ได้)
+                local popupName = anyPopupEnabled()
+                if popupName then
+                    print("[UI] 🔍 พบ popup blocking:", popupName, "→ ปิด")
+                    forceDisablePopups()
+                    task.wait(0.3)
+                end
+
+                -- เช็ค MissionResult — ถ้า visible และไม่มี popup ค้าง = พร้อม vote
+                if isResultVisible() and not anyPopupEnabled() then
+                    print("[UI] ✅ MissionResult พร้อมแล้ว (รอบ", i, ")")
                     return true
                 end
+
+                -- fallback: คลิกกลางจอ
                 local size = cam.ViewportSize
                 local cx, cy = size.X / 2, size.Y / 2
                 VIM_UI:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
                 task.wait(0.05)
                 VIM_UI:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                task.wait(0.5) -- ระยะห่างระหว่างคลิก กัน popup ใหม่ animate มาทัน
+                task.wait(0.5)
             end
-            return isResultVisible()
+            return isResultVisible() and not anyPopupEnabled()
         end
 
         local function waitForResultFrame(timeout)
