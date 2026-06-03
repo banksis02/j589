@@ -708,6 +708,9 @@ if GAME_ID == "utdx" then
         ["rbxassetid://93499184204977"]  = "Gold",
         ["rbxassetid://79485605398734"]  = "Family Eye Currency",
         ["rbxassetid://121805709165537"] = "Moon",
+        ["rbxassetid://88547227449378"]  = "MoonGold",
+        ["rbxassetid://97554990018157"]  = "Potara",
+        ["rbxassetid://123094098594418"]  = "Unrivaled 1 (Gogeta)",
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
@@ -1230,30 +1233,86 @@ do
         -- Hook MatchFinished → fire Replay/NextMap ตาม flag
         local LogServiceUI = game:GetService("LogService")
         local lastFireTime = 0
+
+        -- หา MissionResultFrame โผล่มาแล้วหรือยัง (สู้ popup เช่น tamed beast)
+        local function isResultVisible()
+            local pg = game.Players.LocalPlayer:FindFirstChild("PlayerGui")
+            local ui = pg and pg:FindFirstChild("GameUI")
+            local mrf = ui and ui:FindFirstChild("MissionResultFrame")
+            return mrf and mrf.Visible
+        end
+
+        -- ส่ง click กลางจอเพื่อปิด popup ที่บัง (เช่น tamed beast)
+        local VIM_UI = game:GetService("VirtualInputManager")
+        local function dismissPopups(maxClicks)
+            local cam = workspace.CurrentCamera
+            if not cam then return false end
+            for i = 1, maxClicks do
+                if isResultVisible() then
+                    print("[UI] MissionResult ปรากฏแล้ว (หลัง", i-1, "คลิก)")
+                    return true
+                end
+                local size = cam.ViewportSize
+                local cx, cy = size.X / 2, size.Y / 2
+                VIM_UI:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                task.wait(0.05)
+                VIM_UI:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                task.wait(0.5) -- ระยะห่างระหว่างคลิก กัน popup ใหม่ animate มาทัน
+            end
+            return isResultVisible()
+        end
+
+        local function waitForResultFrame(timeout)
+            local elapsed = 0
+            while elapsed < timeout do
+                if isResultVisible() then return true end
+                task.wait(0.3)
+                elapsed = elapsed + 0.3
+            end
+            return false
+        end
+
+        local function fireVote(remoteName, label)
+            local ok = pcall(function()
+                RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
+                    :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
+                    :WaitForChild("Services"):WaitForChild("WaveService")
+                    :WaitForChild("RE"):WaitForChild(remoteName):FireServer()
+            end)
+            if ok then print("[UI] ▶ " .. label .. " fired")
+            else warn("[UI] ❌ " .. label .. " failed") end
+        end
+
         LogServiceUI.MessageOut:Connect(function(message)
             if not message:find("open MatchFinished") then return end
             local now = tick()
-            if now - lastFireTime < 10 then return end
+            if now - lastFireTime < 15 then return end
             lastFireTime = now
 
-            task.wait(1) -- รอ UI โหลด
-            if autoFlags.replay then
-                pcall(function()
-                    RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
-                        :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
-                        :WaitForChild("Services"):WaitForChild("WaveService")
-                        :WaitForChild("RE"):WaitForChild("VoteReplay"):FireServer()
-                    print("[UI] ▶ VoteReplay fired")
-                end)
-            elseif autoFlags.nextMap then
-                pcall(function()
-                    RS_UI:WaitForChild("Packages"):WaitForChild("_Index")
-                        :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
-                        :WaitForChild("Services"):WaitForChild("WaveService")
-                        :WaitForChild("RE"):WaitForChild("NextMap"):FireServer()
-                    print("[UI] ▶ NextMap fired")
-                end)
-            end
+            task.spawn(function()
+                -- คลิกกลางจอเพื่อปิด popup (tamed beast / item drop) ทีละอันจน MissionResultFrame โผล่
+                local shown = dismissPopups(30)  -- คลิกได้สูงสุด 30 ครั้ง (~15 วิ)
+                if not shown then
+                    -- เผื่อ MissionResult โผล่ช้ากว่า popup หมด — รออีกหน่อย
+                    shown = waitForResultFrame(10)
+                end
+                if not shown then
+                    warn("[UI] MissionResultFrame ไม่โผล่ — ยังจะลองยิง")
+                end
+                task.wait(1.5) -- buffer ให้ vote UI ready
+
+                -- ยิงซ้ำ 3 ครั้ง ห่างกัน 2 วิ กัน race กับ popup
+                for i = 1, 3 do
+                    if autoFlags.replay then
+                        fireVote("VoteReplay", "VoteReplay #" .. i)
+                    elseif autoFlags.nextMap then
+                        fireVote("NextMap", "NextMap #" .. i)
+                    else
+                        break
+                    end
+                    task.wait(2)
+                end
+            end)
         end)
 
         task.wait(1); autoN(); autoK(); autoKd(); autoR(); autoNm()
