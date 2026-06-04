@@ -1124,7 +1124,8 @@ do
 
         local frame = Instance.new("Frame")
         frame.Name = "Main"; frame.Size = UDim2.new(0,160,0,252)
-        frame.Position = UDim2.new(0,10,0.5,-126)
+        -- ตำแหน่งเริ่มต้น: ด้านบนกลางหน้าจอ (ลากย้ายเองได้)
+        frame.Position = UDim2.new(0.5, -80, 0, 10)
         frame.BackgroundColor3 = Color3.fromRGB(10,10,20)
         frame.BorderSizePixel = 0; frame.Parent = screenGui
         Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
