@@ -785,13 +785,22 @@ if GAME_ID == "utdx" then
                         if not icon and vpf then
                             local model = vpf:FindFirstChildWhichIsA("Model")
                             if model then
-                                -- ใช้ Model.Name เป็นชื่อตัวละครจริง (เช่น "Vegito")
-                                -- ตัด suffix style พวก ":shiny:boundless" ออกให้สวย
-                                local charName = model.Name:match("^([^:]+)") or model.Name
+                                -- ใช้ UnitName.Text เป็นหลัก (ชื่อ in-game ที่ผู้เล่นเห็น)
+                                -- เช่น Vegito → "Fused Warrior", Ancient Shinobi → "Ancient Shinobi"
+                                -- ถ้าไม่มี UnitName ค่อย fallback Model.Name (ตัด suffix :shiny:boundless)
                                 local title    = (unitName and unitName.Text ~= "") and unitName.Text or ""
-                                local display  = (title ~= "") and (charName .. " (" .. title .. ")") or charName
+                                local charName = model.Name:match("^([^:]+)") or model.Name
+                                local GENERIC_MODELS = { WorldModel=true, Model=true, Character=true, Unit=true }
+                                local display
+                                if title ~= "" then
+                                    display = title  -- ใช้ display name จาก UI
+                                elseif not GENERIC_MODELS[charName] then
+                                    display = charName  -- ใช้ Model.Name ถ้าไม่ใช่ generic
+                                else
+                                    display = "Unknown Unit"
+                                end
                                 table.insert(units, display)
-                                print("[UTDX] 🎴 UNIT GET →", display, "| raw model:", model.Name)
+                                print("[UTDX] 🎴 UNIT GET →", display, "| model:", model.Name, "| title:", title)
                             end
 
                         -- ไอเทมทั่วไป
@@ -806,14 +815,16 @@ if GAME_ID == "utdx" then
                     end
                 end
 
+                -- ใช้ comma แยกทุก entry (backend parse ได้ถูก)
+                -- แต่ละ unit จะมี "x1" ต่อท้ายเสมอ → backend นับเป็น 1 ตัวต่อ entry
                 local parts = {}
-                if #units > 0 then
-                    table.insert(parts, "🎴 UNIT: " .. table.concat(units, ", "))
+                for _, u in ipairs(units) do
+                    table.insert(parts, "🎴" .. u .. " x1")
                 end
-                if #items > 0 then
-                    table.insert(parts, table.concat(items, ", "))
+                for _, it in ipairs(items) do
+                    table.insert(parts, it)
                 end
-                if #parts > 0 then rewards = table.concat(parts, " | ") end
+                if #parts > 0 then rewards = table.concat(parts, ", ") end
             end)
 
             local actFull = act
