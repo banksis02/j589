@@ -1256,6 +1256,27 @@ do
             end
         end)
 
+        -- ========== One-shot helper (กดทีทำงานครั้งเดียว, รีเซ็ตสีทันที) ==========
+        local function makeOneShot(btn, stroke, runFn, label)
+            btn.MouseButton1Click:Connect(function()
+                local origBg = btn.BackgroundColor3
+                local origStroke = stroke.Color
+                -- flash สีเขียวสั้นๆ 0.2 วิ แล้วรีเซ็ตเลย (ไม่รอ runFn)
+                btn.BackgroundColor3 = Color3.fromRGB(50, 120, 50)
+                stroke.Color = Color3.fromRGB(80, 200, 80)
+                task.spawn(function()
+                    task.wait(0.2)
+                    btn.BackgroundColor3 = origBg
+                    stroke.Color = origStroke
+                end)
+                -- งานจริงทำเบื้องหลัง — ปุ่มกลับมาคลิกได้ทันที
+                task.spawn(function()
+                    local ok, err = pcall(runFn)
+                    if not ok then warn("[UI] error in", label, ":", err) end
+                end)
+            end)
+        end
+
         -- ========== Action Flag Toggle (กด ON = ทำงาน 1 ครั้ง + แดงค้าง, กดอีก = ปิด) ==========
         local function makeActionFlagToggle(btn, stroke, saveName, runFn, label)
             local isOn = false
@@ -1345,10 +1366,10 @@ do
         end
 
         -- ========== ผูกปุ่มกับฟังก์ชัน ==========
-        -- 1-3: Action Flag Toggle (ล็อบบี้) — กด ON = warp 1 ครั้ง + แดงค้าง, กดอีก = ปิด
-        local autoSt = makeActionFlagToggle(btnSt, sSt, "story_state.txt",     runStory,     "สตอรี่")
-        local autoRt = makeActionFlagToggle(btnRt, sRt, "raid_state.txt",      runRaid,      "เรท")
-        local autoCh = makeActionFlagToggle(btnCh, sCh, "challenge_state.txt", runChallenge, "ชาเล้น")
+        -- 1-3: One-shot (ล็อบบี้) — กด = warp + flash เขียว
+        makeOneShot(btnSt, sSt, runStory,     "สตอรี่")
+        makeOneShot(btnRt, sRt, runRaid,      "เรท")
+        makeOneShot(btnCh, sCh, runChallenge, "ชาเล้น")
 
         -- 4: ใคโด loop toggle (ล็อบบี้, ทุก 60 วิ)
         local autoKd = makeToggle(btnKd, sKd, "kaido_state.txt", runKaido, "ใคโด", 60)
@@ -1519,11 +1540,15 @@ do
                 task.wait(1.5) -- buffer ให้ vote UI ready
 
                 -- ยิงซ้ำ 3 ครั้ง ห่างกัน 2 วิ กัน race กับ popup
+                -- ⭐ ลำดับความสำคัญ: Replay > NextMap > Lobby(Kaido)
+                local kaidoOn = loadFile("kaido_state.txt")
                 for i = 1, 3 do
                     if autoFlags.replay then
                         fireVote("VoteReplay", "VoteReplay #" .. i)
                     elseif autoFlags.nextMap then
                         fireVote("NextMap", "NextMap #" .. i)
+                    elseif kaidoOn then
+                        fireVote("Lobby", "Lobby (Kaido auto) #" .. i)
                     else
                         break
                     end
@@ -1534,12 +1559,9 @@ do
 
         -- Auto-restore toggle ที่เปิดไว้ก่อน rejoin
         task.wait(1)
-        autoSt()  -- สตอรี่ (แค่ visual ไม่ re-warp)
-        autoRt()  -- เรท
-        autoCh()  -- ชาเล้น
         autoKd()  -- ใคโด (loop จะรันต่อ)
-        autoNd()  -- ประตูนารูโต๊ะ T4
-        autoVd()  -- ประตูเบจิโต้ T3
+        autoNd()  -- ประตูนารูโต๊ะ T4 (แค่ visual)
+        autoVd()  -- ประตูเบจิโต้ T3 (แค่ visual)
         autoR()   -- Replay
         autoNm()  -- NextMap
         autoCC()  -- คลิกกลางจอ (loop จะรันต่อ)
