@@ -1094,10 +1094,10 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 6) Map.Decoration + Map.Props → ต้นไม้/หิน/decoration
+        -- 6) ⭐ Map.Decorations (4279 desc!) + Map.PathDECO + Map.TerrainParts → ซ่อนทั้งหมด
         local map = workspace:FindFirstChild("Map")
         if map then
-            for _, subName in ipairs({ "Decoration", "Props", "Border" }) do
+            for _, subName in ipairs({ "Decorations","Decoration","PathDECO","TerrainParts","Props","Border" }) do
                 local sub = map:FindFirstChild(subName)
                 if sub then
                     for _, d in ipairs(sub:GetDescendants()) do
@@ -1111,16 +1111,59 @@ if GAME_ID == "utdx" then
                     end
                 end
             end
+
+            -- ⭐ ซ่อน Boss/Mob ที่เป็น Model ตรงๆ ใน Map (Vegito, Trunks, GokuBlack, Zamasu, ...)
+            -- ยกเว้น Path/Spawns/Static (ต้องเก็บไว้สำหรับ orientation)
+            local KEEP = { Path=true, Spawns=true, Static1=true, Static2=true,
+                          ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true }
+            for _, m in ipairs(map:GetChildren()) do
+                if m:IsA("Model") and not KEEP[m.Name] then
+                    pcall(hideEnemyVisuals, m)
+                end
+            end
         end
 
-        -- 7) Ignore.Effects, Ignore.GhostUnits, Ignore.Hitboxes
+        -- 7) Ignore.Effects (41 desc) + Drops, GhostUnits, Hitboxes
         local ignore = workspace:FindFirstChild("Ignore")
         if ignore then
-            for _, subName in ipairs({ "Effects", "GhostUnits", "Hitboxes" }) do
+            for _, subName in ipairs({ "Effects","Drops","GhostUnits","Hitboxes" }) do
                 local sub = ignore:FindFirstChild(subName)
                 if sub then
                     for _, d in ipairs(sub:GetDescendants()) do
                         pcall(processInstance, d)
+                    end
+                end
+            end
+
+            -- ⭐ ลบ effects ของยูนิตฉันเอง (ใน Ignore.Units) — เก็บตัวยูนิตให้เห็น แต่ปิด particle/beam/trail
+            local myUnits = ignore:FindFirstChild("Units")
+            if myUnits then
+                for _, d in ipairs(myUnits:GetDescendants()) do
+                    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                       or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                        pcall(function() d.Enabled = false end)
+                    elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                        pcall(function() d.Enabled = false end)
+                    end
+                end
+            end
+        end
+
+        -- 7.5) ⭐ Camera.MainCore02 — visual skill effects ของยูนิต → ลบทั้งหมด
+        local cam = workspace:FindFirstChild("Camera")
+        if cam then
+            for _, c in ipairs(cam:GetChildren()) do
+                if c:IsA("Model") then
+                    for _, d in ipairs(c:GetDescendants()) do
+                        if d:IsA("BasePart") or d:IsA("MeshPart") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CastShadow = false end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                            pcall(function() d.Enabled = false end)
+                        end
                     end
                 end
             end
@@ -1213,6 +1256,77 @@ if GAME_ID == "utdx" then
                     task.wait(0.2)
                     if child:IsA("Model") then
                         pcall(hideEnemyVisuals, child)
+                    end
+                end)
+            end
+        end
+
+        -- ⭐ Hook Ignore.Units.DescendantAdded → effect สกิลที่ spawn ใหม่ในยูนิต → ปิดทันที
+        local ignoreFolder = workspace:FindFirstChild("Ignore")
+        if ignoreFolder then
+            local myUnits = ignoreFolder:FindFirstChild("Units")
+            if myUnits then
+                myUnits.DescendantAdded:Connect(function(d)
+                    task.wait(0.05)
+                    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                       or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
+                       or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                        pcall(function() d.Enabled = false end)
+                    end
+                end)
+            end
+
+            -- Hook Ignore.Effects.ChildAdded สำหรับ effect runtime
+            local effects = ignoreFolder:FindFirstChild("Effects")
+            if effects then
+                effects.DescendantAdded:Connect(function(d)
+                    task.wait(0.05)
+                    pcall(processInstance, d)
+                end)
+            end
+        end
+
+        -- ⭐ Hook Camera.ChildAdded → visual effects ของยูนิต spawn ใหม่ → ลบทันที
+        local camFolder = workspace:FindFirstChild("Camera")
+        if camFolder then
+            camFolder.ChildAdded:Connect(function(child)
+                task.wait(0.05)
+                if child:IsA("Model") then
+                    for _, d in ipairs(child:GetDescendants()) do
+                        if d:IsA("BasePart") or d:IsA("MeshPart") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CastShadow = false end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
+                            pcall(function() d.Enabled = false end)
+                        end
+                    end
+                end
+            end)
+        end
+
+        -- ⭐ Hook workspace.Map.ChildAdded → boss/มอน spawn ใหม่ใน Map → ซ่อนทันที
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            local KEEP = { Path=true, Spawns=true, Static1=true, Static2=true,
+                          ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true }
+            map.ChildAdded:Connect(function(child)
+                task.wait(0.1)
+                if child:IsA("Model") and not KEEP[child.Name] then
+                    pcall(hideEnemyVisuals, child)
+                end
+            end)
+
+            -- Hook Map.Decorations.DescendantAdded สำหรับ deco ที่ load ทีหลัง
+            local deco = map:FindFirstChild("Decorations")
+            if deco then
+                deco.DescendantAdded:Connect(function(d)
+                    task.wait(0.05)
+                    if d:IsA("BasePart") or d:IsA("MeshPart") then
+                        pcall(function() d.Transparency = 1 end)
+                        pcall(function() d.CanCollide = false end)
+                        pcall(function() d.CastShadow = false end)
                     end
                 end)
             end
