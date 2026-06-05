@@ -1263,21 +1263,14 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 7.5) ⭐ Camera (13577 desc!) = skill effects ทั้งหมด — ลบทุก descendant
+        -- 7.5) ⭐ Camera = skill effects สะสมเยอะมาก (67K!) → **DESTROY** เลย ไม่ใช่แค่ disable
+        -- Camera ไม่มี game logic สำคัญ ลบของในนั้นได้
         local cam = workspace:FindFirstChild("Camera")
         if cam then
-            for _, d in ipairs(cam:GetDescendants()) do
-                if d:IsA("BasePart") or d:IsA("MeshPart") then
-                    pcall(function() d.Transparency = 1 end)
-                    pcall(function() d.CastShadow = false end)
-                    pcall(function() d.LocalTransparencyModifier = 1 end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                    pcall(function() d.Enabled = false end)
-                elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                    pcall(function() d.Enabled = false end)
+            for _, child in ipairs(cam:GetChildren()) do
+                -- เก็บไว้แค่ของ system (Camera Camera child เผื่อมี)
+                if not child:IsA("Camera") then
+                    pcall(function() child:Destroy() end)
                 end
             end
         end
@@ -1310,7 +1303,7 @@ if GAME_ID == "utdx" then
 
     task.spawn(function()
         task.wait(2)
-        print("[UTDX] 🚀 บูส FPS ON | v2 (fog cutoff 300 + aggressive effect disable)")
+        print("[UTDX] 🚀 บูส FPS ON | v3 (DESTROY Camera + Fog cutoff 300)")
         boostFPS()
 
         -- Hook ของใหม่ที่ spawn เข้ามา → process ทันที
@@ -1427,22 +1420,13 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- ⭐ Hook Camera.DescendantAdded — ดักทุก effect ที่ spawn ใน Camera (ไม่ใช่แค่ child ตรง)
+        -- ⭐ Hook Camera.ChildAdded — DESTROY ทันทีที่ effect spawn ใน Camera
         local camFolder = workspace:FindFirstChild("Camera")
         if camFolder then
-            camFolder.DescendantAdded:Connect(function(d)
-                task.wait(0.03)
-                if d:IsA("BasePart") or d:IsA("MeshPart") then
-                    pcall(function() d.Transparency = 1 end)
-                    pcall(function() d.CastShadow = false end)
-                    pcall(function() d.LocalTransparencyModifier = 1 end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                    pcall(function() d.Enabled = false end)
-                elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                    pcall(function() d.Enabled = false end)
+            camFolder.ChildAdded:Connect(function(child)
+                task.wait(0.05)
+                if not child:IsA("Camera") then
+                    pcall(function() child:Destroy() end)
                 end
             end)
         end
@@ -1502,13 +1486,21 @@ if GAME_ID == "utdx" then
                             end
                         end
                     end
+                    -- ⭐ DESTROY Camera children ที่สะสม
                     local cm = workspace:FindFirstChild("Camera")
                     if cm then
-                        for _, d in ipairs(cm:GetDescendants()) do
-                            if d:IsA("BasePart") or d:IsA("MeshPart") then
-                                if d.Transparency ~= 1 then d.Transparency = 1 end
+                        for _, child in ipairs(cm:GetChildren()) do
+                            if not child:IsA("Camera") then
+                                pcall(function() child:Destroy() end)
                             end
                         end
+                    end
+
+                    -- ⭐ บังคับ Fog ใหม่ (เผื่อโดน reset)
+                    local L = game:GetService("Lighting")
+                    if L.FogEnd > 500 then
+                        L.FogEnd = 300
+                        L.FogStart = 250
                     end
                 end)
             end
