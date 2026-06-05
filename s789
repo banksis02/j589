@@ -970,13 +970,35 @@ if GAME_ID == "utdx" then
             if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
                 pcall(function() d.Transparency = 1 end)
                 pcall(function() d.CastShadow = false end)
+                pcall(function() d.LocalTransparencyModifier = 1 end)
             elseif d:IsA("Decal") or d:IsA("Texture") then
                 pcall(function() d.Transparency = 1 end)
             elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
                 or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
                 pcall(function() d.Enabled = false end)
+            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                -- ปิด HP bar / nameplate
+                pcall(function() d.Enabled = false end)
+            elseif d:IsA("Humanoid") then
+                -- ปิด nameplate ของ Humanoid
+                pcall(function() d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+                pcall(function() d.NameDisplayDistance = 0 end)
+                pcall(function() d.HealthDisplayDistance = 0 end)
             end
         end
+        -- Hook part ใหม่ที่จะ add เข้ามาภายใน model นี้
+        model.DescendantAdded:Connect(function(d)
+            task.wait(0.05)
+            if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                pcall(function() d.Transparency = 1 end)
+                pcall(function() d.CastShadow = false end)
+                pcall(function() d.LocalTransparencyModifier = 1 end)
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                pcall(function() d.Transparency = 1 end)
+            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                pcall(function() d.Enabled = false end)
+            end
+        end)
     end
 
     local function processInstance(obj)
@@ -1144,25 +1166,43 @@ if GAME_ID == "utdx" then
         -- ⭐ Hook workspace.Folder.* (themed enemies — Fodder, DBZ, ...) → ซ่อนศัตรูใหม่
         local themedRoot = workspace:FindFirstChild("Folder")
         if themedRoot then
+            local function processNew(d)
+                -- ดักทุก descendant — ไม่ต้องเป็น Model
+                if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                    pcall(function() d.Transparency = 1 end)
+                    pcall(function() d.CastShadow = false end)
+                    pcall(function() d.LocalTransparencyModifier = 1 end)
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    pcall(function() d.Transparency = 1 end)
+                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                    or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                    pcall(function() d.Enabled = false end)
+                elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+                    pcall(function() d.Enabled = false end)
+                elseif d:IsA("Humanoid") then
+                    pcall(function() d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+                end
+            end
+
             local function hookSub(sub)
+                -- ดักทุก descendant ใหม่ที่เพิ่มเข้ามา
                 sub.DescendantAdded:Connect(function(d)
-                    task.wait(0.15)
-                    if d:IsA("Model") then
-                        local playerNames = {}
-                        for _, p in ipairs(game.Players:GetPlayers()) do
-                            playerNames[p.Name] = true
-                        end
-                        if not playerNames[d.Name] then
-                            pcall(hideEnemyVisuals, d)
-                        end
-                    end
+                    task.wait(0.05)
+                    pcall(processNew, d)
                 end)
+                -- ซ่อนของที่มีอยู่แล้วในตอนนั้น
+                for _, d in ipairs(sub:GetDescendants()) do
+                    pcall(processNew, d)
+                end
             end
             for _, sub in ipairs(themedRoot:GetChildren()) do
                 hookSub(sub)
             end
             -- Hook sub-folder ใหม่ที่ themed root เพิ่มเข้ามา
-            themedRoot.ChildAdded:Connect(function(sub) hookSub(sub) end)
+            themedRoot.ChildAdded:Connect(function(sub)
+                task.wait(0.05)
+                hookSub(sub)
+            end)
         end
 
         -- ซ่อนศัตรูใหม่ใน enemy folder อื่นๆ
@@ -1178,9 +1218,9 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- รีเฟรชทุก 10 วิ (เผื่อ folder ใหม่/effect ที่กลับมา enable)
+        -- รีเฟรชเร็วขึ้นทุก 2 วิ (กัน Humanoid re-render)
         while true do
-            task.wait(10)
+            task.wait(2)
             pcall(boostFPS)
         end
     end)
