@@ -1001,7 +1001,21 @@ if GAME_ID == "utdx" then
         end)
     end
 
+    -- เช็คว่า object อยู่ใน folder ที่ห้ามแตะหรือไม่
+    local PROTECTED_PARENTS = { PathDECO=true, TerrainParts=true, Path=true, Spawns=true }
+    local function isProtected(obj)
+        local p = obj.Parent
+        while p and p ~= workspace do
+            if PROTECTED_PARENTS[p.Name] then return true end
+            p = p.Parent
+        end
+        return false
+    end
+
     local function processInstance(obj)
+        -- ห้ามแตะของใน PathDECO/TerrainParts/Path/Spawns
+        if isProtected(obj) then return end
+
         -- ปิด effects ทุกชนิด
         if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
            or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
@@ -1094,10 +1108,11 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 6) ⭐ Map.Decorations (4279 desc!) + Map.PathDECO + Map.TerrainParts → ซ่อนทั้งหมด
+        -- 6) ⭐ Map.Decorations (4279 desc!) + Props/Border — ซ่อน decoration เท่านั้น
+        -- ⚠️ ห้ามซ่อน: PathDECO (เส้นทางมอน), TerrainParts (พื้น), Path (waypoints)
         local map = workspace:FindFirstChild("Map")
         if map then
-            for _, subName in ipairs({ "Decorations","Decoration","PathDECO","TerrainParts","Props","Border" }) do
+            for _, subName in ipairs({ "Decorations","Decoration","Props","Border" }) do
                 local sub = map:FindFirstChild(subName)
                 if sub then
                     for _, d in ipairs(sub:GetDescendants()) do
@@ -1113,9 +1128,12 @@ if GAME_ID == "utdx" then
             end
 
             -- ⭐ ซ่อน Boss/Mob ที่เป็น Model ตรงๆ ใน Map (Vegito, Trunks, GokuBlack, Zamasu, ...)
-            -- ยกเว้น Path/Spawns/Static (ต้องเก็บไว้สำหรับ orientation)
-            local KEEP = { Path=true, Spawns=true, Static1=true, Static2=true,
-                          ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true }
+            -- ⚠️ KEEP = ไม่แตะ (เก็บไว้ให้เห็น)
+            local KEEP = {
+                Path=true, PathDECO=true, TerrainParts=true,    -- ⭐ พื้น + เส้นทาง
+                Spawns=true, Static1=true, Static2=true,
+                ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true
+            }
             for _, m in ipairs(map:GetChildren()) do
                 if m:IsA("Model") and not KEEP[m.Name] then
                     pcall(hideEnemyVisuals, m)
