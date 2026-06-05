@@ -1071,24 +1071,31 @@ if GAME_ID == "utdx" then
     end
 
     local function boostFPS()
-        -- 1) Lighting
+        -- 1) Lighting + Fog ตัดระยะ render
         pcall(function()
             local L = game:GetService("Lighting")
             L.GlobalShadows = false
-            L.FogEnd = 9e9
             L.Brightness = 1
+            L.EnvironmentSpecularScale = 0
+            L.EnvironmentDiffuseScale = 0
+            -- ⭐ ตัด render distance ด้วย Fog (ของไกลกลายเป็นหมอก ไม่ render)
+            L.FogEnd = 300        -- 300 stud = ของไกลกว่านี้หาย
+            L.FogStart = 250
+            L.FogColor = Color3.fromRGB(80,80,80)
+            -- ปิด post-effects ทั้งหมด
             for _, fx in ipairs(L:GetChildren()) do
                 if fx:IsA("BlurEffect") or fx:IsA("BloomEffect")
                    or fx:IsA("SunRaysEffect") or fx:IsA("ColorCorrectionEffect")
-                   or fx:IsA("DepthOfFieldEffect") then
-                    fx.Enabled = false
+                   or fx:IsA("DepthOfFieldEffect") or fx:IsA("Atmosphere") then
+                    pcall(function() fx.Enabled = false end)
                 end
             end
         end)
 
-        -- 2) Render quality
+        -- 2) Render quality ต่ำสุด + ปิด detail
         pcall(function()
             settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
         end)
 
         -- 3) Terrain
@@ -1303,7 +1310,7 @@ if GAME_ID == "utdx" then
 
     task.spawn(function()
         task.wait(2)
-        print("[UTDX] 🚀 บูส FPS ON")
+        print("[UTDX] 🚀 บูส FPS ON | v2 (fog cutoff 300 + aggressive effect disable)")
         boostFPS()
 
         -- Hook ของใหม่ที่ spawn เข้ามา → process ทันที
