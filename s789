@@ -945,8 +945,13 @@ if GAME_ID == "utdx" then
         "decoration","decor","vegetation",
         "cloud","fog"
     }
-    -- whitelist: ห้ามแตะ ถึงแม้ชื่อจะเข้า keyword ก็ตาม (เผื่อพื้นชื่อ "TreeFloor")
-    local FLOOR_KEYWORDS = { "floor","ground","base","tile","road","path","wall","ceiling","platform" }
+    -- whitelist: ห้ามแตะ ถึงแม้ชื่อจะเข้า keyword ก็ตาม
+    -- ครอบคลุม: พื้นปกติ + map ที่อยู่บนเขา/ภูเขา + พื้นโครงสร้าง
+    local FLOOR_KEYWORDS = {
+        "floor","ground","base","tile","road","path","wall","ceiling","platform",
+        "hill","mountain","land","terrain","cliff","rock","stone","grass",
+        "bridge","stair","step","pillar","column","arena","field","plain"
+    }
     local function isFloorPart(obj)
         local n = obj.Name:lower()
         for _, kw in ipairs(FLOOR_KEYWORDS) do
@@ -1157,7 +1162,10 @@ if GAME_ID == "utdx" then
             }
             for _, m in ipairs(map:GetChildren()) do
                 if m:IsA("Model") and not KEEP[m.Name] then
-                    pcall(hideEnemyVisuals, m)
+                    -- ⭐ ถ้า Model ชื่อเป็น floor/hill/terrain → ห้ามแตะ
+                    if not isFloorPart(m) then
+                        pcall(hideEnemyVisuals, m)
+                    end
                 end
             end
         end
@@ -1435,11 +1443,12 @@ if GAME_ID == "utdx" then
         -- ⭐ Hook workspace.Map.ChildAdded → boss/มอน spawn ใหม่ใน Map → ซ่อนทันที
         local map = workspace:FindFirstChild("Map")
         if map then
-            local KEEP = { Path=true, Spawns=true, Static1=true, Static2=true,
+            local KEEP = { Path=true, PathDECO=true, TerrainParts=true,
+                          Spawns=true, Static1=true, Static2=true,
                           ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true }
             map.ChildAdded:Connect(function(child)
                 task.wait(0.1)
-                if child:IsA("Model") and not KEEP[child.Name] then
+                if child:IsA("Model") and not KEEP[child.Name] and not isFloorPart(child) then
                     pcall(hideEnemyVisuals, child)
                 end
             end)
