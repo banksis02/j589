@@ -939,11 +939,21 @@ if GAME_ID == "utdx" then
     -- ============================================================
     -- บูส FPS — ปิด effects, ลบ decoration, ซ่อนศัตรู
     -- ============================================================
+    -- ⚠️ ห้ามใส่ "rock","stone","grass" — เพราะ map บางด่าน มี floor ชื่อพวกนี้
     local DECO_KEYWORDS = {
-        "tree","grass","bush","plant","flower","leaf","leaves",
-        "rock","stone","decoration","decor","vegetation",
-        "cloud","fog","sky","sun","moon"
+        "tree","bush","plant","flower","leaf","leaves",
+        "decoration","decor","vegetation",
+        "cloud","fog"
     }
+    -- whitelist: ห้ามแตะ ถึงแม้ชื่อจะเข้า keyword ก็ตาม (เผื่อพื้นชื่อ "TreeFloor")
+    local FLOOR_KEYWORDS = { "floor","ground","base","tile","road","path","wall","ceiling","platform" }
+    local function isFloorPart(obj)
+        local n = obj.Name:lower()
+        for _, kw in ipairs(FLOOR_KEYWORDS) do
+            if n:find(kw) then return true end
+        end
+        return false
+    end
     local ENEMY_FOLDERS = {
         "Enemies","Mobs","Zombies","EnemyFolder","Enemy",
         "EnemiesFolder","MobFolder","ActiveEnemies",
@@ -954,6 +964,8 @@ if GAME_ID == "utdx" then
     local KILL_FOLDERS = { "Lumina Particles","VFX","Particles","Effects" }
 
     local function isDecoration(obj)
+        -- ⭐ ถ้าเป็น floor/path/wall → ห้ามนับว่า decoration
+        if isFloorPart(obj) then return false end
         local n = obj.Name:lower()
         for _, kw in ipairs(DECO_KEYWORDS) do
             if n:find(kw) then return true end
@@ -1114,8 +1126,8 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 6) ⭐ Map.Decorations (4279 desc!) + Props/Border — ซ่อน decoration เท่านั้น
-        -- ⚠️ ห้ามซ่อน: PathDECO (เส้นทางมอน), TerrainParts (พื้น), Path (waypoints)
+        -- 6) ⭐ Map.Decorations + Props/Border — ซ่อน decoration (แต่ skip parts ที่ดูเป็นพื้น)
+        -- ⚠️ ห้ามซ่อน: PathDECO, TerrainParts, Path (waypoints)
         local map = workspace:FindFirstChild("Map")
         if map then
             for _, subName in ipairs({ "Decorations","Decoration","Props","Border" }) do
@@ -1123,9 +1135,12 @@ if GAME_ID == "utdx" then
                 if sub then
                     for _, d in ipairs(sub:GetDescendants()) do
                         if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                            pcall(function() d.Transparency = 1 end)
-                            pcall(function() d.CanCollide = false end)
-                            pcall(function() d.CastShadow = false end)
+                            -- ⭐ skip ถ้าดูเป็นพื้น/path/wall (ใช้ keyword)
+                            if not isFloorPart(d) then
+                                pcall(function() d.Transparency = 1 end)
+                                pcall(function() d.CanCollide = false end)
+                                pcall(function() d.CastShadow = false end)
+                            end
                         elseif d:IsA("Decal") or d:IsA("Texture") then
                             pcall(function() d.Transparency = 1 end)
                         end
