@@ -1153,15 +1153,34 @@ if GAME_ID == "utdx" then
                 end
             end
 
-            -- ⭐ ลบ effects ของยูนิตฉันเอง (ใน Ignore.Units) — เก็บตัวยูนิตให้เห็น แต่ปิด particle/beam/trail
+            -- ⭐ Ignore.Units = ยูนิตเรา (UUID) + ศัตรู (เลข)
+            -- - ยูนิตเรา: ชื่อเป็น UUID (8-4-4-4-12) หรือมี Identifier attribute → เก็บไว้ + ปิดแค่ effects
+            -- - ศัตรู: ชื่อเป็นเลขล้วน ไม่มี Identifier → ซ่อนทั้งตัว
             local myUnits = ignore:FindFirstChild("Units")
             if myUnits then
-                for _, d in ipairs(myUnits:GetDescendants()) do
-                    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                       or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                        pcall(function() d.Enabled = false end)
-                    elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                        pcall(function() d.Enabled = false end)
+                local function isPlayerUnit(m)
+                    if m:GetAttribute("Identifier") then return true end
+                    if m:GetAttribute("ManualTargeting") ~= nil then return true end
+                    -- UUID format: 8-4-4-4-12 hex chars
+                    if m.Name:match("^[%w]+%-[%w]+%-[%w]+%-[%w]+%-[%w]+$") then return true end
+                    return false
+                end
+                for _, unit in ipairs(myUnits:GetChildren()) do
+                    if unit:IsA("Model") then
+                        if isPlayerUnit(unit) then
+                            -- ยูนิตเรา: ปิดแค่ effects เก็บตัวไว้ให้เห็น
+                            for _, d in ipairs(unit:GetDescendants()) do
+                                if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                                    pcall(function() d.Enabled = false end)
+                                elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                                    pcall(function() d.Enabled = false end)
+                                end
+                            end
+                        else
+                            -- ⭐ ศัตรู: ซ่อนทั้งตัว
+                            pcall(hideEnemyVisuals, unit)
+                        end
                     end
                 end
             end
@@ -1279,11 +1298,27 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- ⭐ Hook Ignore.Units.DescendantAdded → effect สกิลที่ spawn ใหม่ในยูนิต → ปิดทันที
+        -- ⭐ Hook Ignore.Units → ปิด effects ของยูนิตเรา + ซ่อนศัตรูใหม่ที่ spawn
         local ignoreFolder = workspace:FindFirstChild("Ignore")
         if ignoreFolder then
             local myUnits = ignoreFolder:FindFirstChild("Units")
             if myUnits then
+                local function isPlayerUnit(m)
+                    if m:GetAttribute("Identifier") then return true end
+                    if m:GetAttribute("ManualTargeting") ~= nil then return true end
+                    if m.Name:match("^[%w]+%-[%w]+%-[%w]+%-[%w]+%-[%w]+$") then return true end
+                    return false
+                end
+
+                -- ⭐ มอนใหม่ spawn (ChildAdded ที่ Units folder) → ตรวจชื่อ ถ้าเป็นเลข = ศัตรู ซ่อนทันที
+                myUnits.ChildAdded:Connect(function(unit)
+                    task.wait(0.1)
+                    if unit:IsA("Model") and not isPlayerUnit(unit) then
+                        pcall(hideEnemyVisuals, unit)
+                    end
+                end)
+
+                -- ปิด effect ของยูนิตเรา (ทุก descendant ใหม่)
                 myUnits.DescendantAdded:Connect(function(d)
                     task.wait(0.05)
                     if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
