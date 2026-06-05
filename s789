@@ -1147,14 +1147,26 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 7) Ignore.Effects (41 desc) + Drops, GhostUnits, Hitboxes
+        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — บังคับซ่อนทุก Part (mesh effect ก็หาย)
         local ignore = workspace:FindFirstChild("Ignore")
         if ignore then
             for _, subName in ipairs({ "Effects","Drops","GhostUnits","Hitboxes" }) do
                 local sub = ignore:FindFirstChild(subName)
                 if sub then
                     for _, d in ipairs(sub:GetDescendants()) do
-                        pcall(processInstance, d)
+                        -- ⭐ บังคับ Transparency = 1 ทุก BasePart (ไม่สนชื่อ)
+                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CastShadow = false end)
+                            pcall(function() d.LocalTransparencyModifier = 1 end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                            pcall(function() d.Enabled = false end)
+                        elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                            pcall(function() d.Enabled = false end)
+                        end
                     end
                 end
             end
@@ -1171,16 +1183,45 @@ if GAME_ID == "utdx" then
                     if m.Name:match("^[%w]+%-[%w]+%-[%w]+%-[%w]+%-[%w]+$") then return true end
                     return false
                 end
+                -- sub-model ในยูนิตเราที่ถือว่าเป็น effect (Aura/Glow/Slash/Aurora/...)
+                local FX_SUBMODELS = {
+                    aura=true, glow=true, slash=true, blast=true, wave=true, beam=true,
+                    explosion=true, particle=true, effect=true, shockwave=true,
+                    aurora=true, energy=true, ki=true, halo=true, ring=true,
+                    cloak=true, trail=true, dome=true, light=true, fire=true,
+                    fx=true, vfx=true, ["fx_"]=true,
+                }
+                local function isFXSubModel(name)
+                    local lower = name:lower()
+                    for kw in pairs(FX_SUBMODELS) do
+                        if lower:find(kw) then return true end
+                    end
+                    return false
+                end
+
                 for _, unit in ipairs(myUnits:GetChildren()) do
                     if unit:IsA("Model") then
                         if isPlayerUnit(unit) then
-                            -- ยูนิตเรา: ปิดแค่ effects เก็บตัวไว้ให้เห็น
+                            -- ยูนิตเรา: ปิด effects + ซ่อน FX sub-model (Aura/Glow/Slash)
                             for _, d in ipairs(unit:GetDescendants()) do
                                 if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
                                    or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
                                     pcall(function() d.Enabled = false end)
                                 elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
                                     pcall(function() d.Enabled = false end)
+                                end
+                            end
+                            -- ⭐ ซ่อน FX sub-model (Aura/Glow/etc.) ในยูนิต
+                            for _, sub in ipairs(unit:GetChildren()) do
+                                if (sub:IsA("Model") or sub:IsA("Folder")) and isFXSubModel(sub.Name) then
+                                    for _, d in ipairs(sub:GetDescendants()) do
+                                        if d:IsA("BasePart") or d:IsA("MeshPart") then
+                                            pcall(function() d.Transparency = 1 end)
+                                            pcall(function() d.CanCollide = false end)
+                                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                                            pcall(function() d.Transparency = 1 end)
+                                        end
+                                    end
                                 end
                             end
                         else
@@ -1334,13 +1375,25 @@ if GAME_ID == "utdx" then
                 end)
             end
 
-            -- Hook Ignore.Effects.ChildAdded สำหรับ effect runtime
-            local effects = ignoreFolder:FindFirstChild("Effects")
-            if effects then
-                effects.DescendantAdded:Connect(function(d)
-                    task.wait(0.05)
-                    pcall(processInstance, d)
-                end)
+            -- ⭐ Hook Ignore.Effects + Drops + GhostUnits + Hitboxes — บังคับซ่อนทันทีที่ effect spawn
+            for _, fname in ipairs({"Effects","Drops","GhostUnits","Hitboxes"}) do
+                local f = ignoreFolder:FindFirstChild(fname)
+                if f then
+                    f.DescendantAdded:Connect(function(d)
+                        task.wait(0.03)
+                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CastShadow = false end)
+                            pcall(function() d.LocalTransparencyModifier = 1 end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
+                           or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                            pcall(function() d.Enabled = false end)
+                        end
+                    end)
+                end
             end
         end
 
@@ -1390,9 +1443,49 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- รีเฟรชเร็วขึ้นทุก 2 วิ (กัน Humanoid re-render)
+        -- ⭐ Loop aggressive ทุก 0.5 วิ — ดักทุก effect (particle + mesh ใน Ignore.Effects/Camera)
+        task.spawn(function()
+            while true do
+                task.wait(0.5)
+                pcall(function()
+                    -- ปิด particle/beam/trail ทั่ว workspace
+                    for _, d in ipairs(workspace:GetDescendants()) do
+                        if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                            if d.Enabled then d.Enabled = false end
+                        elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+                            if d.Enabled then d.Enabled = false end
+                        end
+                    end
+                    -- ⭐ บังคับ Transparency = 1 ทุก Part ใน Ignore.Effects + Camera
+                    local ig = workspace:FindFirstChild("Ignore")
+                    if ig then
+                        for _, sub in ipairs({ig:FindFirstChild("Effects"), ig:FindFirstChild("Drops"),
+                                              ig:FindFirstChild("GhostUnits"), ig:FindFirstChild("Hitboxes")}) do
+                            if sub then
+                                for _, d in ipairs(sub:GetDescendants()) do
+                                    if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                                        if d.Transparency ~= 1 then d.Transparency = 1 end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    local cm = workspace:FindFirstChild("Camera")
+                    if cm then
+                        for _, d in ipairs(cm:GetDescendants()) do
+                            if d:IsA("BasePart") or d:IsA("MeshPart") then
+                                if d.Transparency ~= 1 then d.Transparency = 1 end
+                            end
+                        end
+                    end
+                end)
+            end
+        end)
+
+        -- รีเฟรชเต็มทุก 5 วิ
         while true do
-            task.wait(2)
+            task.wait(5)
             pcall(boostFPS)
         end
     end)
