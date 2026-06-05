@@ -936,37 +936,258 @@ if GAME_ID == "utdx" then
         end
     end)
 
-end
+    -- ============================================================
+    -- บูส FPS — ปิด effects, ลบ decoration, ซ่อนศัตรู
+    -- ============================================================
+    local DECO_KEYWORDS = {
+        "tree","grass","bush","plant","flower","leaf","leaves",
+        "rock","stone","decoration","decor","vegetation",
+        "cloud","fog","sky","sun","moon"
+    }
+    local ENEMY_FOLDERS = {
+        "Enemies","Mobs","Zombies","EnemyFolder","Enemy",
+        "EnemiesFolder","MobFolder","ActiveEnemies",
+        "Units","UnitFolder",  -- บาง UTDX เก็บใน Units
+        "Characters"
+    }
+    -- folder ที่ทั้งก้อนเป็น effects — ปิดทั้งกลุ่ม
+    local KILL_FOLDERS = { "Lumina Particles","VFX","Particles","Effects" }
 
-task.spawn(function()
-    while true do
-        for _, obj in ipairs(game.Workspace:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") and obj.ActionText == "Free Unit" then
-                local part = obj.Parent
-                local pos = nil
-                if part:IsA("Attachment") then
-                    pos = part.WorldPosition
-                elseif part:IsA("BasePart") then
-                    pos = part.Position
+    local function isDecoration(obj)
+        local n = obj.Name:lower()
+        for _, kw in ipairs(DECO_KEYWORDS) do
+            if n:find(kw) then return true end
+        end
+        local parentName = obj.Parent and obj.Parent.Name:lower() or ""
+        for _, kw in ipairs(DECO_KEYWORDS) do
+            if parentName:find(kw) then return true end
+        end
+        return false
+    end
+
+    local function hideEnemyVisuals(model)
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                pcall(function() d.Transparency = 1 end)
+                pcall(function() d.CastShadow = false end)
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                pcall(function() d.Transparency = 1 end)
+            elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                pcall(function() d.Enabled = false end)
+            end
+        end
+    end
+
+    local function processInstance(obj)
+        -- ปิด effects ทุกชนิด
+        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+           or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
+           or obj:IsA("Explosion") then
+            pcall(function() obj.Enabled = false end)
+            return
+        end
+        -- ลบ decal/texture
+        if obj:IsA("Decal") or obj:IsA("Texture") then
+            pcall(function() obj.Transparency = 1 end)
+            return
+        end
+        -- ลด post-effects
+        if obj:IsA("PostEffect") or obj:IsA("BlurEffect") or obj:IsA("BloomEffect")
+           or obj:IsA("SunRaysEffect") or obj:IsA("ColorCorrectionEffect")
+           or obj:IsA("DepthOfFieldEffect") then
+            pcall(function() obj.Enabled = false end)
+            return
+        end
+        -- BasePart: ซ่อน decoration / ลด material
+        if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation") then
+            if isDecoration(obj) then
+                pcall(function() obj.Transparency = 1 end)
+                pcall(function() obj.CanCollide = false end)
+            end
+            pcall(function() obj.Material = Enum.Material.SmoothPlastic end)
+            pcall(function() obj.CastShadow = false end)
+            pcall(function() obj.Reflectance = 0 end)
+        end
+    end
+
+    local function boostFPS()
+        -- 1) Lighting
+        pcall(function()
+            local L = game:GetService("Lighting")
+            L.GlobalShadows = false
+            L.FogEnd = 9e9
+            L.Brightness = 1
+            for _, fx in ipairs(L:GetChildren()) do
+                if fx:IsA("BlurEffect") or fx:IsA("BloomEffect")
+                   or fx:IsA("SunRaysEffect") or fx:IsA("ColorCorrectionEffect")
+                   or fx:IsA("DepthOfFieldEffect") then
+                    fx.Enabled = false
                 end
-                if pos then
-                    local hrp = game.Players.LocalPlayer.Character and
-                                game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-                        task.wait(0.3)
-                        fireproximityprompt(obj)
-                        print("[FREE] Freed:", obj.ObjectText)
-                        task.wait(0.5)
+            end
+        end)
+
+        -- 2) Render quality
+        pcall(function()
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+
+        -- 3) Terrain
+        pcall(function()
+            local t = workspace.Terrain
+            t.WaterReflectance = 0
+            t.WaterTransparency = 1
+            t.WaterWaveSize = 0
+            t.WaterWaveSpeed = 0
+            t.Decoration = false
+        end)
+
+        local playerNames = {}
+        for _, p in ipairs(game.Players:GetPlayers()) do
+            playerNames[p.Name] = true
+        end
+
+        -- 4) ปิด folder effects ทั้งกลุ่ม (Lumina Particles, VFX, ฯลฯ)
+        for _, fname in ipairs(KILL_FOLDERS) do
+            local f = workspace:FindFirstChild(fname)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    pcall(processInstance, d)
+                end
+            end
+        end
+
+        -- 5) ⭐ workspace.Folder.* (Fodder, DBZ, HuecoMaterials, ...) → ศัตรูจริงๆ
+        local themedRoot = workspace:FindFirstChild("Folder")
+        if themedRoot then
+            for _, sub in ipairs(themedRoot:GetChildren()) do
+                for _, m in ipairs(sub:GetDescendants()) do
+                    if m:IsA("Model") and not playerNames[m.Name] then
+                        pcall(hideEnemyVisuals, m)
+                    elseif m:IsA("BasePart") or m:IsA("MeshPart") then
+                        pcall(function() m.CastShadow = false end)
+                        pcall(function() m.Material = Enum.Material.SmoothPlastic end)
                     end
                 end
             end
         end
-        task.wait(0.2)
-    end
-end)
 
-print("Free Unit watcher ready!")
+        -- 6) Map.Decoration + Map.Props → ต้นไม้/หิน/decoration
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            for _, subName in ipairs({ "Decoration", "Props", "Border" }) do
+                local sub = map:FindFirstChild(subName)
+                if sub then
+                    for _, d in ipairs(sub:GetDescendants()) do
+                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CanCollide = false end)
+                            pcall(function() d.CastShadow = false end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- 7) Ignore.Effects, Ignore.GhostUnits, Ignore.Hitboxes
+        local ignore = workspace:FindFirstChild("Ignore")
+        if ignore then
+            for _, subName in ipairs({ "Effects", "GhostUnits", "Hitboxes" }) do
+                local sub = ignore:FindFirstChild(subName)
+                if sub then
+                    for _, d in ipairs(sub:GetDescendants()) do
+                        pcall(processInstance, d)
+                    end
+                end
+            end
+        end
+
+        -- 8) Terrain.TempVFX
+        local tempVfx = workspace.Terrain:FindFirstChild("TempVFX")
+        if tempVfx then
+            for _, d in ipairs(tempVfx:GetDescendants()) do
+                pcall(processInstance, d)
+            end
+        end
+
+        -- 9) ซ่อนยูนิตศัตรูใน folder อื่นๆ (เผื่อมี)
+        for _, fname in ipairs(ENEMY_FOLDERS) do
+            local f = workspace:FindFirstChild(fname)
+            if f then
+                for _, e in ipairs(f:GetChildren()) do
+                    if e:IsA("Model") and not playerNames[e.Name] then
+                        pcall(hideEnemyVisuals, e)
+                    end
+                end
+            end
+        end
+
+        -- 10) Process ทุก descendant ใน workspace (final pass)
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            processInstance(obj)
+        end
+    end
+
+    task.spawn(function()
+        task.wait(2)
+        print("[UTDX] 🚀 บูส FPS ON")
+        boostFPS()
+
+        -- Hook ของใหม่ที่ spawn เข้ามา → process ทันที
+        workspace.DescendantAdded:Connect(function(obj)
+            task.wait(0.1)
+            pcall(processInstance, obj)
+        end)
+
+        -- ⭐ Hook workspace.Folder.* (themed enemies — Fodder, DBZ, ...) → ซ่อนศัตรูใหม่
+        local themedRoot = workspace:FindFirstChild("Folder")
+        if themedRoot then
+            local function hookSub(sub)
+                sub.DescendantAdded:Connect(function(d)
+                    task.wait(0.15)
+                    if d:IsA("Model") then
+                        local playerNames = {}
+                        for _, p in ipairs(game.Players:GetPlayers()) do
+                            playerNames[p.Name] = true
+                        end
+                        if not playerNames[d.Name] then
+                            pcall(hideEnemyVisuals, d)
+                        end
+                    end
+                end)
+            end
+            for _, sub in ipairs(themedRoot:GetChildren()) do
+                hookSub(sub)
+            end
+            -- Hook sub-folder ใหม่ที่ themed root เพิ่มเข้ามา
+            themedRoot.ChildAdded:Connect(function(sub) hookSub(sub) end)
+        end
+
+        -- ซ่อนศัตรูใหม่ใน enemy folder อื่นๆ
+        for _, fname in ipairs(ENEMY_FOLDERS) do
+            local f = workspace:FindFirstChild(fname)
+            if f then
+                f.ChildAdded:Connect(function(child)
+                    task.wait(0.2)
+                    if child:IsA("Model") then
+                        pcall(hideEnemyVisuals, child)
+                    end
+                end)
+            end
+        end
+
+        -- รีเฟรชทุก 10 วิ (เผื่อ folder ใหม่/effect ที่กลับมา enable)
+        while true do
+            task.wait(10)
+            pcall(boostFPS)
+        end
+    end)
+
+end
+
+-- Free Unit watcher ถูกย้ายไปอยู่ในปุ่ม UI "แก้มัด" (ปุ่ม #10)
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
 
@@ -1118,6 +1339,40 @@ do
             end)
         end
 
+        -- ========== แก้มัด (ปุ่ม 10) — ปล่อย ProximityPrompt "Free Unit" / "ยูนิตฟรี" ==========
+        local function isFreeUnitPrompt(obj)
+            local at = obj.ActionText or ""
+            local ot = obj.ObjectText or ""
+            -- รองรับทุกภาษา + ตรวจ ObjectText ด้วย (เผื่อภาษาอื่น)
+            if at == "Free Unit" or at == "ยูนิตฟรี" then return true end
+            if at:lower():find("free") and at:lower():find("unit") then return true end
+            if at:find("ยูนิตฟรี") or at:find("ฟรียูนิต") or at:find("ปลด") or at:find("แก้") then return true end
+            -- ObjectText บอกว่าโดน effect (Mochi แข็งตัว, Frozen, ฯลฯ)
+            if ot:find("แข็งตัว") or ot:lower():find("frozen") or ot:lower():find("trap") or ot:lower():find("bind") then return true end
+            return false
+        end
+
+        local function freeUnit()
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") and obj.Enabled and isFreeUnitPrompt(obj) then
+                    local part = obj.Parent
+                    local pos = nil
+                    if part:IsA("Attachment") then pos = part.WorldPosition
+                    elseif part:IsA("BasePart") then pos = part.Position end
+                    if pos then
+                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+                            task.wait(0.3)
+                            pcall(fireproximityprompt, obj)
+                            print("[FREE] Freed:", obj.ObjectText, "| Action:", obj.ActionText)
+                            task.wait(0.5)
+                        end
+                    end
+                end
+            end
+        end
+
         -- ========== คลิกกลางจอ (ปุ่ม 9) — เก็บไอเทมในเกม ทุก 5 วิ ==========
         local function clickCenter()
             if not inGame() then return end
@@ -1137,8 +1392,8 @@ do
         screenGui.Parent = playerGui
 
         local frame = Instance.new("Frame")
-        -- 9 ปุ่ม × 36 + title 24 + padding 16 ≈ 364
-        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,360)
+        -- 10 ปุ่ม × 36 + title 24 + padding 16 ≈ 400
+        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,396)
         -- โหลดตำแหน่งล่าสุดที่ลากไว้ ถ้าไม่มี → fallback ที่ซ้ายบน (พ้นเมนู Roblox)
         local savedX, savedY = loadPos()
         if savedX and savedY then
@@ -1194,16 +1449,17 @@ do
         local btnRp, sRp   = makeButton("▶ Replay",              242)
         local btnNm, sNm   = makeButton("▶ NextMap",             278)
         local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          314)
+        local btnFU, sFU   = makeButton("▶ แก้มัด",               350)
 
         -- เก็บปุ่มทั้งหมดเข้า list เพื่อจัดการ visible/minimize ทีเดียว
-        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnNd, btnVd, btnRp, btnNm, btnCC }
+        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnNd, btnVd, btnRp, btnNm, btnCC, btnFU }
         local function setBtnsVisible(v)
             for _, b in ipairs(ALL_BTNS) do b.Visible = v end
         end
 
         -- ย่อ/ขยาย UI
         local isMinimized = true
-        local FULL_SIZE   = UDim2.new(0,170,0,360)
+        local FULL_SIZE   = UDim2.new(0,170,0,396)
         local MINI_SIZE   = UDim2.new(0,170,0,24)
 
         -- เริ่มต้นด้วยสถานะย่อ
@@ -1385,6 +1641,9 @@ do
         -- 9: คลิกกลางจอ loop toggle (ในเกม, ทุก 5 วิ)
         local autoCC = makeToggle(btnCC, sCC, "clickcenter_state.txt", clickCenter, "คลิกกลางจอ", 5)
 
+        -- 10: แก้มัด loop toggle — สแกน Free Unit prompts ทุก 0.2 วิ
+        local autoFU = makeToggle(btnFU, sFU, "freeunit_state.txt", freeUnit, "แก้มัด", 0.2)
+
         -- Hook MatchFinished → fire Replay/NextMap ตาม flag
         local LogServiceUI = game:GetService("LogService")
         local lastFireTime = 0
@@ -1565,6 +1824,7 @@ do
         autoR()   -- Replay
         autoNm()  -- NextMap
         autoCC()  -- คลิกกลางจอ (loop จะรันต่อ)
+        autoFU()  -- แก้มัด (loop จะรันต่อ)
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
 end
