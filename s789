@@ -1138,23 +1138,16 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 6) ⭐ Map.Decorations + Props/Border — ซ่อน decoration (แต่ skip parts ที่ดูเป็นพื้น)
-        -- ⚠️ ห้ามซ่อน: PathDECO, TerrainParts, Path (waypoints)
+        -- 6) ⭐ Map.Decorations/Props/Border — DESTROY (free memory จริงๆ)
+        -- ⚠️ ห้าม destroy: PathDECO, TerrainParts, Path
         local map = workspace:FindFirstChild("Map")
         if map then
             for _, subName in ipairs({ "Decorations","Decoration","Props","Border" }) do
                 local sub = map:FindFirstChild(subName)
                 if sub then
-                    for _, d in ipairs(sub:GetDescendants()) do
-                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                            -- ⭐ skip ถ้าดูเป็นพื้น/path/wall (ใช้ keyword)
-                            if not isFloorPart(d) then
-                                pcall(function() d.Transparency = 1 end)
-                                pcall(function() d.CanCollide = false end)
-                                pcall(function() d.CastShadow = false end)
-                            end
-                        elseif d:IsA("Decal") or d:IsA("Texture") then
-                            pcall(function() d.Transparency = 1 end)
+                    for _, child in ipairs(sub:GetChildren()) do
+                        if not isFloorPart(child) then
+                            pcall(function() child:Destroy() end)
                         end
                     end
                 end
@@ -1177,26 +1170,14 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — บังคับซ่อนทุก Part (mesh effect ก็หาย)
+        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — DESTROY ทั้งหมด (effect ไม่ใช่ logic)
         local ignore = workspace:FindFirstChild("Ignore")
         if ignore then
             for _, subName in ipairs({ "Effects","Drops","GhostUnits","Hitboxes" }) do
                 local sub = ignore:FindFirstChild(subName)
                 if sub then
-                    for _, d in ipairs(sub:GetDescendants()) do
-                        -- ⭐ บังคับ Transparency = 1 ทุก BasePart (ไม่สนชื่อ)
-                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                            pcall(function() d.Transparency = 1 end)
-                            pcall(function() d.CastShadow = false end)
-                            pcall(function() d.LocalTransparencyModifier = 1 end)
-                        elseif d:IsA("Decal") or d:IsA("Texture") then
-                            pcall(function() d.Transparency = 1 end)
-                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                            pcall(function() d.Enabled = false end)
-                        elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                            pcall(function() d.Enabled = false end)
-                        end
+                    for _, child in ipairs(sub:GetChildren()) do
+                        pcall(function() child:Destroy() end)
                     end
                 end
             end
@@ -1303,8 +1284,9 @@ if GAME_ID == "utdx" then
 
     task.spawn(function()
         task.wait(2)
-        print("[UTDX] 🚀 บูส FPS ON | v3 (DESTROY Camera + Fog cutoff 300)")
+        print("[UTDX] 🚀 บูส FPS ON | v4 (DESTROY Decorations/Effects/Camera + Fog 300)")
         boostFPS()
+        pcall(function() collectgarbage("collect") end)
 
         -- Hook ของใหม่ที่ spawn เข้ามา → process ทันที
         workspace.DescendantAdded:Connect(function(obj)
@@ -1506,10 +1488,11 @@ if GAME_ID == "utdx" then
             end
         end)
 
-        -- รีเฟรชเต็มทุก 5 วิ
+        -- รีเฟรชเต็มทุก 5 วิ + force GC
         while true do
             task.wait(5)
             pcall(boostFPS)
+            pcall(function() collectgarbage("collect") end)
         end
     end)
 
