@@ -1515,6 +1515,52 @@ if game.PlaceId == 133410800847665 then
         end)
         print("[ANTI-AFK Lobby] ✅ Ready")
     end)
+
+    -- ============================================================
+    -- [UTDX Lobby] Auto Redeem Codes
+    -- ============================================================
+    task.spawn(function()
+        local CODES = {
+            "300kInterestedBeast",
+            "275kInterestedBeast!",
+            "subto_s3resutiaru!",
+            "SmallUtopiaPatch!",
+            "200kInterestedBeast!",
+            "3.0Part2Update!",
+            "FusionUpdate!",
+            "MercilessGodIsHere!",
+            "NewBattlePass!!",
+            "UniversalInfo3.0Part2!",
+        }
+        task.wait(8)  -- รอเข้า lobby + Packages โหลดเสร็จ
+        local ok, redeemRF = pcall(function()
+            return game:GetService("ReplicatedStorage")
+                :WaitForChild("Packages", 10):WaitForChild("_Index", 10)
+                :WaitForChild("sleitnick_knit@1.7.0", 10):WaitForChild("knit", 10)
+                :WaitForChild("Services", 10):WaitForChild("CodeService", 10)
+                :WaitForChild("RF", 10):WaitForChild("Redeem", 10)
+        end)
+        if not ok or not redeemRF then
+            warn("[REDEEM] ไม่พบ Redeem RF")
+            return
+        end
+        print("[REDEEM] 🎁 เริ่ม redeem", #CODES, "โค้ด...")
+        local success, failed = 0, 0
+        for _, code in ipairs(CODES) do
+            local ok2, result = pcall(function()
+                return redeemRF:InvokeServer(code)
+            end)
+            if ok2 then
+                print("[REDEEM] ✅", code, "→", tostring(result))
+                success = success + 1
+            else
+                warn("[REDEEM] ❌", code, "→", tostring(result))
+                failed = failed + 1
+            end
+            task.wait(1)  -- ช้าลงนิดเผื่อ rate limit
+        end
+        print(string.format("[REDEEM] 🎁 เสร็จ! สำเร็จ %d | ไม่ได้ %d", success, failed))
+    end)
 end
 
 -- ============================================================
