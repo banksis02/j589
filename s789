@@ -710,7 +710,8 @@ if GAME_ID == "utdx" then
         ["rbxassetid://121805709165537"] = "Moon",
         ["rbxassetid://88547227449378"]  = "MoonGold",
         ["rbxassetid://97554990018157"]  = "Potara",
-        ["rbxassetid://123094098594418"]  = "Unrivaled 1 (Gogeta)",
+        ["rbxassetid://123094098594418"] = "Unrivaled 1 (Gogeta)",
+        ["rbxassetid://140094120842771"] = "Item_140094",  -- ใหม่หลังอัพเดต (ยังไม่รู้ชื่อ)
     }
 
     LogService.MessageOut:Connect(function(message, messageType)
@@ -738,22 +739,53 @@ if GAME_ID == "utdx" then
             local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
             local rewards = "N/A"
 
-            -- ⭐ Retry loop — อ่านซ้ำจนกว่าจะได้ค่าจริง (ไม่ใช่ template text)
+            -- ⭐ อ่านชื่อด่านจาก HUD ก่อน (เกมมี bug MRF ไม่ populate)
+            local stageName = ""
+            pcall(function()
+                local stage = gui.GameUI.HUD.RightFrame.Stage
+                -- ลองอ่าน MapName + Act
+                local mn = stage:FindFirstChild("MapName")
+                local ac = stage:FindFirstChild("Act")
+                if mn and mn.Text ~= "" then stageName = mn.Text end
+                if ac and ac.Text ~= "" then
+                    if stageName ~= "" then act = stageName .. " - " .. ac.Text
+                    else act = ac.Text end
+                else
+                    act = stageName
+                end
+            end)
+
+            -- ⭐ Retry MRF — ลอง MissionResultFrameNew ก่อน (เกมอัพเดต)
             local waited = 0
             while waited < 8 do
+                -- Banner.ActName + Difficulty (ลอง MRF ใหม่ก่อน)
                 pcall(function()
-                    local banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
+                    local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
+                    local banner
+                    if mrfn then
+                        banner = mrfn.Root.MainVictory.Content.Description.Content.Banner.Container
+                    else
+                        banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
+                    end
                     local a = banner.ActName.Text or ""
                     local d = banner.DifficultyPercent.Text or ""
-                    -- ✅ ค่าจริง = ไม่ใช่ "Act Name..." (template text)
                     if a ~= "" and not a:find("Act Name") and not a:find("%.%.%.") then
                         act = a
+                    end
+                    if d ~= "" and not d:find("%.%.%.") then
                         difficulty = d
                     end
                 end)
 
+                -- Stats.PlayTime
                 pcall(function()
-                    local statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
+                    local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
+                    local statsFrame
+                    if mrfn then
+                        statsFrame = mrfn.Root.MainVictory.Content.Description.Content.Stats.frame
+                    else
+                        statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
+                    end
                     for _, child in ipairs(statsFrame:GetChildren()) do
                         local statName = child:FindFirstChild("StatName")
                         local statValue = child:FindFirstChild("StatValue")
@@ -766,11 +798,18 @@ if GAME_ID == "utdx" then
                     end
                 end)
 
-                -- ออก loop ถ้าได้ act + playTime แล้ว
                 if act ~= "N/A" and playTime ~= "N/A" then break end
 
                 task.wait(0.3)
                 waited = waited + 0.3
+            end
+
+            -- Fallback playTime: อ่านจาก HUD ถ้า MRF ไม่มี
+            if playTime == "N/A" then
+                pcall(function()
+                    local t = gui.GameUI.HUD.Upper.WaveInformations.Container.Time.Value.Text
+                    if t and t ~= "" then playTime = t end
+                end)
             end
 
             -- Wave (อ่านจาก HUD)
@@ -785,13 +824,75 @@ if GAME_ID == "utdx" then
                 level = tonumber(lvlText:match("Level (%d+)")) or 0
             end)
 
-            -- Rewards (รองรับตัวละคร + ไอเทม) — มี retry
+            -- Rewards (เกมอัพเดต — ย้ายไป MissionResultFrameNew)
             local units = {}
             local items = {}
             local rewardsRetry = 0
+
+            -- ⭐ Units ใหม่: Units.frame.Unit_1, Unit_2, ... Unit_6
+            pcall(function()
+                local unitsFrame = gui.GameUI:FindFirstChild("MissionResultFrameNew")
+                if unitsFrame then
+                    unitsFrame = unitsFrame:FindFirstChild("Root")
+                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("MainVictory") end
+                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("Content") end
+                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("Units") end
+                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("frame") end
+                end
+                if unitsFrame then
+                    for _, unitChild in ipairs(unitsFrame:GetChildren()) do
+                        if unitChild.Name:match("^Unit_%d+$") then
+                            -- หา ViewportFrame model หรือ UnitName
+                            local vpf = unitChild:FindFirstChild("Unit", true)
+                            local nameLbl
+                            for _, d in ipairs(unitChild:GetDescendants()) do
+                                if d:IsA("TextLabel") and d.Name == "UnitName" then
+                                    nameLbl = d
+                                    break
+                                end
+                            end
+                            local displayName
+                            if vpf and vpf:IsA("ViewportFrame") then
+                                local model = vpf:FindFirstChildWhichIsA("Model")
+                                if model then
+                                    local mn = model.Name
+                                    local charName = mn:match("^([^:]+)") or mn
+                                    if charName ~= "WorldModel" and charName ~= "Model" then
+                                        displayName = charName
+                                    end
+                                end
+                            end
+                            if not displayName and nameLbl and nameLbl.Text ~= "" then
+                                displayName = nameLbl.Text
+                            end
+                            if displayName then
+                                table.insert(units, displayName)
+                                print("[UTDX] 🎴 UNIT GET →", displayName)
+                            end
+                        end
+                    end
+                end
+            end)
+
             while rewardsRetry < 5 and #units == 0 and #items == 0 do
             pcall(function()
-                local rewardFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
+                -- ⭐ path ใหม่: MissionResultFrameNew.Root.MainVictory.Content.Description.Content.Rewards.frame
+                local rewardFrame = nil
+                local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
+                if mrfn then
+                    local ok, rf = pcall(function()
+                        return mrfn.Root.MainVictory.Content.Description.Content.Rewards.frame
+                    end)
+                    if ok then rewardFrame = rf end
+                end
+                -- fallback path เก่า
+                if not rewardFrame then
+                    local ok, rf = pcall(function()
+                        return gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
+                    end)
+                    if ok then rewardFrame = rf end
+                end
+                if not rewardFrame then return end
                 for _, child in ipairs(rewardFrame:GetChildren()) do
                     if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
                         local icon      = child:FindFirstChild("ItemIcon")
