@@ -874,16 +874,19 @@ if GAME_ID == "utdx" then
                 end
             end)
 
-            while rewardsRetry < 5 and #units == 0 and #items == 0 do
+            while rewardsRetry < 8 and #items == 0 do
             pcall(function()
-                -- ⭐ path ใหม่: MissionResultFrameNew.Root.MainVictory.Content.Description.Content.Rewards.frame
+                -- ⭐ path ใหม่: MissionResultFrameNew (เกมอัพเดต)
                 local rewardFrame = nil
                 local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
                 if mrfn then
-                    local ok, rf = pcall(function()
-                        return mrfn.Root.MainVictory.Content.Description.Content.Rewards.frame
-                    end)
-                    if ok then rewardFrame = rf end
+                    local root = mrfn:FindFirstChild("Root")
+                    local mv = root and root:FindFirstChild("MainVictory")
+                    local content = mv and mv:FindFirstChild("Content")
+                    local desc = content and content:FindFirstChild("Description")
+                    local dc = desc and desc:FindFirstChild("Content")
+                    local rewards = dc and dc:FindFirstChild("Rewards")
+                    rewardFrame = rewards and rewards:FindFirstChild("frame")
                 end
                 -- fallback path เก่า
                 if not rewardFrame then
@@ -892,7 +895,11 @@ if GAME_ID == "utdx" then
                     end)
                     if ok then rewardFrame = rf end
                 end
-                if not rewardFrame then return end
+                if not rewardFrame then
+                    print("[UTDX] ⚠️ rewards frame not found (try " .. (rewardsRetry+1) .. "/8)")
+                    return
+                end
+                print("[UTDX] 🔍 rewards frame children:", #rewardFrame:GetChildren())
                 for _, child in ipairs(rewardFrame:GetChildren()) do
                     if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
                         local icon      = child:FindFirstChild("ItemIcon")
@@ -953,7 +960,7 @@ if GAME_ID == "utdx" then
             local actFull = act
             if difficulty ~= "" then actFull = act .. " " .. difficulty end
 
-            print("[UTDX] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
+            print("[UTDX v5] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
             if #units > 0 then
                 print("[UTDX] 🎉 ได้ตัวละคร " .. #units .. " ตัว: " .. table.concat(units, ", "))
             end
