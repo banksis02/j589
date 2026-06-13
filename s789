@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.7"
+local SCRIPT_VERSION = "v1.8"
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -741,18 +741,8 @@ if GAME_ID == "utdx" then
         print("[UTDX] 🏆 Victory! Round " .. roundCount)
 
         task.spawn(function()
-            -- ⭐ ดักหา MRF Enabled แบบเร็วสุด (poll ทุก 0.05 วิ — กัน game auto-Replay)
-            local waitForMRF = 0
-            while waitForMRF < 30 do
-                local gameui = player.PlayerGui:FindFirstChild("GameUI")
-                local mrfn = gameui and gameui:FindFirstChild("MissionResultFrameNew")
-                local mrfOld = gameui and gameui:FindFirstChild("MissionResultFrame")
-                if (mrfn and mrfn.Enabled) or (mrfOld and mrfOld.Enabled) then
-                    break  -- ไม่รอ populate — ให้ retry loop ทำเอง
-                end
-                task.wait(0.05)
-                waitForMRF = waitForMRF + 0.05
-            end
+            -- ⭐ อ่านทันที ไม่รอ MRF Enabled — Frame อาจมีอยู่แล้ว
+            -- game auto-Replay กดเร็วมาก (อาจไม่ถึง 0.5 วิ) ต้องรีบอ่าน
 
             local gui = player.PlayerGui
             local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
