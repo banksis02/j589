@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.0"
+local SCRIPT_VERSION = "v1.1"
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -833,54 +833,11 @@ if GAME_ID == "utdx" then
             end)
 
             -- Rewards (เกมอัพเดต — ย้ายไป MissionResultFrameNew)
+            -- ⚠️ ไม่อ่าน Units.frame.Unit_1..6 เพราะนั่นคือ "ยูนิตที่เอามาเล่น" ไม่ใช่รางวัล
+            -- ยูนิตที่ drop จริงจะอยู่ใน Rewards.frame (เป็น ContainerNoBottom ที่มี ViewportFrame ไม่มี ItemIcon)
             local units = {}
             local items = {}
             local rewardsRetry = 0
-
-            -- ⭐ Units ใหม่: Units.frame.Unit_1, Unit_2, ... Unit_6
-            pcall(function()
-                local unitsFrame = gui.GameUI:FindFirstChild("MissionResultFrameNew")
-                if unitsFrame then
-                    unitsFrame = unitsFrame:FindFirstChild("Root")
-                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("MainVictory") end
-                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("Content") end
-                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("Units") end
-                    if unitsFrame then unitsFrame = unitsFrame:FindFirstChild("frame") end
-                end
-                if unitsFrame then
-                    for _, unitChild in ipairs(unitsFrame:GetChildren()) do
-                        if unitChild.Name:match("^Unit_%d+$") then
-                            -- หา ViewportFrame model หรือ UnitName
-                            local vpf = unitChild:FindFirstChild("Unit", true)
-                            local nameLbl
-                            for _, d in ipairs(unitChild:GetDescendants()) do
-                                if d:IsA("TextLabel") and d.Name == "UnitName" then
-                                    nameLbl = d
-                                    break
-                                end
-                            end
-                            local displayName
-                            if vpf and vpf:IsA("ViewportFrame") then
-                                local model = vpf:FindFirstChildWhichIsA("Model")
-                                if model then
-                                    local mn = model.Name
-                                    local charName = mn:match("^([^:]+)") or mn
-                                    if charName ~= "WorldModel" and charName ~= "Model" then
-                                        displayName = charName
-                                    end
-                                end
-                            end
-                            if not displayName and nameLbl and nameLbl.Text ~= "" then
-                                displayName = nameLbl.Text
-                            end
-                            if displayName then
-                                table.insert(units, displayName)
-                                print("[UTDX] 🎴 UNIT GET →", displayName)
-                            end
-                        end
-                    end
-                end
-            end)
 
             while rewardsRetry < 8 and #items == 0 do
             pcall(function()
