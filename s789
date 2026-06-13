@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.5"
+local SCRIPT_VERSION = "v1.7"
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -741,7 +741,18 @@ if GAME_ID == "utdx" then
         print("[UTDX] 🏆 Victory! Round " .. roundCount)
 
         task.spawn(function()
-            task.wait(4) -- รอ MissionResultFrameNew โหลด rewards (match สั้นๆ ต้องรอนานขึ้น)
+            -- ⭐ ดักหา MRF Enabled แบบเร็วสุด (poll ทุก 0.05 วิ — กัน game auto-Replay)
+            local waitForMRF = 0
+            while waitForMRF < 30 do
+                local gameui = player.PlayerGui:FindFirstChild("GameUI")
+                local mrfn = gameui and gameui:FindFirstChild("MissionResultFrameNew")
+                local mrfOld = gameui and gameui:FindFirstChild("MissionResultFrame")
+                if (mrfn and mrfn.Enabled) or (mrfOld and mrfOld.Enabled) then
+                    break  -- ไม่รอ populate — ให้ retry loop ทำเอง
+                end
+                task.wait(0.05)
+                waitForMRF = waitForMRF + 0.05
+            end
 
             local gui = player.PlayerGui
             local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
@@ -842,7 +853,7 @@ if GAME_ID == "utdx" then
             local dbg = { "===== UTDX Match " .. os.date("%H:%M:%S") .. " =====" }
             local function dbgLog(s) table.insert(dbg, s) end
 
-            while rewardsRetry < 15 and #items == 0 do
+            while rewardsRetry < 60 and #items == 0 do  -- 60 × 0.05 = 3 วิ (เร็ว+ทันการ)
             pcall(function()
                 -- ⭐ ใช้ MRFNew เป็นหลัก ถ้าไม่มี fallback MRF เก่า — ไม่เช็ค container count
                 -- ถ้า Rewards.frame ว่าง → iterate ก็จะเป็น empty loop → รอบหน้า retry
@@ -920,7 +931,7 @@ if GAME_ID == "utdx" then
                 if #parts > 0 then rewards = table.concat(parts, ", ") end
             end)
             if #units > 0 or #items > 0 then break end
-            task.wait(0.5)
+            task.wait(0.05)  -- poll เร็วสุดกัน game auto-Replay ทำลาย MRF
             rewardsRetry = rewardsRetry + 1
             end  -- close while
 
