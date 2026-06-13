@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.9"
+local SCRIPT_VERSION = "v2.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -765,9 +765,9 @@ if GAME_ID == "utdx" then
                 end
             end)
 
-            -- ⭐ Retry MRF — ลอง MissionResultFrameNew ก่อน (เกมอัพเดต)
+            -- ⭐ Retry MRF — ลด timeout จาก 8 → 2 วิ (กัน MRF หายก่อน Rewards retry เริ่ม)
             local waited = 0
-            while waited < 8 do
+            while waited < 2 do
                 -- Banner.ActName + Difficulty (ลอง MRF ใหม่ก่อน)
                 pcall(function()
                     local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
@@ -810,8 +810,8 @@ if GAME_ID == "utdx" then
 
                 if act ~= "N/A" and playTime ~= "N/A" then break end
 
-                task.wait(0.3)
-                waited = waited + 0.3
+                task.wait(0.1)  -- เร็วขึ้น
+                waited = waited + 0.1
             end
 
             -- Fallback playTime: อ่านจาก HUD ถ้า MRF ไม่มี
