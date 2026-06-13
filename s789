@@ -919,6 +919,129 @@ if GAME_ID == "utdx" then
         end
     end)
 
+    -- ============================================================
+    -- [UTDX] Auto Vote GohanRiftCards — เลือก Cooldown เสมอ
+    -- ============================================================
+    task.spawn(function()
+        task.wait(5)
+        print("[CARD] 👀 Watching for GohanRiftCards...")
+        local lastVoteTime = 0
+
+        local function getCardContainer()
+            local pg = player.PlayerGui
+            local ok, container = pcall(function()
+                return pg.GameUI.HUD.RightFrame.TutorialHolder.GohanRiftCards
+            end)
+            if ok and container and container.Visible then return container end
+            return nil
+        end
+
+        -- หา index ของการ์ด Cooldown โดยค้นใน descendants
+        local function findCooldownIndex(container)
+            -- iterate top-level card containers (Card1, Card2, Card3 หรือชื่ออื่น)
+            -- เก็บ container ที่มี LayoutOrder เพื่อเรียงตามตำแหน่ง
+            local cardList = {}
+            for _, child in ipairs(container:GetDescendants()) do
+                if child:IsA("TextLabel") and child.Text ~= "" then
+                    local t = child.Text:lower()
+                    if t:find("cooldown") then
+                        -- walk up หา parent card
+                        local p = child.Parent
+                        while p and p ~= container do
+                            -- ถ้า parent มีชื่อเป็นเลข หรือมี LayoutOrder = card หลัก
+                            if p.Name:match("^%d+$") or p.Name:lower():find("card") then
+                                local n = tonumber(p.Name:match("(%d+)"))
+                                if n then return n end
+                            end
+                            p = p.Parent
+                        end
+                        -- ถ้าหา parent index ไม่ได้ ลอง count position
+                        -- โดยดูว่า cooldown ตัวนี้อยู่ลำดับที่เท่าไหร่ใน list
+                    end
+                end
+            end
+            return nil
+        end
+
+        -- หา index แบบ position-based (ดูตำแหน่ง X ของการ์ดบนจอ)
+        local function findCooldownIndexByPosition(container)
+            -- เก็บ card frame + position
+            local cards = {}
+            local seen = {}
+            for _, d in ipairs(container:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text ~= "" then
+                    local lower = d.Text:lower()
+                    -- หา card frame ที่ครอบ label นี้
+                    local frame = d.Parent
+                    while frame and frame ~= container and not frame:IsA("GuiObject") do
+                        frame = frame.Parent
+                    end
+                    -- หา top-level card frame (ลูกตรงของ container)
+                    local top = d.Parent
+                    while top and top.Parent ~= container do
+                        top = top.Parent
+                        if not top then break end
+                    end
+                    if top and not seen[top] then
+                        seen[top] = true
+                        -- เก็บ text รวม + AbsolutePosition.X
+                        local pos = top:IsA("GuiObject") and top.AbsolutePosition.X or 0
+                        table.insert(cards, { top = top, x = pos, texts = {} })
+                    end
+                end
+            end
+            -- รวม text ของแต่ละ card
+            for _, card in ipairs(cards) do
+                for _, lbl in ipairs(card.top:GetDescendants()) do
+                    if lbl:IsA("TextLabel") then
+                        table.insert(card.texts, lbl.Text:lower())
+                    end
+                end
+            end
+            -- เรียงตาม X (จากซ้ายไปขวา)
+            table.sort(cards, function(a,b) return a.x < b.x end)
+            -- หาว่า index ไหนมี "cooldown"
+            for i, card in ipairs(cards) do
+                for _, t in ipairs(card.texts) do
+                    if t:find("cooldown") then return i end
+                end
+            end
+            return nil
+        end
+
+        local function voteCard(choice)
+            local ok, err = pcall(function()
+                local re = game:GetService("ReplicatedStorage")
+                    :WaitForChild("Packages", 5):WaitForChild("_Index", 5)
+                    :WaitForChild("sleitnick_knit@1.7.0", 5):WaitForChild("knit", 5)
+                    :WaitForChild("Services", 5):WaitForChild("CardChoiceService", 5)
+                    :WaitForChild("RE", 5):WaitForChild("VoteCard", 5)
+                re:FireServer("GohanRift", choice)
+            end)
+            if ok then print("[CARD] ✅ Voted GohanRift card", choice, "(Cooldown)")
+            else warn("[CARD] ❌ Vote failed:", err) end
+            return ok
+        end
+
+        while true do
+            local now = tick()
+            local container = getCardContainer()
+            if container and (now - lastVoteTime > 5) then
+                -- ลองหา Cooldown ก่อน
+                local idx = findCooldownIndex(container) or findCooldownIndexByPosition(container)
+                if idx then
+                    voteCard(idx)
+                    lastVoteTime = now
+                else
+                    warn("[CARD] ⚠️ ไม่เจอ Cooldown ใน card — fallback vote 1")
+                    voteCard(1)
+                    lastVoteTime = now
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+
     -- Auto GreenZone
     task.spawn(function()
         while true do
@@ -1703,6 +1826,22 @@ do
             end)
         end
 
+        -- ========== เซลแม็ก loop (ปุ่ม 11) — วนหาห้องทุก 60 วิ ==========
+        local function runCellMax()
+            if not inLobby() then return end
+            task.wait(2)
+            pcall(function()
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(
+                    buffer.fromstring(")\a\000CellMax\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
+                task.wait(1)
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\001"))
+                print("[เซลแม็ก] 🔄 Sent room request")
+            end)
+        end
+
+        -- ========== โกโจ/สุคุนะ/โกฮัง warp (ปุ่ม 12) — one-shot ใน lobby ==========
+        local runGojo = warpTo(Vector3.new(-2686.33056640625, 126.10442352294922, -63.13169479370117), "โกโจ/สุคุนะ/โกฮัง")
+
         -- ========== แก้มัด (ปุ่ม 10) — ปล่อย ProximityPrompt "Free Unit" / "ยูนิตฟรี" ==========
         local function isFreeUnitPrompt(obj)
             local at = obj.ActionText or ""
@@ -1756,8 +1895,8 @@ do
         screenGui.Parent = playerGui
 
         local frame = Instance.new("Frame")
-        -- 10 ปุ่ม × 36 + title 24 + padding 16 ≈ 400
-        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,396)
+        -- 12 ปุ่ม × 36 + title 24 + padding 16 ≈ 472
+        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,468)
         -- โหลดตำแหน่งล่าสุดที่ลากไว้ ถ้าไม่มี → fallback ที่ซ้ายบน (พ้นเมนู Roblox)
         local savedX, savedY = loadPos()
         if savedX and savedY then
@@ -1780,9 +1919,31 @@ do
         dragBar.Text = ""; dragBar.ZIndex = 10
 
         local ttl = Instance.new("TextLabel", dragBar)
-        ttl.Size=UDim2.new(1,-26,1,0); ttl.Position=UDim2.new(0,0,0,0)
+        -- ลดความกว้าง title เพื่อเหลือที่ใส่ปุ่ม Replay/NextMap
+        ttl.Size=UDim2.new(0,80,1,0); ttl.Position=UDim2.new(0,4,0,0)
         ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
         ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
+        ttl.TextXAlignment=Enum.TextXAlignment.Left
+
+        -- ⭐ ปุ่ม Replay (▶) บน title bar — กดได้แม้ UI ย่ออยู่
+        local btnRp = Instance.new("TextButton", frame)
+        btnRp.Name = "TopBtnReplay"
+        btnRp.Size = UDim2.new(0,26,0,18); btnRp.Position = UDim2.new(0,86,0,3)
+        btnRp.BackgroundColor3 = Color3.fromRGB(30,30,50); btnRp.BorderSizePixel = 0
+        btnRp.Text = "▶"; btnRp.TextColor3 = Color3.fromRGB(100,255,100)
+        btnRp.TextSize = 14; btnRp.Font = Enum.Font.GothamBold; btnRp.ZIndex = 15
+        Instance.new("UICorner", btnRp).CornerRadius = UDim.new(0,4)
+        local sRp = Instance.new("UIStroke", btnRp); sRp.Color = Color3.fromRGB(80,80,100); sRp.Thickness = 1
+
+        -- ⭐ ปุ่ม NextMap (▶▶) บน title bar
+        local btnNm = Instance.new("TextButton", frame)
+        btnNm.Name = "TopBtnNextMap"
+        btnNm.Size = UDim2.new(0,28,0,18); btnNm.Position = UDim2.new(0,116,0,3)
+        btnNm.BackgroundColor3 = Color3.fromRGB(30,30,50); btnNm.BorderSizePixel = 0
+        btnNm.Text = "▶▶"; btnNm.TextColor3 = Color3.fromRGB(100,255,100)
+        btnNm.TextSize = 11; btnNm.Font = Enum.Font.GothamBold; btnNm.ZIndex = 15
+        Instance.new("UICorner", btnNm).CornerRadius = UDim.new(0,4)
+        local sNm = Instance.new("UIStroke", btnNm); sNm.Color = Color3.fromRGB(80,80,100); sNm.Thickness = 1
 
         -- ปุ่มย่อ/ขยาย
         local btnMin = Instance.new("TextButton", frame)
@@ -1803,20 +1964,20 @@ do
             return b,s
         end
 
-        -- 9 ปุ่ม (ระยะห่าง 36px ต่อปุ่ม เริ่มที่ y=26)
-        local btnSt, sSt   = makeButton("▶ สตอรี่",              26)
-        local btnRt, sRt   = makeButton("▶ เรท",                 62)
-        local btnCh, sCh   = makeButton("▶ ชาเล้น",              98)
-        local btnKd, sKd   = makeButton("▶ ใคโด",                134)
-        local btnNd, sNd   = makeButton("▶ ประตูนารูโต๊ะ T4",   170)
-        local btnVd, sVd   = makeButton("▶ ประตูเบจิโต้ T3",    206)
-        local btnRp, sRp   = makeButton("▶ Replay",              242)
-        local btnNm, sNm   = makeButton("▶ NextMap",             278)
-        local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          314)
-        local btnFU, sFU   = makeButton("▶ แก้มัด",               350)
+        -- 10 ปุ่ม (Replay/NextMap ย้ายไปบน title bar แล้ว)
+        local btnSt, sSt   = makeButton("▶ สตอรี่",              26)   -- 1
+        local btnRt, sRt   = makeButton("▶ เรท",                 62)   -- 2
+        local btnCh, sCh   = makeButton("▶ ชาเล้น",              98)   -- 3
+        local btnKd, sKd   = makeButton("▶ ใคโด",                134)  -- 4
+        local btnCM, sCM   = makeButton("▶ เซลแม็ก",              170)  -- 5
+        local btnGj, sGj   = makeButton("▶ โกโจ/สุคุนะ/โกฮัง",   206)  -- 6
+        local btnNd, sNd   = makeButton("▶ ประตูนารูโต๊ะ T4",   242)  -- 7
+        local btnVd, sVd   = makeButton("▶ ประตูเบจิโต้ T3",    278)  -- 8
+        local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          314)  -- 9
+        local btnFU, sFU   = makeButton("▶ แก้มัด",               350)  -- 10
 
-        -- เก็บปุ่มทั้งหมดเข้า list เพื่อจัดการ visible/minimize ทีเดียว
-        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnNd, btnVd, btnRp, btnNm, btnCC, btnFU }
+        -- เก็บปุ่มทั้งหมดเข้า list (ไม่รวม btnRp/btnNm ที่อยู่บน title bar)
+        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnCM, btnGj, btnNd, btnVd, btnCC, btnFU }
         local function setBtnsVisible(v)
             for _, b in ipairs(ALL_BTNS) do b.Visible = v end
         end
@@ -1994,19 +2155,48 @@ do
         -- 4: ใคโด loop toggle (ล็อบบี้, ทุก 60 วิ)
         local autoKd = makeToggle(btnKd, sKd, "kaido_state.txt", runKaido, "ใคโด", 60)
 
-        -- 5-6: Action Flag Toggle (ล็อบบี้) — กด ON = ใช้ item 1 ครั้ง + แดงค้าง
-        local autoNd = makeActionFlagToggle(btnNd, sNd, "naruto_door_state.txt", runNarutoDoor, "ประตูนารูโต๊ะ T4")
-        local autoVd = makeActionFlagToggle(btnVd, sVd, "vegito_door_state.txt", runVegitoDoor, "ประตูเบจิโต้ T3")
+        -- 7-8: One-shot use-item (ล็อบบี้) — กด = flash + ใช้ item ครั้งเดียว
+        makeOneShot(btnNd, sNd, runNarutoDoor, "ประตูนารูโต๊ะ T4")
+        makeOneShot(btnVd, sVd, runVegitoDoor, "ประตูเบจิโต้ T3")
 
-        -- 7-8: Replay/NextMap flag toggle (ในเกม)
-        local autoR  = makeFlagToggle(btnRp, sRp, "replay_state.txt",  "Replay",  "replay")
-        local autoNm = makeFlagToggle(btnNm, sNm, "nextmap_state.txt", "NextMap", "nextMap")
+        -- Top-bar Flag toggle: ไม่เปลี่ยนข้อความ แค่เปลี่ยนสี bg เป็นแดงเมื่อ ON
+        local function makeTopBarFlagToggle(btn, stroke, saveName, flagKey)
+            local isOn = false
+            local function start()
+                isOn = true
+                btn.BackgroundColor3 = Color3.fromRGB(180,40,40)
+                btn.TextColor3 = Color3.fromRGB(255,255,255)
+                stroke.Color = Color3.fromRGB(255,80,80)
+                saveFile(saveName, true)
+                autoFlags[flagKey] = true
+            end
+            local function stop()
+                isOn = false
+                btn.BackgroundColor3 = Color3.fromRGB(30,30,50)
+                btn.TextColor3 = Color3.fromRGB(100,255,100)
+                stroke.Color = Color3.fromRGB(80,80,100)
+                saveFile(saveName, false)
+                autoFlags[flagKey] = false
+            end
+            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
+            return function() if loadFile(saveName) then print("[UI] Auto: top-bar", flagKey); start() end end
+        end
+
+        -- Top bar: Replay (▶) + NextMap (▶▶)
+        local autoR  = makeTopBarFlagToggle(btnRp, sRp, "replay_state.txt",  "replay")
+        local autoNm = makeTopBarFlagToggle(btnNm, sNm, "nextmap_state.txt", "nextMap")
 
         -- 9: คลิกกลางจอ loop toggle (ในเกม, ทุก 5 วิ)
         local autoCC = makeToggle(btnCC, sCC, "clickcenter_state.txt", clickCenter, "คลิกกลางจอ", 5)
 
         -- 10: แก้มัด loop toggle — สแกน Free Unit prompts ทุก 0.2 วิ
         local autoFU = makeToggle(btnFU, sFU, "freeunit_state.txt", freeUnit, "แก้มัด", 0.2)
+
+        -- 11: เซลแม็ก loop toggle (ล็อบบี้, ทุก 60 วิ)
+        local autoCM = makeToggle(btnCM, sCM, "cellmax_state.txt", runCellMax, "เซลแม็ก", 60)
+
+        -- 12: โกโจ/สุคุนะ/โกฮัง one-shot warp (ล็อบบี้)
+        makeOneShot(btnGj, sGj, runGojo, "โกโจ/สุคุนะ/โกฮัง")
 
         -- Hook MatchFinished → fire Replay/NextMap ตาม flag
         local LogServiceUI = game:GetService("LogService")
@@ -2183,12 +2373,11 @@ do
         -- Auto-restore toggle ที่เปิดไว้ก่อน rejoin
         task.wait(1)
         autoKd()  -- ใคโด (loop จะรันต่อ)
-        autoNd()  -- ประตูนารูโต๊ะ T4 (แค่ visual)
-        autoVd()  -- ประตูเบจิโต้ T3 (แค่ visual)
         autoR()   -- Replay
         autoNm()  -- NextMap
         autoCC()  -- คลิกกลางจอ (loop จะรันต่อ)
         autoFU()  -- แก้มัด (loop จะรันต่อ)
+        autoCM()  -- เซลแม็ก (loop จะรันต่อ)
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
 end
