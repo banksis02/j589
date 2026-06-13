@@ -1,3 +1,11 @@
+-- ============================================================
+-- 📦 SCRIPT VERSION
+-- ============================================================
+local SCRIPT_VERSION = "v1.0"
+print("════════════════════════════════════════")
+print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
+print("════════════════════════════════════════")
+
 local HttpService        = game:GetService("HttpService")
 local Players            = game:GetService("Players")
 local LogService         = game:GetService("LogService")
@@ -960,7 +968,7 @@ if GAME_ID == "utdx" then
             local actFull = act
             if difficulty ~= "" then actFull = act .. " " .. difficulty end
 
-            print("[UTDX v5] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
+            print("[UTDX " .. SCRIPT_VERSION .. "] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
             if #units > 0 then
                 print("[UTDX] 🎉 ได้ตัวละคร " .. #units .. " ตัว: " .. table.concat(units, ", "))
             end
