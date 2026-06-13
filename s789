@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v2.0"
+local SCRIPT_VERSION = "v2.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1830,13 +1830,29 @@ end
 -- ============================================================
 if game.PlaceId == 133410800847665 or game.PlaceId == 106402284955512 then
     task.spawn(function()
-        local MISSIONS = {
-            "weeklySupportClass",
-            "weeklySameClass",
-            "dailyClearStageWithPlayer0",
-            "weeklyFree",
-            "dailyFree",
+        -- ⭐ Claims ทั้งหมด: { event, mission } ทุก 5 นาที
+        local CLAIMS = {
+            -- BattleOfTheStrongest
+            { event = "BattleOfTheStrongest", mission = "winClash1" },
+            -- FlamesAndWaves
+            { event = "FlamesAndWaves", mission = "weeklyDPSClass" },
+            { event = "FlamesAndWaves", mission = "dailySameTag" },
+            { event = "FlamesAndWaves", mission = "dailySameClass" },
+            { event = "FlamesAndWaves", mission = "weeklySameTag" },
+            { event = "FlamesAndWaves", mission = "dailyClearStageWithPlayer" },
+            { event = "FlamesAndWaves", mission = "dailySameElement" },
+            -- DevilWithin (เก่า)
+            { event = "DevilWithin", mission = "weeklySupportClass" },
+            { event = "DevilWithin", mission = "weeklySameClass" },
+            { event = "DevilWithin", mission = "dailyClearStageWithPlayer0" },
+            { event = "DevilWithin", mission = "dailyClearStageWithPlayer1" },
+            { event = "DevilWithin", mission = "weeklyFree" },
+            { event = "DevilWithin", mission = "dailyFree" },
+            { event = "DevilWithin", mission = "dailySameElement" },
+            { event = "DevilWithin", mission = "dailySameClass" },
+            { event = "DevilWithin", mission = "dailySupportClass" },
         }
+
         local function claimAll()
             local ok, claimRF = pcall(function()
                 return game:GetService("ReplicatedStorage")
@@ -1846,22 +1862,25 @@ if game.PlaceId == 133410800847665 or game.PlaceId == 106402284955512 then
                     :WaitForChild("RF"):WaitForChild("claimMission")
             end)
             if not ok or not claimRF then
-                warn("[UTDX Claim] ไม่พบ claimMission RF")
+                warn("[Claim] ไม่พบ claimMission RF")
                 return
             end
-            for _, mission in ipairs(MISSIONS) do
+            local success, failed = 0, 0
+            for _, c in ipairs(CLAIMS) do
                 local ok2, err = pcall(function()
-                    claimRF:InvokeServer("DevilWithin", mission)
+                    claimRF:InvokeServer(c.event, c.mission)
                 end)
                 if ok2 then
-                    print("[UTDX Claim] ✅", mission)
+                    success = success + 1
                 else
-                    warn("[UTDX Claim] ❌", mission, err)
+                    failed = failed + 1
                 end
-                task.wait(0.5)
+                task.wait(1) -- รอ 1 วิ ตามที่ user spec
             end
+            print(string.format("[Claim] 🎁 รอบนี้: ✅%d ❌%d (รวม %d)", success, failed, #CLAIMS))
         end
-        task.wait(5) -- เริ่มหลัง load 5 วิ
+
+        task.wait(8) -- เริ่มหลัง load 8 วิ (รอ packages)
         while true do
             claimAll()
             task.wait(300) -- 5 นาที
