@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.1"
+local SCRIPT_VERSION = "v1.5"
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -741,7 +741,7 @@ if GAME_ID == "utdx" then
         print("[UTDX] 🏆 Victory! Round " .. roundCount)
 
         task.spawn(function()
-            task.wait(2) -- รอ MissionResultFrame โผล่ + popups dismiss
+            task.wait(4) -- รอ MissionResultFrameNew โหลด rewards (match สั้นๆ ต้องรอนานขึ้น)
 
             local gui = player.PlayerGui
             local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
@@ -839,9 +839,13 @@ if GAME_ID == "utdx" then
             local items = {}
             local rewardsRetry = 0
 
-            while rewardsRetry < 8 and #items == 0 do
+            local dbg = { "===== UTDX Match " .. os.date("%H:%M:%S") .. " =====" }
+            local function dbgLog(s) table.insert(dbg, s) end
+
+            while rewardsRetry < 15 and #items == 0 do
             pcall(function()
-                -- ⭐ path ใหม่: MissionResultFrameNew (เกมอัพเดต)
+                -- ⭐ ใช้ MRFNew เป็นหลัก ถ้าไม่มี fallback MRF เก่า — ไม่เช็ค container count
+                -- ถ้า Rewards.frame ว่าง → iterate ก็จะเป็น empty loop → รอบหน้า retry
                 local rewardFrame = nil
                 local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
                 if mrfn then
@@ -853,7 +857,6 @@ if GAME_ID == "utdx" then
                     local rewards = dc and dc:FindFirstChild("Rewards")
                     rewardFrame = rewards and rewards:FindFirstChild("frame")
                 end
-                -- fallback path เก่า
                 if not rewardFrame then
                     local ok, rf = pcall(function()
                         return gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
@@ -861,10 +864,9 @@ if GAME_ID == "utdx" then
                     if ok then rewardFrame = rf end
                 end
                 if not rewardFrame then
-                    print("[UTDX] ⚠️ rewards frame not found (try " .. (rewardsRetry+1) .. "/8)")
+                    dbgLog("try " .. (rewardsRetry+1) .. "/15 — no Rewards frame")
                     return
                 end
-                print("[UTDX] 🔍 rewards frame children:", #rewardFrame:GetChildren())
                 for _, child in ipairs(rewardFrame:GetChildren()) do
                     if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
                         local icon      = child:FindFirstChild("ItemIcon")
@@ -891,7 +893,7 @@ if GAME_ID == "utdx" then
                                     display = "Unknown Unit"
                                 end
                                 table.insert(units, display)
-                                print("[UTDX] 🎴 UNIT GET →", display, "| model:", model.Name, "| title:", title)
+                                dbgLog("🎴 UNIT: " .. display .. " (model=" .. model.Name .. ")")
                             end
 
                         -- ไอเทมทั่วไป
@@ -900,7 +902,7 @@ if GAME_ID == "utdx" then
                             local qty = (unitName.Text ~= "") and unitName.Text or "x1"
                             table.insert(items, itemName .. " " .. qty)
                             if not ITEM_NAMES_UTDX[icon.Image] then
-                                warn("[UTDX] ❓ Unknown item ID:", icon.Image, "qty:", qty)
+                                dbgLog("❓ Unknown item: " .. icon.Image .. " qty=" .. qty)
                             end
                         end
                     end
@@ -925,10 +927,20 @@ if GAME_ID == "utdx" then
             local actFull = act
             if difficulty ~= "" then actFull = act .. " " .. difficulty end
 
-            print("[UTDX " .. SCRIPT_VERSION .. "] Final → Act:", actFull, "| Time:", playTime, "| Wave:", wave, "| LVL:", level, "| Rewards:", rewards)
-            if #units > 0 then
-                print("[UTDX] 🎉 ได้ตัวละคร " .. #units .. " ตัว: " .. table.concat(units, ", "))
-            end
+            -- ⭐ Summary print 1 บรรทัด + append ไฟล์ log (ดูง่ายไม่โดน error spam ดัน)
+            print("[UTDX " .. SCRIPT_VERSION .. "] " .. actFull .. " | " .. playTime .. " | W:" .. wave .. " | L:" .. level .. " | " .. rewards)
+
+            -- เขียน debug log ลงไฟล์ (เปิดดูใน workspace/utdx_log.txt)
+            table.insert(dbg, "act: " .. actFull)
+            table.insert(dbg, "time: " .. playTime .. " | wave: " .. wave .. " | level: " .. level)
+            table.insert(dbg, "rewards: " .. rewards)
+            table.insert(dbg, "units: " .. (#units > 0 and table.concat(units, ", ") or "none"))
+            table.insert(dbg, "")
+            pcall(function()
+                local existing = ""
+                pcall(function() existing = readfile("utdx_log.txt") or "" end)
+                writefile("utdx_log.txt", existing .. table.concat(dbg, "\n") .. "\n")
+            end)
 
             local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
             local payload = {
