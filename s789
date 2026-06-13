@@ -732,32 +732,48 @@ if GAME_ID == "utdx" then
         print("[UTDX] 🏆 Victory! Round " .. roundCount)
 
         task.spawn(function()
-            task.wait(1) -- รอให้ MissionResultFrame โหลด
+            task.wait(2) -- รอ MissionResultFrame โผล่ + popups dismiss
 
             local gui = player.PlayerGui
             local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
             local rewards = "N/A"
 
-            -- Act + Difficulty
-            pcall(function()
-                local banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
-                act = banner.ActName.Text or "N/A"
-                difficulty = banner.DifficultyPercent.Text or ""
-            end)
-
-            -- PlayTime
-            pcall(function()
-                local statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
-                for _, child in ipairs(statsFrame:GetChildren()) do
-                    local statName = child:FindFirstChild("StatName")
-                    local statValue = child:FindFirstChild("StatValue")
-                    if statName and statName.Text == "Play Time" and statValue then
-                        playTime = statValue.Text
+            -- ⭐ Retry loop — อ่านซ้ำจนกว่าจะได้ค่าจริง (ไม่ใช่ template text)
+            local waited = 0
+            while waited < 8 do
+                pcall(function()
+                    local banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
+                    local a = banner.ActName.Text or ""
+                    local d = banner.DifficultyPercent.Text or ""
+                    -- ✅ ค่าจริง = ไม่ใช่ "Act Name..." (template text)
+                    if a ~= "" and not a:find("Act Name") and not a:find("%.%.%.") then
+                        act = a
+                        difficulty = d
                     end
-                end
-            end)
+                end)
 
-            -- Wave
+                pcall(function()
+                    local statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
+                    for _, child in ipairs(statsFrame:GetChildren()) do
+                        local statName = child:FindFirstChild("StatName")
+                        local statValue = child:FindFirstChild("StatValue")
+                        if statName and statName.Text == "Play Time" and statValue then
+                            local t = statValue.Text or ""
+                            if t ~= "" and not t:find("N/A") then
+                                playTime = t
+                            end
+                        end
+                    end
+                end)
+
+                -- ออก loop ถ้าได้ act + playTime แล้ว
+                if act ~= "N/A" and playTime ~= "N/A" then break end
+
+                task.wait(0.3)
+                waited = waited + 0.3
+            end
+
+            -- Wave (อ่านจาก HUD)
             pcall(function()
                 local waveText = gui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text
                 wave = tonumber(waveText:match("Wave (%d+)")) or 0
@@ -769,11 +785,13 @@ if GAME_ID == "utdx" then
                 level = tonumber(lvlText:match("Level (%d+)")) or 0
             end)
 
-            -- Rewards (รองรับตัวละคร + ไอเทม)
-            local units = {}   -- ⭐ เก็บรายชื่อตัวละครที่ได้
+            -- Rewards (รองรับตัวละคร + ไอเทม) — มี retry
+            local units = {}
+            local items = {}
+            local rewardsRetry = 0
+            while rewardsRetry < 5 and #units == 0 and #items == 0 do
             pcall(function()
                 local rewardFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
-                local items = {}
                 for _, child in ipairs(rewardFrame:GetChildren()) do
                     if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
                         local icon      = child:FindFirstChild("ItemIcon")
@@ -826,6 +844,10 @@ if GAME_ID == "utdx" then
                 end
                 if #parts > 0 then rewards = table.concat(parts, ", ") end
             end)
+            if #units > 0 or #items > 0 then break end
+            task.wait(0.5)
+            rewardsRetry = rewardsRetry + 1
+            end  -- close while
 
             local actFull = act
             if difficulty ~= "" then actFull = act .. " " .. difficulty end
