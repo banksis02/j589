@@ -1,7 +1,8 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v1.8"
+local SCRIPT_VERSION = "v1.9"
+_G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -1401,14 +1402,23 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — DESTROY ทั้งหมด (effect ไม่ใช่ logic)
+        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — ซ่อน ไม่ DESTROY (เกมต้องใช้ ref อยู่)
         local ignore = workspace:FindFirstChild("Ignore")
         if ignore then
             for _, subName in ipairs({ "Effects","Drops","GhostUnits","Hitboxes" }) do
                 local sub = ignore:FindFirstChild(subName)
                 if sub then
-                    for _, child in ipairs(sub:GetChildren()) do
-                        pcall(function() child:Destroy() end)
+                    for _, d in ipairs(sub:GetDescendants()) do
+                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
+                            pcall(function() d.Transparency = 1 end)
+                            pcall(function() d.CastShadow = false end)
+                            pcall(function() d.LocalTransparencyModifier = 1 end)
+                        elseif d:IsA("Decal") or d:IsA("Texture") then
+                            pcall(function() d.Transparency = 1 end)
+                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                            pcall(function() d.Enabled = false end)
+                        end
                     end
                 end
             end
@@ -1475,14 +1485,19 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- 7.5) ⭐ Camera = skill effects สะสมเยอะมาก (67K!) → **DESTROY** เลย ไม่ใช่แค่ disable
-        -- Camera ไม่มี game logic สำคัญ ลบของในนั้นได้
+        -- 7.5) Camera = skill effects — ซ่อน ไม่ DESTROY (เกมต้องใช้ structure อยู่)
         local cam = workspace:FindFirstChild("Camera")
         if cam then
-            for _, child in ipairs(cam:GetChildren()) do
-                -- เก็บไว้แค่ของ system (Camera Camera child เผื่อมี)
-                if not child:IsA("Camera") then
-                    pcall(function() child:Destroy() end)
+            for _, d in ipairs(cam:GetDescendants()) do
+                if d:IsA("BasePart") or d:IsA("MeshPart") then
+                    pcall(function() d.Transparency = 1 end)
+                    pcall(function() d.CastShadow = false end)
+                    pcall(function() d.LocalTransparencyModifier = 1 end)
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    pcall(function() d.Transparency = 1 end)
+                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                    pcall(function() d.Enabled = false end)
                 end
             end
         end
@@ -1633,13 +1648,20 @@ if GAME_ID == "utdx" then
             end
         end
 
-        -- ⭐ Hook Camera.ChildAdded — DESTROY ทันทีที่ effect spawn ใน Camera
+        -- Hook Camera.DescendantAdded — ซ่อน effects ใหม่ ไม่ destroy
         local camFolder = workspace:FindFirstChild("Camera")
         if camFolder then
-            camFolder.ChildAdded:Connect(function(child)
+            camFolder.DescendantAdded:Connect(function(d)
                 task.wait(0.05)
-                if not child:IsA("Camera") then
-                    pcall(function() child:Destroy() end)
+                if d:IsA("BasePart") or d:IsA("MeshPart") then
+                    pcall(function() d.Transparency = 1 end)
+                    pcall(function() d.CastShadow = false end)
+                    pcall(function() d.LocalTransparencyModifier = 1 end)
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    pcall(function() d.Transparency = 1 end)
+                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                    pcall(function() d.Enabled = false end)
                 end
             end)
         end
@@ -1699,12 +1721,14 @@ if GAME_ID == "utdx" then
                             end
                         end
                     end
-                    -- ⭐ DESTROY Camera children ที่สะสม
+                    -- ซ่อน Camera children ที่สะสม (ไม่ destroy เพราะเกมต้องใช้ ref)
                     local cm = workspace:FindFirstChild("Camera")
                     if cm then
-                        for _, child in ipairs(cm:GetChildren()) do
-                            if not child:IsA("Camera") then
-                                pcall(function() child:Destroy() end)
+                        for _, d in ipairs(cm:GetDescendants()) do
+                            if d:IsA("BasePart") or d:IsA("MeshPart") then
+                                if d.Transparency ~= 1 then d.Transparency = 1 end
+                            elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
+                                if d.Enabled then d.Enabled = false end
                             end
                         end
                     end
