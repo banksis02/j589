@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v2.1"
+local SCRIPT_VERSION = "v2.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -29,6 +29,9 @@ elseif placeId == 80877167393789 then
 elseif placeId == 106402284955512 then
     GAME_NAME = "Universal Tower Defense X"
     GAME_ID   = "utdx"
+elseif placeId == 91255392593879 then
+    GAME_NAME = "Anime Squadron"
+    GAME_ID   = "anime_squadron"
 else
     GAME_NAME = "Unknown (" .. placeId .. ")"
     GAME_ID   = "unknown"
@@ -702,6 +705,151 @@ if GAME_ID == "summon_heroes" then
             end)
 
             task.wait(0.2)
+        end
+    end)
+end
+
+-- ============================================================
+-- [Anime Squadron] Victory Trigger — EndScreen.Visible = true
+-- ============================================================
+if GAME_ID == "anime_squadron" then
+    task.spawn(function()
+        task.wait(5)
+        print("[AS] 👀 Watching for EndScreen...")
+        local lastState = false
+
+        while true do
+            pcall(function()
+                local menus = player.PlayerGui:FindFirstChild("Menus")
+                local endScreen = menus and menus:FindFirstChild("EndScreen")
+                local isVisible = endScreen and endScreen.Visible
+
+                if isVisible and not lastState then
+                    lastState = true
+                    local now = tick()
+                    if now - lastVictoryTime < 30 then
+                        print("[AS] Skipped (cooldown)")
+                        return
+                    end
+                    if isSending then
+                        print("[AS] Skipped (already sending)")
+                        return
+                    end
+
+                    lastVictoryTime = now
+                    isSending = true
+                    roundCount = roundCount + 1
+                    print("[AS] 🏆 Victory! Round " .. roundCount)
+
+                    task.spawn(function()
+                        task.wait(0.5) -- รอ UI populate
+
+                        -- Stats: World/Mode/Chapter/Difficulty
+                        local world, mode, chapter, difficulty = "N/A", "N/A", "N/A", "N/A"
+                        pcall(function()
+                            local stats = endScreen.Stats
+                            world      = stats.World.Text or "N/A"
+                            mode       = stats.Mode.Text or "N/A"
+                            difficulty = stats.Difficulty.Text or "N/A"
+                            -- "Act. <font color='rgb(0,255,0)'>1</font>" → "Act. 1"
+                            local ch = stats.Chapter.Text or ""
+                            chapter = ch:gsub("<[^>]+>", "")
+                        end)
+
+                        -- Left: TotalDamage, Takedowns, PlayTime
+                        local damage, takedowns, playTime = "0", "0", "N/A"
+                        pcall(function()
+                            local left = endScreen.Left
+                            damage    = left.TotalDamage.Amount.Text or "0"
+                            takedowns = left.Takedowns.Amount.Text or "0"
+                            playTime  = left.PlayTime.Amount.Text or "N/A"
+                        end)
+
+                        -- Right: YenEarned, ExpEarned, UnitsSummoned
+                        local yen, expEarned, unitsSummoned = "0", "0", "0"
+                        pcall(function()
+                            local right = endScreen.Right
+                            yen           = right.YenEarned.Amount.Text or "0"
+                            expEarned     = right.ExpEarned.Amount.Text or "0"
+                            unitsSummoned = right.UnitsSummoned.Amount.Text or "0"
+                        end)
+
+                        -- Rewards: Rewards.ScrollingFrame.<Item>.{ItemName, Quantity, Chance}
+                        local rewards = {}
+                        pcall(function()
+                            local rf = endScreen.Rewards.ScrollingFrame
+                            for _, child in ipairs(rf:GetChildren()) do
+                                if child:IsA("ImageButton") then
+                                    local itemName = child:FindFirstChild("ItemName")
+                                    local qty      = child:FindFirstChild("Quantity")
+                                    if itemName and qty and itemName.Text ~= "" then
+                                        local name = itemName.Text
+                                        local q    = qty.Text
+                                        table.insert(rewards, name .. " " .. q)
+                                        print("[AS] reward →", name, q)
+                                    end
+                                end
+                            end
+                        end)
+                        local rewardsStr = (#rewards > 0) and table.concat(rewards, ", ") or "N/A"
+
+                        local actFull = world .. " - " .. mode .. " " .. difficulty .. " " .. chapter
+
+                        print("[AS " .. SCRIPT_VERSION .. "] " .. actFull
+                            .. " | " .. playTime .. " | DMG:" .. damage
+                            .. " | Yen:" .. yen .. " | Rewards: " .. rewardsStr)
+
+                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        local payload = {
+                            username     = player.Name,
+                            userId       = player.UserId,
+                            serviceName  = GAME_NAME,
+                            gameId       = GAME_ID,
+                            progress     = 0,
+                            currentStats = { level = 0, bp = 0 },
+                            matchInfo    = { map = world, wave = tonumber(takedowns) or 0 },
+                            endScreen    = {
+                                act      = actFull,
+                                file     = world,
+                                playTime = playTime,
+                                quantity = rewardsStr,
+                                damage   = damage,
+                                yen      = yen,
+                                exp      = expEarned,
+                            },
+                            recentLog = {
+                                act      = actFull,
+                                file     = world,
+                                playTime = playTime,
+                                quantity = rewardsStr,
+                                status   = "COMPLETED",
+                                time     = timestamp,
+                                rewards  = rewardsStr,
+                            },
+                        }
+
+                        local ok2, response = pcall(function()
+                            return HttpService:RequestAsync({
+                                Url     = BACKEND_URL .. "/api/overload/update",
+                                Method  = "POST",
+                                Headers = { ["Content-Type"] = "application/json" },
+                                Body    = HttpService:JSONEncode(payload)
+                            })
+                        end)
+                        if ok2 and type(response) == "table" and response.Success then
+                            print("[AS] ✅ Sent!")
+                        else
+                            warn("[AS] ❌ Send FAIL:", type(response) == "table" and response.StatusCode or tostring(response))
+                        end
+
+                        isSending = false
+                    end)
+
+                elseif not isVisible then
+                    lastState = false
+                end
+            end)
+            task.wait(0.3)
         end
     end)
 end
@@ -1796,6 +1944,7 @@ if game.PlaceId == 133410800847665 then
             "ExclusiveRelics!",
             "DropRateFixes!",
             "ArrancarSupremacy!",
+            "200KInterestedSouls!",
         }
         task.wait(8)  -- รอเข้า lobby + Packages โหลดเสร็จ
         local ok, redeemRF = pcall(function()
