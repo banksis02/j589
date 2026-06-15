@@ -1793,6 +1793,8 @@ if game.PlaceId == 133410800847665 then
             "3.0Part2.5Update!",
             "TheBeast!",
             "BeastDelay!",
+            "ExclusiveRelics!",
+            "DropRateFixes!",
         }
         task.wait(8)  -- รอเข้า lobby + Packages โหลดเสร็จ
         local ok, redeemRF = pcall(function()
