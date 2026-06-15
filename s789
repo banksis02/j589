@@ -1795,6 +1795,7 @@ if game.PlaceId == 133410800847665 then
             "BeastDelay!",
             "ExclusiveRelics!",
             "DropRateFixes!",
+            "ArrancarSupremacy!",
         }
         task.wait(8)  -- รอเข้า lobby + Packages โหลดเสร็จ
         local ok, redeemRF = pcall(function()
