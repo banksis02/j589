@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v2.2"
+local SCRIPT_VERSION = "v2.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -37,6 +37,19 @@ else
     GAME_ID   = "unknown"
 end
 print("[OV] Game:", GAME_NAME)
+
+-- ============================================================
+-- 🛡️ ANTI-AFK (ทำงานทุกเกม ไม่ล็อกแค่ UTDX)
+-- ============================================================
+pcall(function()
+    local VirtualUser = game:GetService("VirtualUser")
+    player.Idled:Connect(function()
+        print("[ANTI-AFK] Idled detected → reset (" .. GAME_NAME .. ")")
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+    print("[ANTI-AFK] ✅ Ready (Global — ทุกแมพ)")
+end)
 
 -- ============================================================
 -- Asset ID → Item Name Map (Anime Overload)
@@ -1142,17 +1155,6 @@ if GAME_ID == "utdx" then
 
     print("[UTDX] ✅ Ready!")
 
-    -- Anti AFK (ใช้ Player.Idled + VirtualUser — วิธีที่ Roblox ไม่ block)
-    pcall(function()
-        local VirtualUser = game:GetService("VirtualUser")
-        player.Idled:Connect(function()
-            print("[ANTI-AFK] Idled detected → reset")
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-        end)
-        print("[ANTI-AFK] ✅ Ready (in-game)")
-    end)
-
     -- Auto Activate Hand
     task.spawn(function()
         while true do
@@ -1905,20 +1907,7 @@ end
 
 print("[OV] 🚀 Ready! Game:", GAME_NAME)
 
--- ============================================================
--- [UTDX Lobby] Anti AFK
--- ============================================================
 if game.PlaceId == 133410800847665 then
-    pcall(function()
-        local VirtualUser = game:GetService("VirtualUser")
-        player.Idled:Connect(function()
-            print("[ANTI-AFK Lobby] Idled detected → reset")
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new())
-        end)
-        print("[ANTI-AFK Lobby] ✅ Ready")
-    end)
-
     -- ============================================================
     -- [UTDX Lobby] Auto Redeem Codes
     -- ============================================================
