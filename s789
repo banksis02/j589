@@ -2111,9 +2111,9 @@ do
             if not inLobby() then return end
             pcall(function()
                 RS_UI:WaitForChild("ByteNetReliable"):FireServer(
-                    buffer.fromstring(")\005\000Kaido\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
+                    buffer.fromstring("+\005\000Kaido\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
                 task.wait(1)
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\001"))
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
                 print("[ใคโด] 🔄 Sent room request")
             end)
         end
@@ -2124,10 +2124,23 @@ do
             task.wait(2)
             pcall(function()
                 RS_UI:WaitForChild("ByteNetReliable"):FireServer(
-                    buffer.fromstring(")\a\000CellMax\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
+                    buffer.fromstring("+\a\000CellMax\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
                 task.wait(1)
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(",\001"))
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
                 print("[เซลแม็ก] 🔄 Sent room request")
+            end)
+        end
+
+        -- ========== ราชามด loop (ปุ่ม 6) — วนหาห้องทุก 60 วิ ==========
+        local function runAntKing()
+            if not inLobby() then return end
+            task.wait(2)
+            pcall(function()
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(
+                    buffer.fromstring("+\a\000AntKing\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
+                task.wait(1)
+                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
+                print("[ราชามด] 🔄 Sent room request")
             end)
         end
 
@@ -2187,8 +2200,8 @@ do
         screenGui.Parent = playerGui
 
         local frame = Instance.new("Frame")
-        -- 12 ปุ่ม × 36 + title 24 + padding 16 ≈ 472
-        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,468)
+        -- 11 ปุ่ม × 36 + title 24 + padding 16 ≈ 436
+        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,432)
         -- โหลดตำแหน่งล่าสุดที่ลากไว้ ถ้าไม่มี → fallback ที่ซ้ายบน (พ้นเมนู Roblox)
         local savedX, savedY = loadPos()
         if savedX and savedY then
@@ -2256,27 +2269,28 @@ do
             return b,s
         end
 
-        -- 10 ปุ่ม (Replay/NextMap ย้ายไปบน title bar แล้ว)
+        -- 11 ปุ่ม (Replay/NextMap ย้ายไปบน title bar แล้ว)
         local btnSt, sSt   = makeButton("▶ สตอรี่",              26)   -- 1
         local btnRt, sRt   = makeButton("▶ เรท",                 62)   -- 2
         local btnCh, sCh   = makeButton("▶ ชาเล้น",              98)   -- 3
         local btnKd, sKd   = makeButton("▶ ใคโด",                134)  -- 4
         local btnCM, sCM   = makeButton("▶ เซลแม็ก",              170)  -- 5
-        local btnGj, sGj   = makeButton("▶ โกโจ/สุคุนะ/โกฮัง",   206)  -- 6
-        local btnNd, sNd   = makeButton("▶ ประตูนารูโต๊ะ T4",   242)  -- 7
-        local btnVd, sVd   = makeButton("▶ ประตูเบจิโต้ T3",    278)  -- 8
-        local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          314)  -- 9
-        local btnFU, sFU   = makeButton("▶ แก้มัด",               350)  -- 10
+        local btnAK, sAK   = makeButton("▶ ราชามด",              206)  -- 6
+        local btnGj, sGj   = makeButton("▶ โกโจ/สุคุนะ/โกฮัง",   242)  -- 7
+        local btnNd, sNd   = makeButton("▶ ประตูนารูโต๊ะ T4",   278)  -- 8
+        local btnVd, sVd   = makeButton("▶ ประตูเบจิโต้ T3",    314)  -- 9
+        local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          350)  -- 10
+        local btnFU, sFU   = makeButton("▶ แก้มัด",               386)  -- 11
 
         -- เก็บปุ่มทั้งหมดเข้า list (ไม่รวม btnRp/btnNm ที่อยู่บน title bar)
-        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnCM, btnGj, btnNd, btnVd, btnCC, btnFU }
+        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnCM, btnAK, btnGj, btnNd, btnVd, btnCC, btnFU }
         local function setBtnsVisible(v)
             for _, b in ipairs(ALL_BTNS) do b.Visible = v end
         end
 
         -- ย่อ/ขยาย UI
         local isMinimized = true
-        local FULL_SIZE   = UDim2.new(0,170,0,396)
+        local FULL_SIZE   = UDim2.new(0,170,0,432)
         local MINI_SIZE   = UDim2.new(0,170,0,24)
 
         -- เริ่มต้นด้วยสถานะย่อ
@@ -2484,10 +2498,13 @@ do
         -- 10: แก้มัด loop toggle — สแกน Free Unit prompts ทุก 0.2 วิ
         local autoFU = makeToggle(btnFU, sFU, "freeunit_state.txt", freeUnit, "แก้มัด", 0.2)
 
-        -- 11: เซลแม็ก loop toggle (ล็อบบี้, ทุก 60 วิ)
+        -- 5: เซลแม็ก loop toggle (ล็อบบี้, ทุก 60 วิ)
         local autoCM = makeToggle(btnCM, sCM, "cellmax_state.txt", runCellMax, "เซลแม็ก", 60)
 
-        -- 12: โกโจ/สุคุนะ/โกฮัง one-shot warp (ล็อบบี้)
+        -- 6: ราชามด loop toggle (ล็อบบี้, ทุก 60 วิ)
+        local autoAK = makeToggle(btnAK, sAK, "antking_state.txt", runAntKing, "ราชามด", 60)
+
+        -- 7: โกโจ/สุคุนะ/โกฮัง one-shot warp (ล็อบบี้)
         makeOneShot(btnGj, sGj, runGojo, "โกโจ/สุคุนะ/โกฮัง")
 
         -- Hook MatchFinished → fire Replay/NextMap ตาม flag
@@ -2670,6 +2687,7 @@ do
         autoCC()  -- คลิกกลางจอ (loop จะรันต่อ)
         autoFU()  -- แก้มัด (loop จะรันต่อ)
         autoCM()  -- เซลแม็ก (loop จะรันต่อ)
+        autoAK()  -- ราชามด (loop จะรันต่อ)
         print("[UI] Ready! PlaceId:", game.PlaceId)
     end
 end
