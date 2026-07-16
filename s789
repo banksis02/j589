@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.0"
+local SCRIPT_VERSION = "v3.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1260,21 +1260,47 @@ if GAME_ID == "anime_expeditions" then
         local btnStroke = Instance.new("UIStroke", btnFarm)
         btnStroke.Color = Color3.fromRGB(80, 80, 100); btnStroke.Thickness = 1
 
+        -- ⭐ Save/Load state — จำสถานะข้าม rejoin
+        local FARM_STATE_FILE = "ae_farm_state.txt"
+        local function saveFarmState(on)
+            pcall(writefile, FARM_STATE_FILE, on and "1" or "0")
+        end
+        local function loadFarmState()
+            local ok, c = pcall(readfile, FARM_STATE_FILE)
+            return ok and c == "1"
+        end
+
         local farmOn = false
+        local function setFarmVisualOn()
+            btnFarm.Text = "⏹ ฟาร์มเพชร"
+            btnFarm.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+            btnStroke.Color = Color3.fromRGB(255, 80, 80)
+        end
+        local function setFarmVisualOff()
+            btnFarm.Text = "▶ ฟาร์มเพชร"
+            btnFarm.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+            btnStroke.Color = Color3.fromRGB(80, 80, 100)
+        end
+
         btnFarm.MouseButton1Click:Connect(function()
             farmOn = not farmOn
+            saveFarmState(farmOn)
             if farmOn then
-                btnFarm.Text = "⏹ ฟาร์มเพชร"
-                btnFarm.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-                btnStroke.Color = Color3.fromRGB(255, 80, 80)
+                setFarmVisualOn()
                 startFarm()
             else
-                btnFarm.Text = "▶ ฟาร์มเพชร"
-                btnFarm.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-                btnStroke.Color = Color3.fromRGB(80, 80, 100)
+                setFarmVisualOff()
                 stopFarm()
             end
         end)
+
+        -- ⭐ Auto-restore ตอน rejoin
+        if loadFarmState() then
+            farmOn = true
+            setFarmVisualOn()
+            print("[AE UI] 🔁 Auto-restore Farm: ON")
+            startFarm()
+        end
 
         -- Simple drag
         local UIS = game:GetService("UserInputService")
