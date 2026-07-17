@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.8"
+local SCRIPT_VERSION = "v3.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -809,7 +809,7 @@ if GAME_ID == "anime_expeditions" then
         { unitName = "SANKZU", pos = CFrame.new(3088.156494140625, 1798.9315185546875, 3346.728515625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
         { unitName = "ChefBum",pos = CFrame.new(3073.70751953125, 1798.7340087890625, 3342.795166015625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
     }
-    local PLACE_ID_CONST = 64
+    local PLACE_ID_CONST = 65
 
     -- ⭐ หา slot ของยูนิตใน hotbar โดยใช้ชื่อ (dynamic)
     local function findSlotByUnitName(name)
@@ -934,6 +934,7 @@ if GAME_ID == "anime_expeditions" then
 
     local function fireRestart()
         pcall(function()
+            task.wait(5)
             game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
                 :WaitForChild("ReplicaSignal", 5)
                 :FireServer(RESTART_CONST, "Restart")
@@ -1191,6 +1192,7 @@ if GAME_ID == "anime_expeditions" then
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
             if prompt and prompt.Enabled then
                 -- เช็คว่า Prompt นี้เป็น end screen (มี Victory/Defeat)
+                task.wait(5)
                 for _, d in ipairs(prompt:GetDescendants()) do
                     if d:IsA("TextLabel") and (d.Text == "Victory" or d.Text == "Defeat") then
                         return true
