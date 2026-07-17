@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.1"
+local SCRIPT_VERSION = "v4.1.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -973,48 +973,6 @@ if GAME_ID == "anime_expeditions" then
         print("[AE Farm] 🚀 StartGame fired")
     end
 
-    -- ⭐ [เน้นหลัก] Click "Repeat Stage" button ใน Prompt
-    local function clickRepeatStageButton()
-        local prompt = player.PlayerGui:FindFirstChild("Prompt")
-        if not prompt or not prompt.Enabled then return false end
-        
-        for _, btn in ipairs(prompt:GetDescendants()) do
-            if btn:IsA("TextButton") and btn.Visible and btn.Active then
-                -- หา TextLabel "Repeat Stage" ในลูก
-                local found = false
-                for _, lbl in ipairs(btn:GetDescendants()) do
-                    if lbl:IsA("TextLabel") and (lbl.Text == "Repeat Stage" or lbl.Text:find("Repeat")) then
-                        found = true
-                        break
-                    end
-                end
-                
-                if found then
-                    -- พยายามกดด้วยหลายวิธีเพื่อให้แน่ใจว่าติด
-                    pcall(function()
-                        if firesignal then
-                            firesignal(btn.MouseButton1Click)
-                            firesignal(btn.Activated)
-                        end
-                    end)
-                    pcall(function()
-                        local pos = btn.AbsolutePosition
-                        local sz = btn.AbsoluteSize
-                        local cx = pos.X + sz.X / 2
-                        local cy = pos.Y + sz.Y / 2
-                        VirtualInputManager:SendMouseMoveEvent(cx, cy, game)
-                        task.wait(0.1)
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                        task.wait(0.1)
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                    end)
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
     -- ========== End Screen (Prompt) Watcher — ส่งข้อมูลไปเว็บ ==========
     local function getEndScreenData()
         local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -1211,7 +1169,7 @@ if GAME_ID == "anime_expeditions" then
             return false
         end
 
-        -- ⭐ [FIX] รอให้ BottomHUD โหลดเสร็จก่อน ถ้าหา slot ไม่เจอให้รอแล้วลองใหม่
+        -- ⭐ [FIX] รอให้ BottomHUD โหลดเสร็จก่อน ถ้าหา slot ไม่เจอให้รอแล้วลอยใหม่
         local silverName, silverSlot = nil, nil
         for attempt = 1, 5 do
             silverName, silverSlot = findMySilverUnit()
@@ -1257,15 +1215,14 @@ if GAME_ID == "anime_expeditions" then
         while farmingActiveFn() do
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
             if prompt and prompt.Enabled then
-                task.wait(5)
+                -- เช็คว่า Prompt นี้เป็น end screen (มี Victory/Defeat)
+                task.wait(3) -- รอให้ข้อมูลโหลดก่อนเช็ค
                 for _, d in ipairs(prompt:GetDescendants()) do
                     if d:IsA("TextLabel") and (d.Text == "Victory" or d.Text == "Defeat") then
                         return true
                     end
                 end
             end
-            local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
-            if not rh or not rh.Enabled then return true end
             task.wait(1)
         end
         return false
@@ -1283,9 +1240,8 @@ if GAME_ID == "anime_expeditions" then
                     -- อยู่ล็อบบี้
                     local prompt = player.PlayerGui:FindFirstChild("Prompt")
                     if prompt and prompt.Enabled then
-                        print("[AE Farm] ⚠️ ติดหน้าจบเกมค้างในล็อบบี้! กด Repeat/Next...")
-                        clickRepeatStageButton()
-                        task.wait(2)
+                        -- ถ้าติดหน้า Prompt ให้รอเกมกดเอง ไม่ต้องทำอะไร
+                        task.wait(1)
                     else
                         print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
                         fireStartGame()
@@ -1310,29 +1266,21 @@ if GAME_ID == "anime_expeditions" then
                             lastSentEndScreenTime = tick()
                         end
                         
-                        task.wait(1)
-                        
-                        -- กดรีเพล (Repeat Stage)
-                        print("[AE Farm] 🖱️ กด Repeat Stage (เรียกมอนใหม่ในด่านเดิม)...")
+                        -- ⭐ [FIX สำคัญ] รอให้เกมกดรีเพลเอง (รอจนกว่า Prompt จะหายไป)
+                        print("[AE Farm] ⏳ รอเกมรีเพลอัตโนมัติ...")
                         local waitClose = tick()
-                        local clickAttempts = 0
-                        
                         while tick() - waitClose < 30 do
                             local prompt = player.PlayerGui:FindFirstChild("Prompt")
                             if not prompt or not prompt.Enabled then
-                                break -- UI หายไปแล้ว เริ่มรอบใหม่
+                                break -- UI หายไปแล้ว เกมรีเพลแล้ว
                             end
-                            
-                            clickAttempts = clickAttempts + 1
-                            clickRepeatStageButton()
-                            task.wait(1)
+                            task.wait(0.5)
                         end
                         
-                        -- ⭐ [FIX สำคัญ] สำหรับเกมนี้ที่ไม่รีแมพใหม่! 
-                        -- เมื่อ Prompt หายไป แปลว่าเริ่มรอบใหม่ในด่านเดิมทันที ให้รอ 3 วิให้เมนูวางตัวปลดล็อค แล้ววางยูนิตทันที
-                        print("[AE Farm] ✅ รีเพลสำเร็จ! รอ 3 วิเพื่อให้เมนูวางตัวปลดล็อค...")
-                        task.wait(3)
-                        -- ลูปจะวนกลับไปด้านบนแล้ววางยูนิตเองอัตโนมัติ
+                        -- ⭐ รอ 5 วินาทีให้เซิร์ฟเวอร์เตรียมเวฟใหม่และปลดล็อคเมนูวางตัว
+                        print("[AE Farm] ✅ รีเพลสำเร็จ! รอ 5 วิเพื่อเตรียมวางยูนิตรอบใหม่...")
+                        task.wait(5)
+                        -- ลูปจะวนกลับไปวางยูนิตเองอัตโนมัติ
                     end
                 end
             end
