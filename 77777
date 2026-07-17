@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.177"
+local SCRIPT_VERSION = "v4.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -940,6 +940,10 @@ if GAME_ID == "anime_expeditions" then
     local RESTART_CONST = 59
     local SILVER_UNIT_NAMES = { "SANKZU", "ChefBum" }
 
+    -- ⭐ [FIX] ย้ายตัวแปรฟาร์มขึ้นมาด้านบน เพื่อให้ Watcher เช็คได้ว่ากำลังฟาร์มอยู่หรือไม่
+    local farmingActive = false
+    local function isFarmingActive() return farmingActive end
+
     -- Config ตำแหน่งวางแยกตาม stage + ประเภทตัว
     local STAGE_CONFIG = {
         ["School Grounds - Act 1"] = {
@@ -1141,14 +1145,15 @@ if GAME_ID == "anime_expeditions" then
         local lastState = false
         while true do
             pcall(function()
+                -- ⭐ [FIX สำคัญ] ถ้าระบบฟาร์มกำลังทำงานอยู่ ให้ Watcher หยุดส่งข้อมูล เพื่อกันส่งซ้ำ 2 รอบ
+                if isFarmingActive() then
+                    lastState = false
+                    return
+                end
+
                 local stats = getEndScreenData()
                 if stats and not lastState then
                     lastState = true
-                    local now = tick()
-                    if now - lastSentEndScreenTime < 15 then
-                        print("[AE Watcher] ⏭️ Skip (farm loop เพิ่งส่งไปแล้ว)")
-                        return
-                    end
                     task.wait(1)
                     local s = getEndScreenData()
                     if s then
@@ -1239,8 +1244,8 @@ if GAME_ID == "anime_expeditions" then
         return true
     end
 
-    local function waitMatchEnd(farmingActive)
-        while farmingActive() do
+    local function waitMatchEnd(farmingActiveFn)
+        while farmingActiveFn() do
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
             if prompt and prompt.Enabled then
                 task.wait(5)
@@ -1258,9 +1263,6 @@ if GAME_ID == "anime_expeditions" then
     end
 
     -- Farm main loop
-    local farmingActive = false
-    local function isFarmingActive() return farmingActive end
-
     local function startFarm()
         if farmingActive then return end
         farmingActive = true
