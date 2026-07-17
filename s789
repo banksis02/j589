@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.0"
+local SCRIPT_VERSION = "v3.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -809,7 +809,7 @@ if GAME_ID == "anime_expeditions" then
         { unitName = "SANKZU", pos = CFrame.new(3088.156494140625, 1798.9315185546875, 3346.728515625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
         { unitName = "ChefBum",pos = CFrame.new(3073.70751953125, 1798.7340087890625, 3342.795166015625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
     }
-    local PLACE_ID_CONST = 64
+    local PLACE_ID_CONST = 65
 
     -- ⭐ หา slot ของยูนิตใน hotbar โดยใช้ชื่อ (dynamic)
     local function findSlotByUnitName(name)
@@ -843,17 +843,18 @@ if GAME_ID == "anime_expeditions" then
         return nil
     end
 
+    -- ⭐ เกมสุ่ม opcode 64/65 → ยิงทั้งสอง (server accepts valid one)
+    local PLACE_OPCODES = { 64, 65 }
     local function placeUnit(slot, cframe)
-        local ok, err = pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
-                :WaitForChild("ReplicaSignal", 5)
-                :FireServer(PLACE_ID_CONST, "PlaceGameUnit", slot, cframe)
-        end)
-        if ok then
-            print("[AE] ✅ Placed slot " .. slot)
-        else
-            warn("[AE] ❌ Place slot " .. slot .. " failed:", err)
+        local sig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        for _, op in ipairs(PLACE_OPCODES) do
+            pcall(function()
+                sig:FireServer(op, "PlaceGameUnit", slot, cframe)
+            end)
+            task.wait(0.05)  -- delay สั้น กัน rate limit
         end
+        print("[AE] ✅ Placed slot " .. slot .. " (opcode 64+65)")
     end
 
     local isPlacing = false
@@ -1231,18 +1232,31 @@ if GAME_ID == "anime_expeditions" then
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
                     waitMatchEnd(isFarmingActive)
                     if farmingActive then
-                        -- ⭐ อ่าน + ส่ง data ก่อน Restart (กัน Prompt ปิดก่อนอ่าน)
+                        -- อ่าน + ส่ง data ก่อน Restart
                         task.wait(1)
                         local s = getEndScreenData()
                         if s then
                             local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
                             print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
                             sendAEDataToWeb(s)
-                            lastSentEndScreenTime = tick()  -- ⭐ mark sent (watcher จะ skip)
+                            lastSentEndScreenTime = tick()
                         end
                         task.wait(0.5)
                         fireRestart()
-                        task.wait(3) -- รอ restart process
+
+                        -- ⭐ รอ Victory UI ปิดสมบูรณ์ + รอ RightGameHUD กลับมา (กัน race condition)
+                        local waitClose = tick()
+                        while tick() - waitClose < 15 do
+                            local prompt = player.PlayerGui:FindFirstChild("Prompt")
+                            local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
+                            local promptClosed = not prompt or not prompt.Enabled
+                            local gameReady = rh and rh.Enabled
+                            if promptClosed and gameReady then
+                                break
+                            end
+                            task.wait(0.3)
+                        end
+                        task.wait(1)  -- extra buffer ให้ทุกอย่าง settle
                     end
                 end
             end
