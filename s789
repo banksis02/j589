@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.1.1"
+local SCRIPT_VERSION = "v4.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -776,16 +776,9 @@ if GAME_ID == "anime_expeditions" then
     -- return: stageName (string หรือ nil), mode (string หรือ nil), difficulty (string หรือ nil)
     local function getStageInfo()
         local pg = player.PlayerGui
-        
-        -- ⭐ [FIX] ถ้าหน้าต่าง Prompt (จบเกม) ยังเปิดอยู่ ให้ถือว่ายังไม่พร้อมเล่นเพื่อกันบั๊กวางตัวก่อนเวลา
-        local prompt = pg:FindFirstChild("Prompt")
-        if prompt and prompt.Enabled then
-            return nil, nil, nil
-        end
-
         local rh = pg:FindFirstChild("RightGameHUD")
         if not rh or not rh.Enabled then
-            return nil, nil, nil  -- อยู่ล็อบบี้
+            return nil, nil, nil  -- อยู่ล็อบบี้ หรือ HUD ยังไม่โหลด
         end
         local stage, mode, difficulty
         for _, d in ipairs(rh:GetDescendants()) do
@@ -1218,7 +1211,15 @@ if GAME_ID == "anime_expeditions" then
             return false
         end
 
-        local silverName, silverSlot = findMySilverUnit()
+        -- ⭐ [FIX] รอให้ BottomHUD โหลดเสร็จก่อน ถ้าหา slot ไม่เจอให้รอแล้วลองใหม่
+        local silverName, silverSlot = nil, nil
+        for attempt = 1, 5 do
+            silverName, silverSlot = findMySilverUnit()
+            if silverName and silverSlot then break end
+            print("[AE Farm] ⏳ BottomHUD ยังไม่พร้อม รอโหลด... (ลองครั้งที่ " .. attempt .. ")")
+            task.wait(1)
+        end
+
         if silverName and silverSlot then
             local positions = cfg.silver[silverName]
             if positions then
@@ -1232,7 +1233,15 @@ if GAME_ID == "anime_expeditions" then
             warn("[AE Farm] ⚠️ ไม่มีตัวเงินใน hotbar (ข้าม)")
         end
 
-        local damageSlots = findDamageSlots()
+        -- ⭐ [FIX] รอหา Damage Slots เช่นกัน
+        local damageSlots = {}
+        for attempt = 1, 5 do
+            damageSlots = findDamageSlots()
+            if #damageSlots > 0 then break end
+            print("[AE Farm] ⏳ หา Damage Slots ไม่เจอ รอโหลด... (ลองครั้งที่ " .. attempt .. ")")
+            task.wait(1)
+        end
+
         for i = 1, math.min(#damageSlots, #cfg.damage) do
             local slot = damageSlots[i]
             print("[AE Farm] ⚔️ วาง Damage " .. i .. " (slot " .. slot .. ")")
@@ -1278,9 +1287,18 @@ if GAME_ID == "anime_expeditions" then
                         clickRepeatStageButton()
                         task.wait(2)
                     else
-                        print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
-                        fireStartGame()
-                        task.wait(8)
+                        -- ⭐ [FIX] เพิ่มดีเลย์รอเกมโหลดก่อนยิง StartGame
+                        print("[AE Farm] ⏳ กำลังรอโหลดเกม/เข้าด่าน...")
+                        task.wait(2)
+                        local current_stage = getStageInfo()
+                        if not current_stage then
+                            local p = player.PlayerGui:FindFirstChild("Prompt")
+                            if not p or not p.Enabled then
+                                print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
+                                fireStartGame()
+                                task.wait(5)
+                            end
+                        end
                     end
                 elseif not STAGE_CONFIG[stage] then
                     print("[AE Farm] ⚠️ ไม่มี config: " .. stage)
@@ -1330,8 +1348,17 @@ if GAME_ID == "anime_expeditions" then
                             fireStartGame()
                             task.wait(5)
                         else
-                            print("[AE Farm] ✅ เข้ารอบใหม่แล้ว รอ 2 วิเพื่อเริ่มวางยูนิต...")
-                            task.wait(2)
+                            print("[AE Farm] ✅ เข้ารอบใหม่แล้ว รอโหลดเกม...")
+                            -- ⭐ [FIX] รอให้ HUD โหลดเสร็จก่อนค่อยเริ่มลูปใหม่เพื่อกันบั๊กไม่วางตัว
+                            local waitLoad = tick()
+                            while tick() - waitLoad < 15 do
+                                if getStageInfo() ~= nil then 
+                                    print("[AE Farm] 🎮 HUD โหลดเสร็จแล้ว เริ่มวางยูนิตได้เลย!")
+                                    break 
+                                end
+                                task.wait(0.5)
+                            end
+                            task.wait(1) -- ดีเลย์เล็กน้อยก่อนวาง
                         end
                     end
                 end
