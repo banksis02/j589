@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.5"
+local SCRIPT_VERSION = "v3.6"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -983,9 +983,11 @@ if GAME_ID == "anime_expeditions" then
                                 -- quantity: match "100x", "1,000x", "2x"
                                 if txt:match("^[%d,]+x$") then
                                     itemQty = txt
-                                -- name: skip Lvl/EXP/Gained/generic
-                                elseif not txt:find("Lvl") and not txt:find("EXP")
-                                    and not txt:find("Gained") and not txt:find("<font") then
+                                -- name: skip party unit stats — exclude if starts with digit ("1,657 EXP") หรือ "Lvl X/Y" หรือ "Gained X EXP"
+                                elseif not txt:find("Lvl")
+                                    and not txt:match("^%d")
+                                    and not txt:find("Gained")
+                                    and not txt:find("<font") then
                                     itemName = itemName or txt
                                 end
                             end
@@ -1016,7 +1018,7 @@ if GAME_ID == "anime_expeditions" then
             gameId       = GAME_ID,
             progress     = 0,
             currentStats = { level = 0, bp = 0 },
-            matchInfo    = { map = stats.stage, wave = tonumber(((stats.kills or ""):gsub(",",""))) or 0 },
+            matchInfo    = { map = stats.stage, wave = 0 },
             endScreen    = {
                 act      = actFull,
                 file     = stats.stage,
