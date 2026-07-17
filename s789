@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.1"
+local SCRIPT_VERSION = "v4.1.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -772,14 +772,14 @@ end
 -- [Anime Expeditions] Placement Macro + Stage Detection
 -- ============================================================
 if GAME_ID == "anime_expeditions" then
-    -- ⭐ Helper: เช็คว่าอยู่ล็อบบี้หรือในเกม + ชื่อด่าน
+    -- ⭐ Helper: เช็คว่าอยู่ล็อบบี้หรือในเกม + ชื่อด่าน + เวฟปัจจุบัน
     local function getStageInfo()
         local pg = player.PlayerGui
         local rh = pg:FindFirstChild("RightGameHUD")
         if not rh or not rh.Enabled then
-            return nil, nil, nil
+            return nil, nil, nil, nil
         end
-        local stage, mode, difficulty
+        local stage, mode, difficulty, waveText
         for _, d in ipairs(rh:GetDescendants()) do
             if d:IsA("TextLabel") and d.Text ~= "" then
                 local t = d.Text
@@ -789,16 +789,18 @@ if GAME_ID == "anime_expeditions" then
                     mode = t
                 elseif t:find("Mode$") or t == "Normal" or t == "Hard" or t == "Nightmare" then
                     difficulty = t
+                elseif t:lower():find("wave") or t:match("^%d+/%d+$") then
+                    waveText = t
                 end
             end
         end
-        return stage, mode, difficulty
+        return stage, mode, difficulty, waveText
     end
 
     -- Expose
-    _G.AE_GET_STAGE = getStageInfo
-    _G.AE_IN_GAME = function() return getStageInfo() ~= nil end
-    _G.AE_IN_LOBBY = function() return getStageInfo() == nil end
+    _G.AE_GET_STAGE = function() local s, m, d = getStageInfo(); return s end
+    _G.AE_IN_GAME = function() return _G.AE_GET_STAGE() ~= nil end
+    _G.AE_IN_LOBBY = function() return _G.AE_GET_STAGE() == nil end
 
     -- ⭐ PLACEMENTS by unit NAME
     local PLACEMENTS = {
@@ -809,7 +811,6 @@ if GAME_ID == "anime_expeditions" then
         { unitName = "ChefBum",pos = CFrame.new(3073.70751953125, 1798.7340087890625, 3342.795166015625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
     }
 
-    -- หา slot ของยูนิต
     local function findSlotByUnitName(name)
         local bh = player.PlayerGui:FindFirstChild("BottomHUD")
         if not bh then return nil end
@@ -863,7 +864,7 @@ if GAME_ID == "anime_expeditions" then
     _G.AE_PLACE_ONE = placeUnit
 
     -- ============================================================
-    -- [AE] Farm System — วาง + ดักจบเกม + วนซ้ำ
+    -- [AE] Farm System — วาง + ดักจบเกม (Real-time UI) + วนซ้ำ
     -- ============================================================
     local SILVER_UNIT_NAMES = { "SANKZU", "ChefBum" }
     local farmingActive = false
@@ -901,18 +902,19 @@ if GAME_ID == "anime_expeditions" then
         end)
     end
 
-    -- ========== ดักจับ End Screen (Prompt) ==========
+    -- ========== อ่าน & ส่งข้อมูล UI ==========
+    local lastSentEndScreenTime = 0
+
     local function getEndScreenData()
         local prompt = player.PlayerGui:FindFirstChild("Prompt")
         if not prompt or not prompt.Enabled then return nil end
-        local stats = { result = "N/A", clearTime = "N/A", yen = "N/A", kills = "N/A", damage = "N/A", stage = "N/A", mode = "N/A", difficulty = "N/A", rewards = {} }
-        local hasEndText = false
+        local stats = { result = "N/A", clearTime = "N/A", yen = "N/A", kills = "N/A", damage = "N/A", stage = "N/A", mode = "N/A", difficulty = "N/A", rewards = {}, hasEndText = false }
         
         for _, d in ipairs(prompt:GetDescendants()) do
             if d:IsA("TextLabel") and d.Text ~= "" then
                 local t = d.Text
                 if t == "Victory" or t == "Defeat" then
-                    stats.result = t; hasEndText = true
+                    stats.result = t; stats.hasEndText = true
                 elseif t:find(" %- Act ") then stats.stage = t
                 elseif t == "Story" or t == "Endless" or t == "Challenge" or t == "Raid" then stats.mode = t
                 elseif t:find("Mode$") then stats.difficulty = t
@@ -957,7 +959,6 @@ if GAME_ID == "anime_expeditions" then
             end
         end
 
-        if not hasEndText then return nil end
         return stats
     end
 
@@ -978,35 +979,34 @@ if GAME_ID == "anime_expeditions" then
         if ok and type(resp) == "table" and resp.Success then print("[AE] ✅ Sent to web!") else warn("[AE] ❌ Send FAIL") end
     end
 
-    local lastSentEndScreenTime = 0
-    local matchEndedSignal = Instance.new("BindableEvent") -- สร้างสัญญาณบอกว่าเกมจบ
-
-    -- ⭐ [FIX] ดักจับการเด้งของ Prompt แบบ Real-time แม้จะเด้งแค่ 0.1 วิก็ตาม
+    -- ⭐ [FIX สำคัญ] ระบบดักจับ UI แบบ Real-time ทันทีที่มันเด้งขึ้นมา
     task.spawn(function()
-        task.wait(5)
-        local prompt = player.PlayerGui:FindFirstChild("Prompt")
-        if not prompt then
-            prompt = player.PlayerGui:WaitForChild("Prompt", 10)
-        end
-        
-        if prompt then
-            print("[AE] 👀 ติดตั้ง Event ดักจับ Prompt...")
-            prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
-                if prompt.Enabled then
-                    task.wait(0.1) -- รอให้ข้อมูลโหลด
-                    local stats = getEndScreenData()
-                    if stats then
-                        if tick() - lastSentEndScreenTime > 5 then -- กันส่งซ้ำภายใน 5 วิ
-                            local rewardsList = (#stats.rewards > 0) and table.concat(stats.rewards, ", ") or "N/A"
-                            print("[AE] 📤 ดักจับจบเกม! " .. stats.result .. " | " .. stats.stage .. " | Rewards: " .. rewardsList)
-                            sendAEDataToWeb(stats)
-                            lastSentEndScreenTime = tick()
+        task.wait(3)
+        print("[AE] 👀 ติดตั้งระบบดักจับ UI แบบ Real-time...")
+        local function setupPrompt(prompt)
+            if prompt.Name == "Prompt" then
+                prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
+                    if prompt.Enabled then
+                        -- ดักจับได้ทันทีที่เปิด! รอเสี้ยววินาทีให้ Text โหลดแล้วอ่านทันที
+                        task.wait(0.05)
+                        local stats = getEndScreenData()
+                        if stats and stats.hasEndText then
+                            if tick() - lastSentEndScreenTime > 5 then
+                                local rewardsList = (#stats.rewards > 0) and table.concat(stats.rewards, ", ") or "N/A"
+                                print("[AE] 👀 ฉกข้อมูล UI! " .. stats.result .. " | " .. stats.stage .. " | Rewards: " .. rewardsList)
+                                sendAEDataToWeb(stats)
+                                lastSentEndScreenTime = tick()
+                            end
                         end
-                        matchEndedSignal:Fire() -- ยิงสัญญาณบอก Farm Loop ว่าจบแล้ว
                     end
-                end
-            end)
+                end)
+            end
         end
+
+        for _, child in ipairs(player.PlayerGui:GetChildren()) do
+            setupPrompt(child)
+        end
+        player.PlayerGui.ChildAdded:Connect(setupPrompt)
     end)
 
     local function findMySilverUnit()
@@ -1083,6 +1083,49 @@ if GAME_ID == "anime_expeditions" then
         return true
     end
 
+    -- ⭐ ดักจบเกมแบบไม่มี UI: ดักจากการเปลี่ยนเวฟ
+    local function waitMatchEnd()
+        local _, _, _, lastWave = getStageInfo()
+        local waitStart = tick()
+        
+        while farmingActive do
+            -- 1. เช็คว่ามี UI จบเกมแบบปกติไหม (ถ้ามี UI จะถูกส่งข้อมูลโดย Event ด้านบนแล้ว)
+            local prompt = player.PlayerGui:FindFirstChild("Prompt")
+            if prompt and prompt.Enabled then
+                -- ถ้ามี UI ก็รอให้เกมกดรีเพลเองจน UI หายไป
+                while prompt and prompt.Enabled and farmingActive do
+                    task.wait(0.1)
+                end
+                return "ui"
+            end
+            
+            local stage, mode, diff, wave = getStageInfo()
+            
+            -- 2. เช็คว่า HUD หายไปไหม
+            if not stage then
+                return "restart"
+            end
+            
+            -- 3. เช็คว่าเวฟรีเซ็ตไหม (เช่น 15 -> 1)
+            if wave and lastWave and wave ~= lastWave then
+                local prevNum = tonumber(lastWave:match("(%d+)"))
+                local currNum = tonumber(wave:match("(%d+)"))
+                if prevNum and currNum and currNum < prevNum then
+                    return "restart"
+                end
+            end
+            if wave then lastWave = wave end
+            
+            -- 4. ถ้าผ่านไป 10 นาที ให้บังคับจบรอบ (กันค้าง)
+            if tick() - waitStart > 600 then
+                return "timeout"
+            end
+            
+            task.wait(1)
+        end
+        return "stopped"
+    end
+
     -- Farm main loop
     local function startFarm()
         if farmingActive then return end
@@ -1092,7 +1135,6 @@ if GAME_ID == "anime_expeditions" then
             while farmingActive do
                 local stage, mode, diff = getStageInfo()
                 if not stage then
-                    -- อยู่ล็อบบี้
                     local prompt = player.PlayerGui:FindFirstChild("Prompt")
                     if not prompt or not prompt.Enabled then
                         print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
@@ -1102,17 +1144,14 @@ if GAME_ID == "anime_expeditions" then
                         task.wait(1)
                     end
                 else
-                    -- อยู่ในด่าน
                     print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage .. " → วางยูนิต")
                     placeAllForStage(stage)
                     
                     print("[AE Farm] ⏳ วางเสร็จ รอดักจับการจบเกม...")
-                    -- รอจนกว่า Event ดักจับจะส่งสัญญาณมา (หรือถ้าไม่มี UI จริงๆ ให้ตั้งเวลาไว้ 2 ชม. เผื่อ)
-                    matchEndedSignal.Event:Wait(7200)
+                    waitMatchEnd()
                     
                     if farmingActive then
-                        -- เกมจบแล้ว (ข้อมูลถูกส่งไปโดย Event ดักจับแล้ว)
-                        print("[AE Farm] ✅ จบเกม! เกมกำลังรีเพล... รอ 5 วิเพื่อวางยูนิตใหม่")
+                        print("[AE Farm] ✅ จบรอบ! รอ 5 วิเพื่อเตรียมวางยูนิตใหม่...")
                         task.wait(5)
                     end
                 end
@@ -1123,7 +1162,6 @@ if GAME_ID == "anime_expeditions" then
 
     local function stopFarm()
         farmingActive = false
-        matchEndedSignal:Fire() -- ปลดล็อคการรอ เพื่อให้หยุดลูปได้
     end
 
     _G.AE_FARM_START = startFarm
@@ -1216,7 +1254,6 @@ if GAME_ID == "anime_expeditions" then
         print("[AE UI] ✅ Ready")
     end)
 end
-
 -- ============================================================
 -- [Anime Squadron] Victory Trigger — EndScreen.Visible = true
 -- ============================================================
