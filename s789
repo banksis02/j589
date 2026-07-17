@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.0"
+local SCRIPT_VERSION = "v4.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -959,14 +959,18 @@ if GAME_ID == "anime_expeditions" then
         },
     }
 
+    -- ⭐ Restart — ยิงหลาย opcode (สุ่มเหมือน placement) + click ปุ่ม UI เป็น fallback
+    local RESTART_OPCODES = { 58, 59, 60 }
     local function fireRestart()
-        pcall(function()
-            task.wait(5)
-            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
-                :WaitForChild("ReplicaSignal", 5)
-                :FireServer(RESTART_CONST, "Restart")
-        end)
-        print("[AE Farm] 🔄 Restart fired")
+        local sig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        for _, op in ipairs(RESTART_OPCODES) do
+            pcall(function()
+                sig:FireServer(op, "Restart")
+            end)
+            task.wait(0.05)
+        end
+        print("[AE Farm] 🔄 Restart fired (opcodes 58/59/60)")
     end
 
     -- ⭐ StartGame — เข้าด่านจาก lobby (Play menu → Start)
@@ -978,6 +982,38 @@ if GAME_ID == "anime_expeditions" then
                 :FireServer(START_CONST, "StartGame")
         end)
         print("[AE Farm] 🚀 StartGame fired")
+    end
+
+    -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
+    local function clickRepeatStageButton()
+        local prompt = player.PlayerGui:FindFirstChild("Prompt")
+        if not prompt then return false end
+        for _, btn in ipairs(prompt:GetDescendants()) do
+            if btn:IsA("TextButton") then
+                -- หา TextLabel "Repeat Stage" ในลูก
+                for _, lbl in ipairs(btn:GetDescendants()) do
+                    if lbl:IsA("TextLabel") and lbl.Text == "Repeat Stage" then
+                        pcall(function()
+                            if firesignal then
+                                firesignal(btn.MouseButton1Click)
+                                firesignal(btn.Activated)
+                            end
+                        end)
+                        pcall(function()
+                            local pos = btn.AbsolutePosition
+                            local sz = btn.AbsoluteSize
+                            local cx = pos.X + sz.X / 2
+                            local cy = pos.Y + sz.Y / 2
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                        end)
+                        return true
+                    end
+                end
+            end
+        end
+        return false
     end
 
     -- ========== End Screen (Prompt) Watcher — ส่งข้อมูลไปเว็บ ==========
@@ -1270,9 +1306,10 @@ if GAME_ID == "anime_expeditions" then
                         task.wait(0.5)
                         fireRestart()
 
-                        -- ⭐ รอ Victory UI ปิดสมบูรณ์ + รอ RightGameHUD กลับมา (กัน race condition)
+                        -- ⭐ รอ Victory UI ปิด + ถ้าไม่ปิดใน 5 วิ → click ปุ่ม Repeat Stage
                         local waitClose = tick()
-                        while tick() - waitClose < 15 do
+                        local clickedButton = false
+                        while tick() - waitClose < 20 do
                             local prompt = player.PlayerGui:FindFirstChild("Prompt")
                             local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
                             local promptClosed = not prompt or not prompt.Enabled
@@ -1280,9 +1317,16 @@ if GAME_ID == "anime_expeditions" then
                             if promptClosed and gameReady then
                                 break
                             end
+                            -- Fallback: ถ้า 5 วิผ่านไปแล้วยังไม่ปิด → click ปุ่ม
+                            if not clickedButton and tick() - waitClose > 5 then
+                                if clickRepeatStageButton() then
+                                    print("[AE Farm] 🖱️ Clicked Repeat Stage button (fallback)")
+                                    clickedButton = true
+                                end
+                            end
                             task.wait(0.3)
                         end
-                        task.wait(1)  -- extra buffer ให้ทุกอย่าง settle
+                        task.wait(1)
                     end
                 end
             end
