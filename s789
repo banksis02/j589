@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.2"
+local SCRIPT_VERSION = "v4.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -983,7 +983,7 @@ if GAME_ID == "anime_expeditions" then
                 -- หา TextLabel "Repeat Stage" ในลูก
                 local found = false
                 for _, lbl in ipairs(btn:GetDescendants()) do
-                    if lbl:IsA("TextLabel") and lbl.Text == "Repeat Stage" then
+                    if lbl:IsA("TextLabel") and (lbl.Text == "Repeat Stage" or lbl.Text:find("Repeat")) then
                         found = true
                         break
                     end
@@ -1280,37 +1280,28 @@ if GAME_ID == "anime_expeditions" then
             while farmingActive do
                 local stage, mode, diff = getStageInfo()
                 if not stage then
-                    -- ⭐ [FIX] ถ้าไม่ได้อยู่ในเกม ให้เช็คก่อนว่าติดหน้าจบเกมค้างอยู่ไหม ถ้าค้างให้กดปุ่มรีเพลแทนการยิง Start
+                    -- อยู่ล็อบบี้
                     local prompt = player.PlayerGui:FindFirstChild("Prompt")
                     if prompt and prompt.Enabled then
-                        print("[AE Farm] ⚠️ ติดหน้าจบเกมค้าง! พยายามกด Repeat Stage...")
+                        print("[AE Farm] ⚠️ ติดหน้าจบเกมค้างในล็อบบี้! กด Repeat/Next...")
                         clickRepeatStageButton()
                         task.wait(2)
                     else
-                        -- ⭐ [FIX] เพิ่มดีเลย์รอเกมโหลดก่อนยิง StartGame
-                        print("[AE Farm] ⏳ กำลังรอโหลดเกม/เข้าด่าน...")
-                        task.wait(2)
-                        local current_stage = getStageInfo()
-                        if not current_stage then
-                            local p = player.PlayerGui:FindFirstChild("Prompt")
-                            if not p or not p.Enabled then
-                                print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
-                                fireStartGame()
-                                task.wait(5)
-                            end
-                        end
+                        print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
+                        fireStartGame()
+                        task.wait(8)
                     end
-                elseif not STAGE_CONFIG[stage] then
-                    print("[AE Farm] ⚠️ ไม่มี config: " .. stage)
-                    task.wait(3)
                 else
+                    -- อยู่ในด่าน
                     print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage)
                     placeAllForStage(stage)
+                    
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
                     waitMatchEnd(isFarmingActive)
                     
                     if farmingActive then
-                        task.wait(2)
+                        -- จบเกมแล้ว ส่งข้อมูล
+                        task.wait(2) -- รอ UI โหลดข้อมูล
                         local s = getEndScreenData()
                         if s then
                             local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
@@ -1321,45 +1312,27 @@ if GAME_ID == "anime_expeditions" then
                         
                         task.wait(1)
                         
-                        -- ⭐ [เปลี่ยนหลัก] กดปุ่ม Repeat Stage จาก UI เกม แทนการยิง Remote
-                        print("[AE Farm] 🖱️ กำลังกด Repeat Stage จาก UI เกม...")
+                        -- กดรีเพล (Repeat Stage)
+                        print("[AE Farm] 🖱️ กด Repeat Stage (เรียกมอนใหม่ในด่านเดิม)...")
                         local waitClose = tick()
                         local clickAttempts = 0
                         
-                        -- วนลูปกดปุ่มทุก 1 วินาที จนกว่าหน้าต่างจะหายไป
-                        while tick() - waitClose < 60 do
+                        while tick() - waitClose < 30 do
                             local prompt = player.PlayerGui:FindFirstChild("Prompt")
                             if not prompt or not prompt.Enabled then
-                                break -- UI หายไปแล้ว ออกจากลูป
+                                break -- UI หายไปแล้ว เริ่มรอบใหม่
                             end
                             
                             clickAttempts = clickAttempts + 1
-                            if clickAttempts % 5 == 0 then
-                                print("[AE Farm] 🖱️ พยายามกด Repeat Stage (ครั้งที่ " .. clickAttempts .. ")...")
-                            end
-                            
                             clickRepeatStageButton()
                             task.wait(1)
                         end
                         
-                        -- ถ้ากดปุ่มไม่ติดเป็นเวลา 60 วิ ให้เตะ Remote StartGame เผื่อทำงาน
-                        if tick() - waitClose >= 60 then
-                            print("[AE Farm] ❌ กดปุ่มไม่ติดนาน 60 วิ! พยายามยิง StartGame เป็น Fallback")
-                            fireStartGame()
-                            task.wait(5)
-                        else
-                            print("[AE Farm] ✅ เข้ารอบใหม่แล้ว รอโหลดเกม...")
-                            -- ⭐ [FIX] รอให้ HUD โหลดเสร็จก่อนค่อยเริ่มลูปใหม่เพื่อกันบั๊กไม่วางตัว
-                            local waitLoad = tick()
-                            while tick() - waitLoad < 15 do
-                                if getStageInfo() ~= nil then 
-                                    print("[AE Farm] 🎮 HUD โหลดเสร็จแล้ว เริ่มวางยูนิตได้เลย!")
-                                    break 
-                                end
-                                task.wait(0.5)
-                            end
-                            task.wait(1) -- ดีเลย์เล็กน้อยก่อนวาง
-                        end
+                        -- ⭐ [FIX สำคัญ] สำหรับเกมนี้ที่ไม่รีแมพใหม่! 
+                        -- เมื่อ Prompt หายไป แปลว่าเริ่มรอบใหม่ในด่านเดิมทันที ให้รอ 3 วิให้เมนูวางตัวปลดล็อค แล้ววางยูนิตทันที
+                        print("[AE Farm] ✅ รีเพลสำเร็จ! รอ 3 วิเพื่อให้เมนูวางตัวปลดล็อค...")
+                        task.wait(3)
+                        -- ลูปจะวนกลับไปด้านบนแล้ววางยูนิตเองอัตโนมัติ
                     end
                 end
             end
