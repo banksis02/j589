@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.9"
+local SCRIPT_VERSION = "v4.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -53,22 +53,48 @@ pcall(function()
         VirtualUser:ClickButton2(Vector2.new())
     end)
 
-    -- 2) Periodic jump ทุก 5 นาที (visual + backup กัน AFK kick)
+    -- 2) Periodic action ทุก 5 นาที (กระโดด → ถ้าไม่ได้ ให้เดินหน้า)
     task.spawn(function()
         while true do
             task.wait(300)  -- 5 นาที
+            local jumped = false
+
+            -- ลองกระโดดหลายแบบ (บางเกม block บาง method)
             pcall(function()
                 local ch = player.Character
                 local hum = ch and ch:FindFirstChildOfClass("Humanoid")
                 if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
-                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                    print("[ANTI-AFK] 🦘 Jumped (" .. GAME_NAME .. ")")
+                    -- Method 1: Jump property
+                    hum.Jump = true
+                    jumped = true
+                    -- Method 2: ChangeState (fallback)
+                    pcall(function()
+                        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end)
+                    -- Method 3: VirtualInputManager Space (fallback)
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                        task.wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                    end)
                 end
             end)
+
+            if jumped then
+                print("[ANTI-AFK] 🦘 Jumped (" .. GAME_NAME .. ")")
+            else
+                -- ถ้ากระโดดไม่ได้ → เดินหน้า 0.3 วิ
+                pcall(function()
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                    task.wait(0.3)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                    print("[ANTI-AFK] 🚶 Walked forward (" .. GAME_NAME .. ")")
+                end)
+            end
         end
     end)
 
-    print("[ANTI-AFK] ✅ Ready (Idled + Jump ทุก 5 นาที)")
+    print("[ANTI-AFK] ✅ Ready (Idled + Jump/Walk ทุก 5 นาที)")
 end)
 
 -- ============================================================
