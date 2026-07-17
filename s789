@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.3"
+local SCRIPT_VERSION = "v3.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1053,11 +1053,15 @@ if GAME_ID == "anime_expeditions" then
         end
     end
 
-    -- Watch end screen — ส่งข้อมูลทุกครั้งที่ Victory/Defeat โผล่
+    -- Global sentinel: ป้องกัน duplicate send ระหว่าง farm loop + watcher
+    local lastSentEndScreenTime = 0
+    _G.AE_LAST_SENT = function() return lastSentEndScreenTime end
+    _G.AE_MARK_SENT = function() lastSentEndScreenTime = tick() end
+
+    -- Watch end screen — ส่งข้อมูลเมื่อ farm ไม่ได้เปิด (fallback)
     task.spawn(function()
         task.wait(5)
         print("[AE] 👀 Watching Prompt for end screen...")
-        local lastSentTime = 0
         local lastState = false
         while true do
             pcall(function()
@@ -1065,17 +1069,21 @@ if GAME_ID == "anime_expeditions" then
                 if stats and not lastState then
                     lastState = true
                     local now = tick()
-                    if now - lastSentTime < 15 then return end
-                    lastSentTime = now
-                    task.wait(1) -- wait for populate
+                    -- ⭐ ถ้า farm loop เพิ่งส่ง ให้ skip
+                    if now - lastSentEndScreenTime < 15 then
+                        print("[AE Watcher] ⏭️ Skip (farm loop เพิ่งส่งไปแล้ว)")
+                        return
+                    end
+                    task.wait(1)
                     local s = getEndScreenData()
                     if s then
                         local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
-                        print("[AE " .. SCRIPT_VERSION .. "] " .. s.result
+                        print("[AE Watcher " .. SCRIPT_VERSION .. "] " .. s.result
                             .. " | " .. s.stage
                             .. " | " .. s.clearTime
                             .. " | Rewards: " .. rewardsList)
                         sendAEDataToWeb(s)
+                        lastSentEndScreenTime = tick()
                     end
                 elseif not stats then
                     lastState = false
@@ -1212,6 +1220,7 @@ if GAME_ID == "anime_expeditions" then
                             local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
                             print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
                             sendAEDataToWeb(s)
+                            lastSentEndScreenTime = tick()  -- ⭐ mark sent (watcher จะ skip)
                         end
                         task.wait(0.5)
                         fireRestart()
