@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.0"
+local SCRIPT_VERSION = "v4.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -53,22 +53,48 @@ pcall(function()
         VirtualUser:ClickButton2(Vector2.new())
     end)
 
-    -- 2) Periodic jump ทุก 5 นาที (visual + backup กัน AFK kick)
+    -- 2) Periodic action ทุก 5 นาที (กระโดด → ถ้าไม่ได้ ให้เดินหน้า)
     task.spawn(function()
         while true do
             task.wait(300)  -- 5 นาที
+            local jumped = false
+
+            -- ลองกระโดดหลายแบบ (บางเกม block บาง method)
             pcall(function()
                 local ch = player.Character
                 local hum = ch and ch:FindFirstChildOfClass("Humanoid")
                 if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
-                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                    print("[ANTI-AFK] 🦘 Jumped (" .. GAME_NAME .. ")")
+                    -- Method 1: Jump property
+                    hum.Jump = true
+                    jumped = true
+                    -- Method 2: ChangeState (fallback)
+                    pcall(function()
+                        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end)
+                    -- Method 3: VirtualInputManager Space (fallback)
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                        task.wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                    end)
                 end
             end)
+
+            if jumped then
+                print("[ANTI-AFK] 🦘 Jumped (" .. GAME_NAME .. ")")
+            else
+                -- ถ้ากระโดดไม่ได้ → เดินหน้า 0.3 วิ
+                pcall(function()
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                    task.wait(0.3)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                    print("[ANTI-AFK] 🚶 Walked forward (" .. GAME_NAME .. ")")
+                end)
+            end
         end
     end)
 
-    print("[ANTI-AFK] ✅ Ready (Idled + Jump ทุก 5 นาที)")
+    print("[ANTI-AFK] ✅ Ready (Idled + Jump/Walk ทุก 5 นาที)")
 end)
 
 -- ============================================================
@@ -809,7 +835,7 @@ if GAME_ID == "anime_expeditions" then
         { unitName = "SANKZU", pos = CFrame.new(3088.156494140625, 1798.9315185546875, 3346.728515625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
         { unitName = "ChefBum",pos = CFrame.new(3073.70751953125, 1798.7340087890625, 3342.795166015625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
     }
-    local PLACE_ID_CONST = 64
+    local PLACE_ID_CONST = 65
 
     -- ⭐ หา slot ของยูนิตใน hotbar โดยใช้ชื่อ (dynamic)
     local function findSlotByUnitName(name)
@@ -843,17 +869,18 @@ if GAME_ID == "anime_expeditions" then
         return nil
     end
 
+    -- ⭐ เกมสุ่ม opcode 64/65 → ยิงทั้งสอง (server accepts valid one)
+    local PLACE_OPCODES = { 64, 65 }
     local function placeUnit(slot, cframe)
-        local ok, err = pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
-                :WaitForChild("ReplicaSignal", 5)
-                :FireServer(PLACE_ID_CONST, "PlaceGameUnit", slot, cframe)
-        end)
-        if ok then
-            print("[AE] ✅ Placed slot " .. slot)
-        else
-            warn("[AE] ❌ Place slot " .. slot .. " failed:", err)
+        local sig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        for _, op in ipairs(PLACE_OPCODES) do
+            pcall(function()
+                sig:FireServer(op, "PlaceGameUnit", slot, cframe)
+            end)
+            task.wait(0.05)  -- delay สั้น กัน rate limit
         end
+        print("[AE] ✅ Placed slot " .. slot .. " (opcode 64+65)")
     end
 
     local isPlacing = false
@@ -932,14 +959,18 @@ if GAME_ID == "anime_expeditions" then
         },
     }
 
+    -- ⭐ Restart — ยิงหลาย opcode (สุ่มเหมือน placement) + click ปุ่ม UI เป็น fallback
+    local RESTART_OPCODES = { 58, 59, 60 }
     local function fireRestart()
-        pcall(function()
-            task.wait(5)
-            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
-                :WaitForChild("ReplicaSignal", 5)
-                :FireServer(RESTART_CONST, "Restart")
-        end)
-        print("[AE Farm] 🔄 Restart fired")
+        local sig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        for _, op in ipairs(RESTART_OPCODES) do
+            pcall(function()
+                sig:FireServer(op, "Restart")
+            end)
+            task.wait(0.05)
+        end
+        print("[AE Farm] 🔄 Restart fired (opcodes 58/59/60)")
     end
 
     -- ⭐ StartGame — เข้าด่านจาก lobby (Play menu → Start)
@@ -951,6 +982,38 @@ if GAME_ID == "anime_expeditions" then
                 :FireServer(START_CONST, "StartGame")
         end)
         print("[AE Farm] 🚀 StartGame fired")
+    end
+
+    -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
+    local function clickRepeatStageButton()
+        local prompt = player.PlayerGui:FindFirstChild("Prompt")
+        if not prompt then return false end
+        for _, btn in ipairs(prompt:GetDescendants()) do
+            if btn:IsA("TextButton") then
+                -- หา TextLabel "Repeat Stage" ในลูก
+                for _, lbl in ipairs(btn:GetDescendants()) do
+                    if lbl:IsA("TextLabel") and lbl.Text == "Repeat Stage" then
+                        pcall(function()
+                            if firesignal then
+                                firesignal(btn.MouseButton1Click)
+                                firesignal(btn.Activated)
+                            end
+                        end)
+                        pcall(function()
+                            local pos = btn.AbsolutePosition
+                            local sz = btn.AbsoluteSize
+                            local cx = pos.X + sz.X / 2
+                            local cy = pos.Y + sz.Y / 2
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                        end)
+                        return true
+                    end
+                end
+            end
+        end
+        return false
     end
 
     -- ========== End Screen (Prompt) Watcher — ส่งข้อมูลไปเว็บ ==========
@@ -1215,10 +1278,31 @@ if GAME_ID == "anime_expeditions" then
         if farmingActive then return end
         farmingActive = true
         print("[AE Farm] ▶ เริ่มฟาร์ม")
+        -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
+        local function isVictoryOpen()
+            local prompt = player.PlayerGui:FindFirstChild("Prompt")
+            if not prompt or not prompt.Enabled then return false end
+            for _, d in ipairs(prompt:GetDescendants()) do
+                if d:IsA("TextLabel") and (d.Text == "Victory" or d.Text == "Defeat") then
+                    return true
+                end
+            end
+            return false
+        end
+
         task.spawn(function()
             while farmingActive do
                 local stage, mode, diff = getStageInfo()
-                if not stage then
+                if isVictoryOpen() then
+                    -- ⭐ Victory ค้างอยู่ → พยายามปิดก่อน ห้ามวางตัวเด็ดขาด
+                    print("[AE Farm] ⚠️ Victory UI ยังค้าง → retry Restart + click ปุ่ม")
+                    fireRestart()
+                    task.wait(2)
+                    if isVictoryOpen() then
+                        clickRepeatStageButton()
+                        task.wait(3)
+                    end
+                elseif not stage then
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
                     fireStartGame()
                     task.wait(5)  -- รอเกมโหลด
@@ -1231,18 +1315,39 @@ if GAME_ID == "anime_expeditions" then
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
                     waitMatchEnd(isFarmingActive)
                     if farmingActive then
-                        -- ⭐ อ่าน + ส่ง data ก่อน Restart (กัน Prompt ปิดก่อนอ่าน)
+                        -- อ่าน + ส่ง data ก่อน Restart
                         task.wait(1)
                         local s = getEndScreenData()
                         if s then
                             local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
                             print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
                             sendAEDataToWeb(s)
-                            lastSentEndScreenTime = tick()  -- ⭐ mark sent (watcher จะ skip)
+                            lastSentEndScreenTime = tick()
                         end
                         task.wait(0.5)
                         fireRestart()
-                        task.wait(3) -- รอ restart process
+
+                        -- ⭐ รอ Victory UI ปิด + ถ้าไม่ปิดใน 5 วิ → click ปุ่ม Repeat Stage
+                        local waitClose = tick()
+                        local clickedButton = false
+                        while tick() - waitClose < 20 do
+                            local prompt = player.PlayerGui:FindFirstChild("Prompt")
+                            local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
+                            local promptClosed = not prompt or not prompt.Enabled
+                            local gameReady = rh and rh.Enabled
+                            if promptClosed and gameReady then
+                                break
+                            end
+                            -- Fallback: ถ้า 5 วิผ่านไปแล้วยังไม่ปิด → click ปุ่ม
+                            if not clickedButton and tick() - waitClose > 5 then
+                                if clickRepeatStageButton() then
+                                    print("[AE Farm] 🖱️ Clicked Repeat Stage button (fallback)")
+                                    clickedButton = true
+                                end
+                            end
+                            task.wait(0.3)
+                        end
+                        task.wait(1)
                     end
                 end
             end
