@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v3.4"
+local SCRIPT_VERSION = "v3.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1007,8 +1007,8 @@ if GAME_ID == "anime_expeditions" then
         local actFull = stats.stage
         if stats.mode ~= "N/A" then actFull = actFull .. " - " .. stats.mode end
         if stats.difficulty ~= "N/A" then actFull = actFull .. " " .. stats.difficulty end
-        -- ⭐ ใช้ rewards ที่ได้จริง (Gem 100x, Gold 100x, ...)
         local rewardsStr = (#stats.rewards > 0) and table.concat(stats.rewards, ", ") or "N/A"
+        -- ⭐ payload format เดียวกับ UTDX/Anime Squadron
         local payload = {
             username     = player.Name,
             userId       = player.UserId,
@@ -1021,21 +1021,16 @@ if GAME_ID == "anime_expeditions" then
                 act      = actFull,
                 file     = stats.stage,
                 playTime = stats.clearTime,
-                quantity = rewardsStr,      -- ⭐ rewards จริง
-                damage   = stats.damage,
-                yen      = stats.yen,
-                kills    = stats.kills,
-                result   = stats.result,
-                rewards  = stats.rewards,   -- ⭐ list
+                quantity = rewardsStr,
             },
             recentLog = {
                 act      = actFull,
                 file     = stats.stage,
                 playTime = stats.clearTime,
-                quantity = rewardsStr,      -- ⭐ rewards จริง
-                status   = stats.result == "Victory" and "COMPLETED" or "FAILED",
+                quantity = rewardsStr,
+                status   = "COMPLETED",
                 time     = ts,
-                rewards  = rewardsStr,      -- ⭐ rewards จริง
+                rewards  = rewardsStr,
             },
         }
         local ok, resp = pcall(function()
