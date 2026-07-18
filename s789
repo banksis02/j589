@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.5"
+local SCRIPT_VERSION = "v4.6"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1470,9 +1470,17 @@ if GAME_ID == "anime_expeditions" then
 
         -- Drag bar
         local dragBar = Instance.new("TextButton", frame)
-        dragBar.Size = UDim2.new(1, 0, 0, 24); dragBar.BackgroundTransparency = 1
+        dragBar.Size = UDim2.new(1, -26, 0, 24); dragBar.BackgroundTransparency = 1
         dragBar.Text = "⚔ AE UI"; dragBar.TextColor3 = Color3.fromRGB(255, 107, 53)
         dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
+
+        -- ⭐ ปุ่มย่อ/ขยาย (เหมือน UTDX UI)
+        local btnMin = Instance.new("TextButton", frame)
+        btnMin.Size = UDim2.new(0, 18, 0, 18); btnMin.Position = UDim2.new(1, -22, 0, 3)
+        btnMin.BackgroundColor3 = Color3.fromRGB(50, 50, 70); btnMin.BorderSizePixel = 0
+        btnMin.Text = "□"; btnMin.TextColor3 = Color3.fromRGB(200, 200, 200)
+        btnMin.TextSize = 11; btnMin.Font = Enum.Font.GothamBold; btnMin.ZIndex = 15
+        Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0, 4)
 
         -- helper สร้างปุ่ม farm
         local function makeFarmBtn(text, posY)
@@ -1493,6 +1501,31 @@ if GAME_ID == "anime_expeditions" then
         local btnFarm, btnStroke   = makeFarmBtn("ฟาร์มเพชรด่าน School Grounds", 30)
         -- ⭐ ปุ่ม 2: ฟาร์มด่าน M School Grounds (Act M — เกม fix ระดับ)
         local btnFarmM, btnStrokeM = makeFarmBtn("ฟาร์มด่าน M School Grounds", 68)
+
+        -- ⭐ ย่อ/ขยาย — ดีฟอลต์ = ย่อ (เหมือน UTDX UI)
+        local FULL_SIZE = UDim2.new(0, 190, 0, 140)
+        local MINI_SIZE = UDim2.new(0, 190, 0, 24)
+        local isMinimized = true
+        local function setBtnsVisible(v)
+            btnFarm.Visible = v
+            btnFarmM.Visible = v
+        end
+        frame.Size = MINI_SIZE
+        btnMin.Text = "□"
+        setBtnsVisible(false)
+
+        btnMin.MouseButton1Click:Connect(function()
+            isMinimized = not isMinimized
+            if isMinimized then
+                frame.Size = MINI_SIZE
+                btnMin.Text = "□"
+                setBtnsVisible(false)
+            else
+                frame.Size = FULL_SIZE
+                btnMin.Text = "—"
+                setBtnsVisible(true)
+            end
+        end)
 
         local function saveFile(name, on) pcall(writefile, name, on and "1" or "0") end
         local function loadFile(name)
