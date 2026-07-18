@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v6.1"
+local SCRIPT_VERSION = "v6.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1084,14 +1084,15 @@ if GAME_ID == "anime_expeditions" then
     end
 
     -- ⭐ Parametrized: actButton = "1" หรือ "M" | needHard = เลือกความยาก Hard ไหม
-    local function enterStageSequence(actButton, needHard)
+    local function enterStageSequence(stageName, actButton, needHard)
+        stageName = stageName or "School Grounds"
         actButton = actButton or "1"
-        print("[AE Enter] ▶ เริ่มเข้าด่าน (Act " .. actButton .. ")...")
+        print("[AE Enter] ▶ เริ่มเข้าด่าน " .. stageName .. " (Act " .. actButton .. ")...")
         if not clickExact("Play") then return false end
         task.wait(2)
         if not clickExact("Story") then return false end
         task.wait(2)
-        if not clickExact("School Grounds") then return false end
+        if not clickExact(stageName) then return false end
         task.wait(2)
         if not clickExact(actButton) then return false end   -- ปุ่ม Act ("1" หรือ "M")
         task.wait(1.5)
@@ -2154,13 +2155,15 @@ if GAME_ID == "anime_expeditions" then
     -- Farm main loop
     local farmingActive = false
     local farmMode = "act1"   -- ⭐ "act1" = ฟาร์มเพชร Act1 Hard | "actM" = ฟาร์มด่าน M
+    local farmStage = "School Grounds"   -- ⭐ ด่านที่เลือกจาก dropdown ใน UI
     local function isFarmingActive() return farmingActive end
 
-    local function startFarm(mode)
+    local function startFarm(mode, stage)
         if farmingActive then return end
         farmingActive = true
         farmMode = mode or "act1"
-        print("[AE Farm] ▶ เริ่มฟาร์ม (mode: " .. farmMode .. ")")
+        if stage then farmStage = stage end
+        print("[AE Farm] ▶ เริ่มฟาร์ม (mode: " .. farmMode .. " | ด่าน: " .. farmStage .. ")")
         -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
         local function isVictoryOpen()
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -2222,9 +2225,9 @@ if GAME_ID == "anime_expeditions" then
                         -- ⭐ โหมด M: เช็ค Grey + คราฟก่อนเข้าด่าน (ถ้าเต็ม 125)
                         autoCraftIfFull()
                         task.wait(1)
-                        enterStageSequence("M", false)   -- Act M — เกม fix ระดับ
+                        enterStageSequence(farmStage, "M", false)   -- Act M — เกม fix ระดับ
                     else
-                        enterStageSequence("1", true)    -- Act 1 + Hard
+                        enterStageSequence(farmStage, "1", true)    -- Act 1 + Hard
                     end
                     task.wait(6)  -- รอเกมโหลดหลังกด Start
                 else
@@ -2326,6 +2329,7 @@ if GAME_ID == "anime_expeditions" then
 
     _G.AE_FARM_START = startFarm
     _G.AE_FARM_STOP = stopFarm
+    local function setFarmStage(s) farmStage = s end   -- ⭐ เปลี่ยนด่านสด (มีผลรอบเข้าด่านถัดไป)
 
     -- ============================================================
     -- [AE] Simple UI
@@ -2362,10 +2366,38 @@ if GAME_ID == "anime_expeditions" then
         btnMin.TextSize = 11; btnMin.Font = Enum.Font.GothamBold; btnMin.ZIndex = 15
         Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0, 4)
 
+        -- ⭐ รายชื่อด่านทั้ง 5
+        local STAGES = {
+            "School Grounds", "Flower Forest", "Rose Kingdom",
+            "Fairy King Forest", "King's Tomb",
+        }
+
+        local function saveTxt(name, v) pcall(writefile, name, v) end
+        local function loadTxt(name)
+            local ok, c = pcall(readfile, name)
+            return ok and c or nil
+        end
+        local FARM_STATE_FILE   = "ae_farm_state.txt"
+        local FARM_M_STATE_FILE = "ae_farm_m_state.txt"
+        local STAGE_GEM_FILE    = "ae_stage_gem.txt"
+        local STAGE_M_FILE      = "ae_stage_m.txt"
+
+        -- ด่านที่เลือกไว้ (โหลดจากไฟล์ ถ้าเคยเลือก)
+        local function validStage(s)
+            for _, st in ipairs(STAGES) do
+                if st == s then return true end
+            end
+            return false
+        end
+        local selGem = loadTxt(STAGE_GEM_FILE)
+        local selM   = loadTxt(STAGE_M_FILE)
+        if not validStage(selGem) then selGem = STAGES[1] end
+        if not validStage(selM)   then selM   = STAGES[1] end
+
         -- helper สร้างปุ่ม farm
         local function makeFarmBtn(text, posY)
             local b = Instance.new("TextButton", frame)
-            b.Size = UDim2.new(1, -16, 0, 32)
+            b.Size = UDim2.new(1, -16, 0, 30)
             b.Position = UDim2.new(0, 8, 0, posY)
             b.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
             b.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -2377,18 +2409,86 @@ if GAME_ID == "anime_expeditions" then
             return b, s
         end
 
-        -- ⭐ ปุ่ม 1: ฟาร์มเพชรด่าน School Grounds (Act 1 Hard)
-        local btnFarm, btnStroke   = makeFarmBtn("ฟาร์มเพชรด่าน School Grounds", 30)
-        -- ⭐ ปุ่ม 2: ฟาร์มด่าน M School Grounds (Act M — เกม fix ระดับ)
-        local btnFarmM, btnStrokeM = makeFarmBtn("ฟาร์มด่าน M School Grounds", 68)
+        -- ⭐ helper สร้าง dropdown เลือกด่าน
+        local function makeDropdown(posY, initial, onSelect)
+            local dd = Instance.new("TextButton", frame)
+            dd.Size = UDim2.new(1, -16, 0, 22)
+            dd.Position = UDim2.new(0, 8, 0, posY)
+            dd.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+            dd.TextColor3 = Color3.fromRGB(150, 200, 255)
+            dd.Text = "🗺 " .. initial .. " ▼"; dd.TextSize = 10
+            dd.Font = Enum.Font.Gotham; dd.BorderSizePixel = 0
+            dd.ZIndex = 10
+            Instance.new("UICorner", dd).CornerRadius = UDim.new(0, 4)
+            local ds = Instance.new("UIStroke", dd)
+            ds.Color = Color3.fromRGB(60, 90, 130); ds.Thickness = 1
+
+            local list = Instance.new("Frame", frame)
+            list.Size = UDim2.new(1, -16, 0, #STAGES * 22)
+            list.Position = UDim2.new(0, 8, 0, posY + 24)
+            list.BackgroundColor3 = Color3.fromRGB(15, 15, 28)
+            list.BorderSizePixel = 0
+            list.Visible = false
+            list.ZIndex = 50
+            Instance.new("UICorner", list).CornerRadius = UDim.new(0, 4)
+            local ls = Instance.new("UIStroke", list)
+            ls.Color = Color3.fromRGB(100, 150, 220); ls.Thickness = 1
+
+            for i, name in ipairs(STAGES) do
+                local opt = Instance.new("TextButton", list)
+                opt.Size = UDim2.new(1, -4, 0, 22)
+                opt.Position = UDim2.new(0, 2, 0, (i - 1) * 22)
+                opt.BackgroundTransparency = 1
+                opt.TextColor3 = Color3.fromRGB(200, 200, 200)
+                opt.Text = name; opt.TextSize = 10
+                opt.Font = Enum.Font.Gotham
+                opt.ZIndex = 51
+                opt.MouseButton1Click:Connect(function()
+                    dd.Text = "🗺 " .. name .. " ▼"
+                    list.Visible = false
+                    onSelect(name)
+                end)
+            end
+
+            dd.MouseButton1Click:Connect(function()
+                list.Visible = not list.Visible
+            end)
+            return dd, list
+        end
+
+        -- ⭐ ประกาศสถานะก่อนสร้าง dropdown (closure ต้องเห็นตัวแปรนี้)
+        local farmOn, farmMOn = false, false
+
+        -- ============ Layout ============
+        -- โซน 1: ฟาร์มเพชร (Act 1 Hard)  dropdown y=28, ปุ่ม y=54
+        -- โซน 2: ฟาร์มด่าน M            dropdown y=94, ปุ่ม y=120
+        local ddGem, listGem = makeDropdown(28, selGem, function(name)
+            selGem = name
+            saveTxt(STAGE_GEM_FILE, name)
+            if farmOn then setFarmStage(name) end   -- เปลี่ยนสด มีผลรอบเข้าด่านถัดไป
+            print("[AE UI] 🗺 ด่านฟาร์มเพชร: " .. name)
+        end)
+        local btnFarm, btnStroke = makeFarmBtn("ฟาร์มเพชร (Act 1 Hard)", 54)
+
+        local ddM, listM = makeDropdown(94, selM, function(name)
+            selM = name
+            saveTxt(STAGE_M_FILE, name)
+            if farmMOn then setFarmStage(name) end
+            print("[AE UI] 🗺 ด่านฟาร์ม M: " .. name)
+        end)
+        local btnFarmM, btnStrokeM = makeFarmBtn("ฟาร์มด่าน M", 120)
 
         -- ⭐ ย่อ/ขยาย — ดีฟอลต์ = ย่อ (เหมือน UTDX UI)
-        local FULL_SIZE = UDim2.new(0, 190, 0, 140)
+        local FULL_SIZE = UDim2.new(0, 190, 0, 160)
         local MINI_SIZE = UDim2.new(0, 190, 0, 24)
         local isMinimized = true
         local function setBtnsVisible(v)
+            ddGem.Visible = v
+            ddM.Visible = v
             btnFarm.Visible = v
             btnFarmM.Visible = v
+            listGem.Visible = false   -- list โชว์เฉพาะตอนกด dropdown
+            listM.Visible = false
         end
         frame.Size = MINI_SIZE
         btnMin.Text = "□"
@@ -2407,15 +2507,11 @@ if GAME_ID == "anime_expeditions" then
             end
         end)
 
-        local function saveFile(name, on) pcall(writefile, name, on and "1" or "0") end
-        local function loadFile(name)
+        local function saveOn(name, on) pcall(writefile, name, on and "1" or "0") end
+        local function loadOn(name)
             local ok, c = pcall(readfile, name)
             return ok and c == "1"
         end
-        local FARM_STATE_FILE  = "ae_farm_state.txt"
-        local FARM_M_STATE_FILE = "ae_farm_m_state.txt"
-
-        local farmOn, farmMOn = false, false
 
         local function setVisual(btn, stroke, text, on)
             if on then
@@ -2432,15 +2528,15 @@ if GAME_ID == "anime_expeditions" then
         local function turnOffAct1()
             if farmOn then
                 farmOn = false
-                saveFile(FARM_STATE_FILE, false)
-                setVisual(btnFarm, btnStroke, "ฟาร์มเพชรด่าน School Grounds", false)
+                saveOn(FARM_STATE_FILE, false)
+                setVisual(btnFarm, btnStroke, "ฟาร์มเพชร (Act 1 Hard)", false)
             end
         end
         local function turnOffActM()
             if farmMOn then
                 farmMOn = false
-                saveFile(FARM_M_STATE_FILE, false)
-                setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M School Grounds", false)
+                saveOn(FARM_M_STATE_FILE, false)
+                setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M", false)
             end
         end
 
@@ -2453,9 +2549,9 @@ if GAME_ID == "anime_expeditions" then
                 stopFarm()
                 task.wait(0.2)
                 farmOn = true
-                saveFile(FARM_STATE_FILE, true)
-                setVisual(btnFarm, btnStroke, "ฟาร์มเพชรด่าน School Grounds", true)
-                startFarm("act1")
+                saveOn(FARM_STATE_FILE, true)
+                setVisual(btnFarm, btnStroke, "ฟาร์มเพชร (Act 1 Hard)", true)
+                startFarm("act1", selGem)
             end
         end)
 
@@ -2468,23 +2564,23 @@ if GAME_ID == "anime_expeditions" then
                 stopFarm()
                 task.wait(0.2)
                 farmMOn = true
-                saveFile(FARM_M_STATE_FILE, true)
-                setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M School Grounds", true)
-                startFarm("actM")
+                saveOn(FARM_M_STATE_FILE, true)
+                setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M", true)
+                startFarm("actM", selM)
             end
         end)
 
-        -- ⭐ Auto-restore ตอน rejoin (โหมดใดโหมดหนึ่ง)
-        if loadFile(FARM_STATE_FILE) then
+        -- ⭐ Auto-restore ตอน rejoin (โหมดใดโหมดหนึ่ง + ด่านที่เลือกไว้)
+        if loadOn(FARM_STATE_FILE) then
             farmOn = true
-            setVisual(btnFarm, btnStroke, "ฟาร์มเพชรด่าน School Grounds", true)
-            print("[AE UI] 🔁 Auto-restore Farm Act1: ON")
-            startFarm("act1")
-        elseif loadFile(FARM_M_STATE_FILE) then
+            setVisual(btnFarm, btnStroke, "ฟาร์มเพชร (Act 1 Hard)", true)
+            print("[AE UI] 🔁 Auto-restore Farm Act1: ON (" .. selGem .. ")")
+            startFarm("act1", selGem)
+        elseif loadOn(FARM_M_STATE_FILE) then
             farmMOn = true
-            setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M School Grounds", true)
-            print("[AE UI] 🔁 Auto-restore Farm ActM: ON")
-            startFarm("actM")
+            setVisual(btnFarmM, btnStrokeM, "ฟาร์มด่าน M", true)
+            print("[AE UI] 🔁 Auto-restore Farm ActM: ON (" .. selM .. ")")
+            startFarm("actM", selM)
         end
 
         -- Simple drag
