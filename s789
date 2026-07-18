@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.8"
+local SCRIPT_VERSION = "v5.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -877,16 +877,23 @@ if GAME_ID == "anime_expeditions" then
     pcall(function()
         local replicaSig = game:GetService("ReplicatedStorage")
             :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        -- ⭐ เรียนรู้เฉพาะเมื่อเห็น "เลขเดิมซ้ำ 2 ครั้งติด" — การยิงจริงของเกมใช้เลขเดิมตลอด
+        --    ส่วนการยิงสเปรย์ fallback (66,64,65,67,...) เลขไม่ซ้ำติดกัน → ถูกกรองทิ้งเอง
+        --    (กันทั้งของตัวเองและสคริปต์อื่นที่ยิงสเปรย์เหมือนกัน)
+        local lastSeen = {}
         local oldNC
         oldNC = hookmetamethod(game, "__namecall", function(self, ...)
             if not scriptFiring and self == replicaSig
                and getnamecallmethod() == "FireServer" then
                 local a1, a2 = ...
                 if type(a1) == "number" and type(a2) == "string" then
-                    if learnedOp[a2] ~= a1 then
-                        learnedOp[a2] = a1
-                        print("[AE] 🎣 เรียนรู้ opcode: " .. a2 .. " = " .. a1)
+                    if lastSeen[a2] == a1 then
+                        if learnedOp[a2] ~= a1 then
+                            learnedOp[a2] = a1
+                            print("[AE] 🎣 เรียนรู้ opcode: " .. a2 .. " = " .. a1)
+                        end
                     end
+                    lastSeen[a2] = a1
                 end
             end
             return oldNC(self, ...)
@@ -1009,7 +1016,8 @@ if GAME_ID == "anime_expeditions" then
     end
 
     -- ⭐ Restart — ยิงหลาย opcode (สุ่มเหมือน placement) + click ปุ่ม UI เป็น fallback
-    local RESTART_OPCODES = { 58, 59, 60 }
+    -- ⭐ opcode เลื่อนได้ (เจอ 61 แล้ว) — ยิงช่วงกว้าง + learner จะจับเลขจริงเอง
+    local RESTART_OPCODES = { 61, 58, 59, 60, 62, 63, 64 }
     local function fireRestart()
         local sig = game:GetService("ReplicatedStorage")
             :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
