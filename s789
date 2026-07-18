@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.9"
+local SCRIPT_VERSION = "v5.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1263,21 +1263,44 @@ if GAME_ID == "anime_expeditions" then
         return s and s:FindFirstChild("Frame") ~= nil and #s.Frame:GetChildren() > 1
     end
 
+    local cachedSettingsBtn = nil
     local function openSettings()
         if settingsOpen() then return true end
+        -- ใช้ปุ่มที่จำไว้ก่อน (เจอครั้งแรกแล้วจำ)
+        if cachedSettingsBtn and cachedSettingsBtn.Parent then
+            fireButtonConns(cachedSettingsBtn)
+            task.wait(1.5)
+            if settingsOpen() then return true end
+        end
         local topbar = player.PlayerGui:FindFirstChild("TopBar")
         if not topbar then return false end
+        -- ⭐ เรียงปุ่มจากขวาไปซ้าย — ⚙️ อยู่ขวาสุด (ตัวซ้ายคือเมนู ... )
+        local btns = {}
         for _, btn in ipairs(topbar:GetDescendants()) do
             if btn:IsA("TextButton") and btn.Visible then
-                fireButtonConns(btn)
-                task.wait(1.5)
-                if settingsOpen() then return true end
+                table.insert(btns, btn)
             end
+        end
+        table.sort(btns, function(a, b)
+            return a.AbsolutePosition.X > b.AbsolutePosition.X
+        end)
+        for _, btn in ipairs(btns) do
+            fireButtonConns(btn)
+            task.wait(1.5)
+            if settingsOpen() then
+                cachedSettingsBtn = btn   -- ⭐ จำปุ่มที่ถูก
+                return true
+            end
+            -- ⭐ กดผิดตัว (เปิดเมนู ... ค้าง) → กดซ้ำเพื่อปิด
+            fireButtonConns(btn)
+            task.wait(0.5)
         end
         return settingsOpen()
     end
 
-    -- กดปุ่มในแถว Settings ที่มี label ตรงข้อความ (ปุ่ม icon อยู่ขวาแถวเดียวกัน)
+    -- กดปุ่มในแถว Settings ที่มี label ตรงข้อความ
+    -- ⭐ Settings เป็น 2 คอลัมน์ — ต้องเลือกปุ่มฝั่งเดียวกับ label (dx > 0 น้อยสุด)
+    -- ไม่งั้นจะไปกดปุ่มของ setting ข้างๆ (เช่น Restart Game แทน Back To Lobby!)
     local function clickSettingsRow(rowText)
         local s = player.PlayerGui:FindFirstChild("Settings")
         if not s then return false end
@@ -1288,13 +1311,19 @@ if GAME_ID == "anime_expeditions" then
             end
         end
         if not label then return false end
-        local ly = label.AbsolutePosition.Y
+        local lx, ly = label.AbsolutePosition.X, label.AbsolutePosition.Y
+        local best, bestDx
         for _, btn in ipairs(s:GetDescendants()) do
-            if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40 then
-                if math.abs(btn.AbsolutePosition.Y - ly) < 20 then
-                    return fireButtonConns(btn) > 0
+            if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40
+               and math.abs(btn.AbsolutePosition.Y - ly) < 20 then
+                local dx = btn.AbsolutePosition.X - lx
+                if dx > 0 and (not bestDx or dx < bestDx) then
+                    best, bestDx = btn, dx
                 end
             end
+        end
+        if best then
+            return fireButtonConns(best) > 0
         end
         return false
     end
@@ -1772,16 +1801,21 @@ if GAME_ID == "anime_expeditions" then
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
                     waitMatchEnd(isFarmingActive)
                     if farmingActive then
-                        -- อ่าน + ส่ง data ก่อน Restart
+                        -- อ่าน data (ส่งเฉพาะถ้า watcher ยังไม่ส่ง — กันซ้ำ)
                         task.wait(1)
                         local s = getEndScreenData()
                         if s then
-                            local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
-                            print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
-                            sendAEDataToWeb(s)
-                            lastSentEndScreenTime = tick()
+                            -- ⭐ dedup: ส่งเฉพาะถ้ายังไม่มีใครส่งใน 20 วิ
+                            if tick() - lastSentEndScreenTime > 20 then
+                                local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
+                                print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
+                                sendAEDataToWeb(s)
+                                lastSentEndScreenTime = tick()
+                            else
+                                print("[AE Farm] ⏭️ Skip send (watcher ส่งไปแล้ว)")
+                            end
 
-                            -- ⭐ โหมด M: นับ Grey ที่ได้จาก reward
+                            -- ⭐ โหมด M: นับ Grey เสมอ (ไม่ว่าส่งหรือ skip)
                             if farmMode == "actM" then
                                 local greyGain = 0
                                 for _, r in ipairs(s.rewards) do
