@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.6"
+local SCRIPT_VERSION = "v5.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1166,7 +1166,34 @@ if GAME_ID == "anime_expeditions" then
         return getGreyCount()
     end
 
-    local function craftOne(colorName, expectedCost)
+    -- ⭐ ตั้ง Craft Amount ด้วยการกดปุ่ม "+" จนช่องตัวเลขถึงเป้า
+    --    (เกม clamp ที่ max เอง — ถ้ากดแล้วเลขไม่ขยับ = ถึงเพดานแล้ว หยุด)
+    local function setCraftAmount(target)
+        local root = craftGuiRoot()
+        if not root then return end
+        local box, plus
+        for _, o in ipairs(root:GetDescendants()) do
+            if o.Visible then
+                if o:IsA("TextBox") and not box then box = o end
+                if o:IsA("TextButton") and o.Text == "+" and not plus then plus = o end
+            end
+        end
+        if not plus then return end
+        local function amt()
+            return box and tonumber((box.Text:gsub("[^%d]", ""))) or nil
+        end
+        for _ = 1, target + 2 do
+            local a = amt()
+            if a and a >= target then break end
+            fireButtonConns(plus)
+            task.wait(0.3)
+            local a2 = amt()
+            if a ~= nil and a2 ~= nil and a2 == a then break end  -- ชนเพดาน
+        end
+    end
+
+    local function craftOne(colorName, expectedCost, qty)
+        qty = qty or 1
         if not ensureCraftOpen() then return false end
         if not clickCraftButton(colorName) then return false end
         task.wait(1)
@@ -1174,6 +1201,11 @@ if GAME_ID == "anime_expeditions" then
         if before < expectedCost then
             print("[AE Craft] ⛔ " .. colorName .. " — Grey ไม่พอ (" .. before .. "/" .. expectedCost .. ")")
             return false
+        end
+        -- ⭐ คราฟทีละหลายอัน: กด + ให้ถึงจำนวนก่อน (สีปกติ 3, รุ้งไม่แตะ = 1 เดิม)
+        if qty > 1 then
+            setCraftAmount(qty)
+            task.wait(0.5)
         end
         -- ⭐ กด Craft — ลองสูงสุด 2 ครั้ง (เผื่อ rate limit / UI ไม่พร้อม)
         for attempt = 1, 2 do
@@ -1256,7 +1288,10 @@ if GAME_ID == "anime_expeditions" then
                         break
                     end
                 end
-                if not craftOne(color, CRAFT_NORMAL_COST) then
+                -- ⭐ คราฟทีละ 3 (หรือเท่าที่ Grey พอ) — รุ้งเท่านั้นที่คราฟทีละ 1
+                local want = math.min(3, math.floor(g / CRAFT_NORMAL_COST))
+                if want < 1 then want = 1 end
+                if not craftOne(color, CRAFT_NORMAL_COST, want) then
                     fullColors[color] = true
                     print("[AE Craft] 🚫 ข้าม " .. color .. " ถาวร (เต็ม/คราฟไม่ได้)")
                 end
