@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.6"
+local SCRIPT_VERSION = "v4.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1059,6 +1059,229 @@ if GAME_ID == "anime_expeditions" then
         return true
     end
 
+    -- ============================================================
+    -- [AE] Auto-Craft Sprite System (คราฟได้เฉพาะ lobby)
+    -- ============================================================
+    local CRAFT_GREY_FULL    = 125
+    local CRAFT_RAINBOW_COST = 30
+    local CRAFT_NORMAL_COST  = 5
+    local CRAFT_COLORS = {
+        "Sprite (Purple)", "Sprite (Red)", "Sprite (Yellow)",
+        "Sprite (Blue)", "Sprite (Green)", "Sprite (Pink)",
+    }
+    local greyKnown = 0   -- จำนวน Grey ที่ track ไว้ (อัพเดตตอนเปิดหน้าคราฟ + นับจาก reward)
+
+    local function craftGuiRoot() return player.PlayerGui:FindFirstChild("Crafting") end
+    local function craftUIOpen()
+        local c = craftGuiRoot()
+        return c and c:FindFirstChild("Frame") ~= nil
+    end
+
+    local function clickCraftButton(name, prefixMode)
+        local root = craftGuiRoot()
+        if not root then return false end
+        local lowerTarget = string.lower(name)
+        for _, btn in ipairs(root:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                local hit = false
+                local function checkText(t)
+                    t = t:lower()
+                    if prefixMode then return t:sub(1, #lowerTarget) == lowerTarget end
+                    return t == lowerTarget
+                end
+                if btn:IsA("TextButton") and btn.Text ~= "" and checkText(btn.Text) then hit = true end
+                if not hit then
+                    for _, l in ipairs(btn:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and l.Text ~= "" and checkText(l.Text) then
+                            hit = true; break
+                        end
+                    end
+                end
+                if hit then return fireButtonConns(btn) > 0 end
+            end
+        end
+        return false
+    end
+
+    local function getGreyCount()
+        local root = craftGuiRoot()
+        if not root then return 0 end
+        for _, l in ipairs(root:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible then
+                local have = l.Text:match("^([%d,]+)/%d+$")
+                if have then return tonumber((have:gsub(",", ""))) or 0 end
+            end
+        end
+        return 0
+    end
+
+    local function openCraftUI()
+        if craftUIOpen() then return true end
+        local ok, prompt = pcall(function()
+            return workspace.InteractZones.Crafting.ProximityPrompt
+        end)
+        if not ok or not prompt then return false end
+        pcall(fireproximityprompt, prompt)
+        task.wait(2)
+        return craftUIOpen()
+    end
+
+    local function closeCraftUI()
+        local root = craftGuiRoot()
+        if not root or not craftUIOpen() then return true end
+        for _, btn in ipairs(root:GetDescendants()) do
+            if btn:IsA("TextButton") and btn.Visible
+               and btn.AbsoluteSize.X <= 35 and btn.AbsoluteSize.Y <= 35 then
+                fireButtonConns(btn)
+                task.wait(1)
+                if not craftUIOpen() then return true end
+            end
+        end
+        return not craftUIOpen()
+    end
+
+    local function craftOne(colorName, expectedCost)
+        if not clickCraftButton(colorName) then return false end
+        task.wait(1)
+        local before = getGreyCount()
+        if before < expectedCost then return false end
+        if not clickCraftButton("craft ", true) then return false end
+        task.wait(1.5)
+        local after = getGreyCount()
+        if after < before then
+            print("[AE Craft] ✅ " .. colorName .. " | Grey: " .. before .. " → " .. after)
+            greyKnown = after
+            return true
+        end
+        return false
+    end
+
+    -- ⭐ เปิดหน้าคราฟ เช็ค Grey → ถ้าเต็ม 125 คราฟ (Rainbow 1 + สุ่มสี) → ปิด
+    local function autoCraftIfFull()
+        print("[AE Craft] 🚪 เปิดหน้าคราฟเช็ค Grey...")
+        if not openCraftUI() then
+            warn("[AE Craft] ❌ เปิดหน้าคราฟไม่ได้")
+            return
+        end
+        clickCraftButton(CRAFT_COLORS[1])
+        task.wait(1)
+        local grey = getGreyCount()
+        greyKnown = grey
+        print("[AE Craft] Grey: " .. grey .. "/" .. CRAFT_GREY_FULL)
+
+        if grey >= CRAFT_GREY_FULL then
+            if grey >= CRAFT_RAINBOW_COST then
+                print("[AE Craft] 🌈 Rainbow 1 ลูก...")
+                craftOne("Sprite (Rainbow)", CRAFT_RAINBOW_COST)
+            end
+            local fullColors = {}
+            while true do
+                local g = getGreyCount()
+                if g < CRAFT_NORMAL_COST then break end
+                local avail = {}
+                for _, c in ipairs(CRAFT_COLORS) do
+                    if not fullColors[c] then table.insert(avail, c) end
+                end
+                if #avail == 0 then break end
+                local color = avail[math.random(#avail)]
+                if not craftOne(color, CRAFT_NORMAL_COST) then
+                    fullColors[color] = true
+                end
+                task.wait(0.5)
+            end
+            greyKnown = getGreyCount()
+            print("[AE Craft] จบคราฟ | Grey เหลือ: " .. greyKnown)
+        end
+        closeCraftUI()
+    end
+
+    -- ============================================================
+    -- [AE] Back to Lobby (Settings → Back To Lobby → Return to Lobby)
+    -- ============================================================
+    local function clickExactInGui(guiName, text)
+        local root = player.PlayerGui:FindFirstChild(guiName)
+        if not root then return false end
+        local lowerTarget = string.lower(text)
+        for _, btn in ipairs(root:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                if btn:IsA("TextButton") and btn.Text:lower() == lowerTarget then
+                    return fireButtonConns(btn) > 0
+                end
+                for _, l in ipairs(btn:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible and l.Text:lower() == lowerTarget then
+                        return fireButtonConns(btn) > 0
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    local function settingsOpen()
+        local s = player.PlayerGui:FindFirstChild("Settings")
+        return s and s:FindFirstChild("Frame") ~= nil and #s.Frame:GetChildren() > 1
+    end
+
+    local function openSettings()
+        if settingsOpen() then return true end
+        local topbar = player.PlayerGui:FindFirstChild("TopBar")
+        if not topbar then return false end
+        for _, btn in ipairs(topbar:GetDescendants()) do
+            if btn:IsA("TextButton") and btn.Visible then
+                fireButtonConns(btn)
+                task.wait(1.5)
+                if settingsOpen() then return true end
+            end
+        end
+        return settingsOpen()
+    end
+
+    -- กดปุ่มในแถว Settings ที่มี label ตรงข้อความ (ปุ่ม icon อยู่ขวาแถวเดียวกัน)
+    local function clickSettingsRow(rowText)
+        local s = player.PlayerGui:FindFirstChild("Settings")
+        if not s then return false end
+        local label
+        for _, l in ipairs(s:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible and l.Text == rowText then
+                label = l; break
+            end
+        end
+        if not label then return false end
+        local ly = label.AbsolutePosition.Y
+        for _, btn in ipairs(s:GetDescendants()) do
+            if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40 then
+                if math.abs(btn.AbsolutePosition.Y - ly) < 20 then
+                    return fireButtonConns(btn) > 0
+                end
+            end
+        end
+        return false
+    end
+
+    local function backToLobby()
+        print("[AE] 🏠 กลับ Lobby...")
+        if not openSettings() then
+            warn("[AE] ❌ เปิด Settings ไม่ได้")
+            return false
+        end
+        task.wait(1)
+        if not clickSettingsRow("Back To Lobby") then
+            warn("[AE] ❌ กด Back To Lobby ไม่ได้")
+            return false
+        end
+        task.wait(1.5)
+        -- ยืนยัน "Return to Lobby" ใน Prompt
+        for i = 1, 5 do
+            if clickExactInGui("Prompt", "Return to Lobby") then
+                print("[AE] ✅ ยืนยันกลับ Lobby แล้ว")
+                return true
+            end
+            task.wait(1)
+        end
+        warn("[AE] ❌ ไม่เจอปุ่มยืนยัน Return to Lobby")
+        return false
+    end
+
     -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
     local function clickRepeatStageButton()
         local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -1384,9 +1607,12 @@ if GAME_ID == "anime_expeditions" then
                         task.wait(3)
                     end
                 elseif not stage then
-                    print("[AE Farm] 🚀 ไม่อยู่ในเกม → เริ่ม UI sequence เข้าด่าน")
+                    print("[AE Farm] 🚀 ไม่อยู่ในเกม (lobby)")
                     if farmMode == "actM" then
-                        enterStageSequence("M", false)   -- ⭐ Act M — เกม fix ระดับ ไม่ต้องเลือก Hard
+                        -- ⭐ โหมด M: เช็ค Grey + คราฟก่อนเข้าด่าน (ถ้าเต็ม 125)
+                        autoCraftIfFull()
+                        task.wait(1)
+                        enterStageSequence("M", false)   -- Act M — เกม fix ระดับ
                     else
                         enterStageSequence("1", true)    -- Act 1 + Hard
                     end
@@ -1408,31 +1634,52 @@ if GAME_ID == "anime_expeditions" then
                             print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
                             sendAEDataToWeb(s)
                             lastSentEndScreenTime = tick()
+
+                            -- ⭐ โหมด M: นับ Grey ที่ได้จาก reward
+                            if farmMode == "actM" then
+                                local greyGain = 0
+                                for _, r in ipairs(s.rewards) do
+                                    local qty = r:match("Sprite %(Grey%) x([%d,]+)")
+                                    if qty then greyGain = tonumber((qty:gsub(",", ""))) or 0 end
+                                end
+                                if greyGain == 0 then greyGain = 5 end  -- fallback: ด่าน M ได้ 5/รอบ
+                                greyKnown = greyKnown + greyGain
+                                print("[AE Farm] 💿 Grey สะสม (ประมาณ): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
+                            end
+                        elseif farmMode == "actM" then
+                            greyKnown = greyKnown + 5  -- อ่าน reward ไม่ได้ก็บวก 5 ไว้ก่อน
                         end
                         task.wait(0.5)
-                        fireRestart()
 
-                        -- ⭐ รอ Victory UI ปิด + ถ้าไม่ปิดใน 5 วิ → click ปุ่ม Repeat Stage
-                        local waitClose = tick()
-                        local clickedButton = false
-                        while tick() - waitClose < 20 do
-                            local prompt = player.PlayerGui:FindFirstChild("Prompt")
-                            local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
-                            local promptClosed = not prompt or not prompt.Enabled
-                            local gameReady = rh and rh.Enabled
-                            if promptClosed and gameReady then
-                                break
-                            end
-                            -- Fallback: ถ้า 5 วิผ่านไปแล้วยังไม่ปิด → click ปุ่ม
-                            if not clickedButton and tick() - waitClose > 5 then
-                                if clickRepeatStageButton() then
-                                    print("[AE Farm] 🖱️ Clicked Repeat Stage button (fallback)")
-                                    clickedButton = true
+                        -- ⭐ โหมด M + Grey เต็ม → กลับ Lobby ไปคราฟ (แทน Restart)
+                        if farmMode == "actM" and greyKnown >= CRAFT_GREY_FULL then
+                            print("[AE Farm] 💿 Grey เต็มแล้ว → กลับ Lobby ไปคราฟ")
+                            backToLobby()
+                            task.wait(8)  -- รอโหลดกลับ lobby (loop รอบหน้าจะคราฟ + เข้าด่านเอง)
+                        else
+                            fireRestart()
+
+                            -- รอ Victory UI ปิด + ถ้าไม่ปิดใน 5 วิ → click ปุ่ม Repeat Stage
+                            local waitClose = tick()
+                            local clickedButton = false
+                            while tick() - waitClose < 20 do
+                                local prompt = player.PlayerGui:FindFirstChild("Prompt")
+                                local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
+                                local promptClosed = not prompt or not prompt.Enabled
+                                local gameReady = rh and rh.Enabled
+                                if promptClosed and gameReady then
+                                    break
                                 end
+                                if not clickedButton and tick() - waitClose > 5 then
+                                    if clickRepeatStageButton() then
+                                        print("[AE Farm] 🖱️ Clicked Repeat Stage button (fallback)")
+                                        clickedButton = true
+                                    end
+                                end
+                                task.wait(0.3)
                             end
-                            task.wait(0.3)
+                            task.wait(1)
                         end
-                        task.wait(1)
                     end
                 end
             end
