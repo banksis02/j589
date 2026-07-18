@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.9"
+local SCRIPT_VERSION = "v6.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1879,8 +1879,219 @@ if GAME_ID == "anime_expeditions" then
         return slots
     end
 
+    -- ============================================================
+    -- [AE] ⭐ ระบบวางออโต้ตามเส้นทางมอน (ไม่ต้องฟิคจุด — ใช้ได้ทุกด่าน)
+    --   เส้นจาก workspace.Map.Paths (waypoints ของเกม) 0%→100%
+    --   ตัวเงิน SANKZU x3 + ChefBum x1 ที่ 8-26% → ตัวดาเมจคิวสลับโซน
+    --   ดัก70% / กลาง45% / สังหาร6-20% + ตรวจลิมิตจริง (รองรับ Unbound)
+    -- ============================================================
+    local AP_MONEY = {
+        { name = "SANKZU",  count = 3 },
+        { name = "ChefBum", count = 1 },
+    }
+    local AP_MONEY_PCTS  = { 0.08, 0.14, 0.20, 0.26 }
+    local AP_CAP_PER_UNIT = 3
+    local AP_PLACE_DELAY  = 3
+    local AP_ZONE_PLAN = {
+        { "ดัก",    0.70 }, { "กลาง", 0.45 }, { "สังหาร", 0.08 },
+        { "ดัก",    0.73 }, { "กลาง", 0.48 }, { "สังหาร", 0.12 },
+        { "กลาง",  0.42 }, { "สังหาร", 0.16 }, { "สังหาร", 0.10 },
+        { "ดัก",    0.76 }, { "กลาง", 0.51 }, { "สังหาร", 0.20 },
+        { "สังหาร", 0.14 }, { "กลาง", 0.39 }, { "สังหาร", 0.18 },
+        { "สังหาร", 0.06 }, { "กลาง", 0.54 }, { "สังหาร", 0.22 },
+    }
+    local AP_SIDE_OFFSETS = { 6, -6, 9, -9, 4, -4, 12, -12 }
+
+    local function buildAEPath()
+        local pathsFolder = workspace:FindFirstChild("Map")
+        pathsFolder = pathsFolder and pathsFolder:FindFirstChild("Paths")
+        if not pathsFolder then return nil end
+        local lane = pathsFolder:FindFirstChildOfClass("Folder")
+        if not lane then return nil end
+        local parts = {}
+        for _, p in ipairs(lane:GetChildren()) do
+            if p:IsA("BasePart") and tonumber(p.Name) then
+                table.insert(parts, p)
+            end
+        end
+        if #parts < 2 then return nil end
+        table.sort(parts, function(a, b)
+            return tonumber(a.Name) < tonumber(b.Name)
+        end)
+        local pts, cum = {}, { 0 }
+        for i, p in ipairs(parts) do
+            pts[i] = p.Position
+            if i > 1 then
+                cum[i] = cum[i - 1] + (pts[i] - pts[i - 1]).Magnitude
+            end
+        end
+        return { pts = pts, cum = cum, total = cum[#cum] }
+    end
+
+    local function apPosAt(path, d)
+        d = math.clamp(d, 0, path.total)
+        for i = 2, #path.pts do
+            if path.cum[i] >= d then
+                local segLen = path.cum[i] - path.cum[i - 1]
+                local t = segLen > 0 and (d - path.cum[i - 1]) / segLen or 0
+                return path.pts[i - 1]:Lerp(path.pts[i], t)
+            end
+        end
+        return path.pts[#path.pts]
+    end
+
+    local function apDirAt(path, d)
+        d = math.clamp(d, 0, path.total)
+        for i = 2, #path.pts do
+            if path.cum[i] >= d then
+                local v = path.pts[i] - path.pts[i - 1]
+                if v.Magnitude > 0 then return v.Unit end
+            end
+        end
+        return Vector3.new(0, 0, 1)
+    end
+
+    local function apUnitCount()
+        local u = workspace:FindFirstChild("Units")
+        return u and #u:GetChildren() or 0
+    end
+
+    -- วางเยื้องข้างถนน สลับซ้าย/ขวา + เช็คติดจริงจาก workspace.Units
+    local function apPlaceSmart(path, slot, d)
+        local base = apPosAt(path, d)
+        local dir = apDirAt(path, d)
+        local perp = Vector3.new(-dir.Z, 0, dir.X)
+        for _, off in ipairs(AP_SIDE_OFFSETS) do
+            local p = base + perp * off
+            local before = apUnitCount()
+            placeUnit(slot, CFrame.new(p.X, p.Y, p.Z, 1, 0, 0, 0, 1, 0, 0, 0, 1))
+            task.wait(0.8)
+            if apUnitCount() > before then
+                return true, off
+            end
+        end
+        return false
+    end
+
+    -- วางทั้งหมดตามระบบเส้นทาง — คืน true ถ้าทำงานได้
+    local function smartPlaceAll(farmingActive)
+        local path = buildAEPath()
+        if not path then return false end
+        print(("[AE Place] 🛣️ เส้นทาง %d จุด | ยาว %.0f studs"):format(#path.pts, path.total))
+
+        -- แยก slot ตัวเงิน/ตัวดาเมจ
+        local moneySlots, damageSlots, seen = {}, {}, {}
+        for _, mu in ipairs(AP_MONEY) do
+            local s = findSlotByUnitName(mu.name)
+            if s then
+                table.insert(moneySlots, { slot = s, name = mu.name, count = mu.count })
+                seen[s] = true
+            end
+        end
+        local bh = player.PlayerGui:FindFirstChild("BottomHUD")
+        if bh then
+            local count = 0
+            for _, tb in ipairs(bh:GetDescendants()) do
+                if tb:IsA("TextButton") then
+                    local hasVPF = false
+                    for _, d in ipairs(tb:GetChildren()) do
+                        for _, dd in ipairs(d:GetDescendants()) do
+                            if dd:IsA("ViewportFrame") then hasVPF = true; break end
+                        end
+                        if hasVPF then break end
+                    end
+                    if hasVPF then
+                        count = count + 1
+                        if not seen[count] then table.insert(damageSlots, count) end
+                    end
+                end
+            end
+        end
+        print("[AE Place] 💰 ตัวเงิน " .. #moneySlots .. " | ⚔️ ตัวดาเมจ " .. #damageSlots .. " slot")
+
+        -- (1) ตัวเงินก่อน
+        local pctIdx = 1
+        for _, mu in ipairs(AP_MONEY) do
+            for _, ms in ipairs(moneySlots) do
+                if ms.name == mu.name then
+                    for c = 1, ms.count do
+                        if farmingActive and not farmingActive() then return true end
+                        local pct = AP_MONEY_PCTS[pctIdx] or 0.3
+                        pctIdx = pctIdx + 1
+                        local ok, off = apPlaceSmart(path, ms.slot, path.total * pct)
+                        if ok then
+                            print(("[AE Place] 💰 %s #%d @ %.0f%% (เยื้อง %d)"):format(ms.name, c, pct * 100, off))
+                        else
+                            print(("[AE Place] ⛔ %s #%d วางไม่ติด (ลิมิต?) — ไปต่อ"):format(ms.name, c))
+                            break  -- ตัวเงินตัวนี้ชนลิมิต → ข้ามไปตัวถัดไป
+                        end
+                        task.wait(0.6)
+                    end
+                end
+            end
+        end
+
+        if #damageSlots == 0 then
+            warn("[AE Place] ⚠️ ไม่มีตัวดาเมจ")
+            return true
+        end
+
+        -- (2) คิวสลับโซน + ตรวจลิมิตจริง
+        local placedCount, maxed, failFresh = {}, {}, {}
+        for _, s in ipairs(damageSlots) do
+            placedCount[s] = 0
+            failFresh[s] = 0
+        end
+        local function nextSlot()
+            for _, s in ipairs(damageSlots) do
+                if not maxed[s] and placedCount[s] < AP_CAP_PER_UNIT then return s end
+            end
+            return nil
+        end
+        local totalPlaced = 0
+        for qi, entry in ipairs(AP_ZONE_PLAN) do
+            if farmingActive and not farmingActive() then return true end
+            local zone, pct = entry[1], entry[2]
+            local done = false
+            while not done do
+                if farmingActive and not farmingActive() then return true end
+                local slot = nextSlot()
+                if not slot then
+                    print(("[AE Place] ✅ งบวางหมด — วางไป %d ตัว จาก %d คิว"):format(totalPlaced, qi - 1))
+                    return true
+                end
+                local ok, off = apPlaceSmart(path, slot, path.total * pct)
+                if ok then
+                    placedCount[slot] = placedCount[slot] + 1
+                    totalPlaced = totalPlaced + 1
+                    print(("[AE Place] ⚔️ [%s] slot %d @ %.0f%% (เยื้อง %d)"):format(zone, slot, pct * 100, off))
+                    done = true
+                elseif placedCount[slot] >= 1 then
+                    maxed[slot] = true
+                    print(("[AE Place] 🔒 slot %d ถึงลิมิต (Unbound?) — วางแล้ว %d ข้ามถาวร"):format(slot, placedCount[slot]))
+                else
+                    failFresh[slot] = failFresh[slot] + 1
+                    if failFresh[slot] >= 2 then
+                        maxed[slot] = true
+                        print(("[AE Place] 🔒 slot %d วางไม่ได้เลย — ข้ามถาวร"):format(slot))
+                    end
+                end
+            end
+            task.wait(AP_PLACE_DELAY)
+        end
+        print(("[AE Place] ✅ วางครบทั้งแผน (%d ตัว)"):format(totalPlaced))
+        return true
+    end
+
     -- วางตัวทั้งหมดตาม stage
-    local function placeAllForStage(stageName)
+    local function placeAllForStage(stageName, farmingActive)
+        -- ⭐ ระบบใหม่: วางตามเส้นทางอัตโนมัติ (ใช้ได้ทุกด่าน)
+        local okSmart = false
+        pcall(function() okSmart = smartPlaceAll(farmingActive) end)
+        if okSmart then return true end
+
+        -- fallback: จุดฟิคเดิม (เฉพาะด่านที่มี config)
+        warn("[AE Farm] ⚠️ ระบบเส้นทางใช้ไม่ได้ → ใช้จุดฟิคเดิม")
         local cfg = getStageConfig(stageName)
         if not cfg then
             warn("[AE Farm] ❌ ไม่มี config สำหรับด่าน: " .. tostring(stageName))
@@ -1985,12 +2196,10 @@ if GAME_ID == "anime_expeditions" then
                         enterStageSequence("1", true)    -- Act 1 + Hard
                     end
                     task.wait(6)  -- รอเกมโหลดหลังกด Start
-                elseif not getStageConfig(stage) then
-                    print("[AE Farm] ⚠️ ไม่มี config: " .. stage)
-                    task.wait(3)
                 else
+                    -- ⭐ ระบบวางตามเส้นทางใช้ได้ทุกด่าน — ไม่ต้องมี config แล้ว
                     print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage)
-                    placeAllForStage(stage)
+                    placeAllForStage(stage, isFarmingActive)
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
                     waitMatchEnd(isFarmingActive)
                     if farmingActive then
