@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.2"
+local SCRIPT_VERSION = "v5.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1274,6 +1274,83 @@ if GAME_ID == "anime_expeditions" then
     end
 
     -- ============================================================
+    -- [AE] อ่านจำนวนไอเทมจริงจาก Items Inventory (กด J — เปิดได้ทั้ง lobby และในด่าน)
+    -- ============================================================
+    local function itemInvOpen()
+        local inv = player.PlayerGui:FindFirstChild("ItemInventory")
+        return inv and inv:FindFirstChild("Frame") ~= nil
+    end
+
+    local function toggleItemInv()
+        -- วิธี 1: กดคีย์ J
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.J, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.J, false, game)
+        end)
+        task.wait(1.2)
+    end
+
+    -- อ่านจำนวนไอเทมตามชื่อ (เช่น "Sprite (Grey)") — คืน number หรือ nil
+    local function readItemCount(itemName)
+        local inv = player.PlayerGui:FindFirstChild("ItemInventory")
+        if not inv then return nil end
+        local wasOpen = itemInvOpen()
+        if not wasOpen then
+            toggleItemInv()
+            if not itemInvOpen() then
+                -- fallback: กดปุ่ม Items ใน HUD (getconnections)
+                for _, gui in ipairs({ "LeftHUD", "BottomHUD" }) do
+                    local root = player.PlayerGui:FindFirstChild(gui)
+                    if root then
+                        for _, btn in ipairs(root:GetDescendants()) do
+                            if btn:IsA("TextButton") and btn.Visible then
+                                for _, l in ipairs(btn:GetDescendants()) do
+                                    if l:IsA("TextLabel") and l.Text == "Items" then
+                                        fireButtonConns(btn)
+                                        task.wait(1.2)
+                                        break
+                                    end
+                                end
+                            end
+                            if itemInvOpen() then break end
+                        end
+                    end
+                    if itemInvOpen() then break end
+                end
+            end
+        end
+        if not itemInvOpen() then return nil end
+
+        local result = nil
+        for _, lbl in ipairs(inv:GetDescendants()) do
+            if lbl:IsA("TextLabel") and lbl.Text == itemName then
+                -- หา label จำนวน "Nx" ใน card เดียวกัน (ไล่ parent ขึ้นทีละชั้น)
+                local card = lbl.Parent
+                for depth = 1, 4 do
+                    if not card then break end
+                    for _, q in ipairs(card:GetDescendants()) do
+                        if q:IsA("TextLabel") and q ~= lbl then
+                            local n = q.Text:match("^([%d,]+)x$")
+                            if n then
+                                result = tonumber((n:gsub(",", "")))
+                                break
+                            end
+                        end
+                    end
+                    if result then break end
+                    card = card.Parent
+                end
+                break
+            end
+        end
+        -- ปิดกลับถ้าเดิมปิดอยู่
+        if not wasOpen then toggleItemInv() end
+        return result
+    end
+    _G.AE_READ_ITEM = readItemCount
+
+    -- ============================================================
     -- [AE] Back to Lobby (Settings → Back To Lobby → Return to Lobby)
     -- ============================================================
     local function clickExactInGui(guiName, text)
@@ -1852,19 +1929,34 @@ if GAME_ID == "anime_expeditions" then
                                 print("[AE Farm] ⏭️ Skip send (watcher ส่งไปแล้ว)")
                             end
 
-                            -- ⭐ โหมด M: นับ Grey เสมอ (ไม่ว่าส่งหรือ skip)
+                            -- ⭐ โหมด M: อ่าน Grey จริงจาก Items Inventory (กด J — ใช้ได้ในด่าน)
                             if farmMode == "actM" then
-                                local greyGain = 0
-                                for _, r in ipairs(s.rewards) do
-                                    local qty = r:match("Sprite %(Grey%) x([%d,]+)")
-                                    if qty then greyGain = tonumber((qty:gsub(",", ""))) or 0 end
+                                local realGrey = readItemCount("Sprite (Grey)")
+                                if realGrey then
+                                    greyKnown = realGrey
+                                    greyKnownSynced = true
+                                    print("[AE Farm] 💿 Grey จริง (จากกระเป๋า): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
+                                else
+                                    -- fallback: นับจาก reward
+                                    local greyGain = 0
+                                    for _, r in ipairs(s.rewards) do
+                                        local qty = r:match("Sprite %(Grey%) x([%d,]+)")
+                                        if qty then greyGain = tonumber((qty:gsub(",", ""))) or 0 end
+                                    end
+                                    if greyGain == 0 then greyGain = 5 end  -- fallback: ด่าน M ได้ 5/รอบ
+                                    greyKnown = greyKnown + greyGain
+                                    print("[AE Farm] 💿 Grey สะสม (ประมาณ): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
                                 end
-                                if greyGain == 0 then greyGain = 5 end  -- fallback: ด่าน M ได้ 5/รอบ
-                                greyKnown = greyKnown + greyGain
-                                print("[AE Farm] 💿 Grey สะสม (ประมาณ): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
                             end
                         elseif farmMode == "actM" then
-                            greyKnown = greyKnown + 5  -- อ่าน reward ไม่ได้ก็บวก 5 ไว้ก่อน
+                            local realGrey = readItemCount("Sprite (Grey)")
+                            if realGrey then
+                                greyKnown = realGrey
+                                greyKnownSynced = true
+                                print("[AE Farm] 💿 Grey จริง (จากกระเป๋า): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
+                            else
+                                greyKnown = greyKnown + 5  -- อ่าน reward ไม่ได้ก็บวก 5 ไว้ก่อน
+                            end
                         end
                         task.wait(0.5)
 
