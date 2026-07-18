@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.3"
+local SCRIPT_VERSION = "v5.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1454,15 +1454,60 @@ if GAME_ID == "anime_expeditions" then
             return false
         end
         task.wait(1.5)
-        -- ยืนยัน "Return to Lobby" ใน Prompt
-        for i = 1, 5 do
-            if clickExactInGui("Prompt", "Return to Lobby") then
-                print("[AE] ✅ ยืนยันกลับ Lobby แล้ว")
-                return true
+        -- ยืนยัน "Return to Lobby" ใน Prompt (Exit Confirmation)
+        -- ⭐ ปุ่มนี้ MouseButton1Click=0 มีแต่ Activated — ยิงแล้วต้องเช็คว่ากล่องปิดจริง
+        --    ถ้ายังค้าง → VIM คลิกที่พิกัดปุ่มตรงๆ
+        local function findConfirmBtn()
+            local prompt = player.PlayerGui:FindFirstChild("Prompt")
+            if not prompt then return nil end
+            for _, btn in ipairs(prompt:GetDescendants()) do
+                if btn:IsA("GuiButton") and btn.Visible then
+                    for _, l in ipairs(btn:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Text == "Return to Lobby" then
+                            return btn
+                        end
+                    end
+                end
             end
-            task.wait(1)
+            return nil
         end
-        warn("[AE] ❌ ไม่เจอปุ่มยืนยัน Return to Lobby")
+
+        local sawDialog = false
+        for i = 1, 6 do
+            local btn = findConfirmBtn()
+            if not btn then
+                if sawDialog then
+                    -- เคยเห็นกล่อง แล้วตอนนี้หายไป = กดสำเร็จ
+                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว (กล่องปิดแล้ว)")
+                    return true
+                end
+                task.wait(1)  -- กล่องยังไม่เด้ง รอ
+            else
+                sawDialog = true
+                fireButtonConns(btn)
+                task.wait(1.5)
+                if not findConfirmBtn() then
+                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว")
+                    return true
+                end
+                -- ยังค้าง → VIM คลิกพิกัดกลางปุ่ม
+                print("[AE] ⚠️ getconnections ไม่ผล → VIM คลิกพิกัดปุ่ม")
+                pcall(function()
+                    local inset = game:GetService("GuiService"):GetGuiInset()
+                    local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2
+                    local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y / 2 + inset.Y
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                    task.wait(0.05)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                end)
+                task.wait(1.5)
+                if not findConfirmBtn() then
+                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว (VIM)")
+                    return true
+                end
+            end
+        end
+        warn("[AE] ❌ กดยืนยัน Return to Lobby ไม่สำเร็จ")
         return false
     end
 
