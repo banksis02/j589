@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.6"
+local SCRIPT_VERSION = "v5.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -869,18 +869,54 @@ if GAME_ID == "anime_expeditions" then
         return nil
     end
 
-    -- ⭐ เกมสุ่ม opcode 64/65 → ยิงทั้งสอง (server accepts valid one)
-    local PLACE_OPCODES = { 64, 65 }
+    -- ⭐ opcode เลื่อนไปเรื่อยๆ (64→65→66→...) — ระบบ 2 ชั้น:
+    --    1) Learner: hook FireServer ดักเลขจริงที่ "เกมยิงเอง" ต่อ action → ใช้เลขนั้นเป๊ะๆ
+    --    2) Fallback: ถ้ายังไม่เคยเห็น ยิงช่วงกว้าง 64-70 (server ignore ตัวที่ผิด)
+    local learnedOp = {}        -- action name -> opcode ล่าสุดที่เกมยิงเอง
+    local scriptFiring = false  -- กันดักเลขที่สคริปต์ยิงเอง
+    pcall(function()
+        local replicaSig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        local oldNC
+        oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+            if not scriptFiring and self == replicaSig
+               and getnamecallmethod() == "FireServer" then
+                local a1, a2 = ...
+                if type(a1) == "number" and type(a2) == "string" then
+                    if learnedOp[a2] ~= a1 then
+                        learnedOp[a2] = a1
+                        print("[AE] 🎣 เรียนรู้ opcode: " .. a2 .. " = " .. a1)
+                    end
+                end
+            end
+            return oldNC(self, ...)
+        end)
+        print("[AE] 🎣 opcode learner พร้อม")
+    end)
+
+    -- คืนรายการ opcode ที่จะยิงสำหรับ action นั้น
+    local function opcodesFor(action, fallback)
+        local l = learnedOp[action]
+        if l then
+            return { l, l + 1 }  -- เลขจริง + เผื่อเกมขยับ 1
+        end
+        return fallback
+    end
+
+    local PLACE_FALLBACK = { 66, 64, 65, 67, 68, 69, 70 }  -- ตัวปัจจุบันก่อน แล้วไล่ช่วง
     local function placeUnit(slot, cframe)
         local sig = game:GetService("ReplicatedStorage")
             :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-        for _, op in ipairs(PLACE_OPCODES) do
+        local ops = opcodesFor("PlaceGameUnit", PLACE_FALLBACK)
+        scriptFiring = true
+        for _, op in ipairs(ops) do
             pcall(function()
                 sig:FireServer(op, "PlaceGameUnit", slot, cframe)
             end)
             task.wait(0.05)  -- delay สั้น กัน rate limit
         end
-        print("[AE] ✅ Placed slot " .. slot .. " (opcode 64+65)")
+        scriptFiring = false
+        print("[AE] ✅ Placed slot " .. slot .. " (opcodes: " .. table.concat(ops, ",") .. ")")
     end
 
     local isPlacing = false
@@ -977,13 +1013,16 @@ if GAME_ID == "anime_expeditions" then
     local function fireRestart()
         local sig = game:GetService("ReplicatedStorage")
             :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-        for _, op in ipairs(RESTART_OPCODES) do
+        local ops = opcodesFor("Restart", RESTART_OPCODES)
+        scriptFiring = true
+        for _, op in ipairs(ops) do
             pcall(function()
                 sig:FireServer(op, "Restart")
             end)
             task.wait(0.05)
         end
-        print("[AE Farm] 🔄 Restart fired (opcodes 58/59/60)")
+        scriptFiring = false
+        print("[AE Farm] 🔄 Restart fired (opcodes: " .. table.concat(ops, ",") .. ")")
     end
 
     -- ⭐ เข้าด่านจาก lobby — กด UI sequence (getconnections Fire — พิสูจน์แล้วว่าใช้ได้)
@@ -1473,10 +1512,13 @@ if GAME_ID == "anime_expeditions" then
             local ok = pcall(function()
                 local sig = game:GetService("ReplicatedStorage")
                     :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-                for _, op in ipairs(RESTART_OPCODES) do
+                local ops = opcodesFor("Lobby", { 60, 58, 59, 61, 62, 63 })
+                scriptFiring = true
+                for _, op in ipairs(ops) do
                     pcall(function() sig:FireServer(op, "Lobby") end)
                     task.wait(0.05)
                 end
+                scriptFiring = false
             end)
             if not ok then warn("[AE] ⚠️ หา ReplicaSignal ไม่เจอ (รอบ " .. attempt .. ")") end
 
