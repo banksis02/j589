@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v6.0"
+local SCRIPT_VERSION = "v6.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2173,6 +2173,30 @@ if GAME_ID == "anime_expeditions" then
             return false
         end
 
+        -- ⭐ เช็คแบนเนอร์ "Restarting server in ..." — ช่วงนี้เกมบล็อกรีเพล (กดมือก็ไม่ได้)
+        local function serverRestarting()
+            local found = false
+            pcall(function()
+                for _, l in ipairs(player.PlayerGui:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible
+                       and l.Text:lower():find("restarting server") then
+                        found = true
+                        break
+                    end
+                end
+            end)
+            return found
+        end
+
+        local function rejoinServer()
+            print("[AE Farm] 🔁 ย้ายเซิร์ฟเวอร์ (server กำลังรีสตาร์ท/รีเพลค้าง)...")
+            pcall(function()
+                game:GetService("TeleportService"):Teleport(game.PlaceId, player)
+            end)
+            task.wait(15)
+        end
+
+        local victoryStuck = 0
         task.spawn(function()
             while farmingActive do
                 local stage, mode, diff = getStageInfo()
@@ -2185,7 +2209,14 @@ if GAME_ID == "anime_expeditions" then
                         clickRepeatStageButton()
                         task.wait(3)
                     end
+                    victoryStuck = victoryStuck + 1
+                    -- ⭐ เซิร์ฟกำลังรีสตาร์ท หรือรีเพลค้างเกิน 5 รอบ → ย้ายเซิร์ฟหนีเลย
+                    if isVictoryOpen() and (serverRestarting() or victoryStuck >= 5) then
+                        rejoinServer()
+                        victoryStuck = 0
+                    end
                 elseif not stage then
+                    victoryStuck = 0
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม (lobby)")
                     if farmMode == "actM" then
                         -- ⭐ โหมด M: เช็ค Grey + คราฟก่อนเข้าด่าน (ถ้าเต็ม 125)
@@ -2198,6 +2229,7 @@ if GAME_ID == "anime_expeditions" then
                     task.wait(6)  -- รอเกมโหลดหลังกด Start
                 else
                     -- ⭐ ระบบวางตามเส้นทางใช้ได้ทุกด่าน — ไม่ต้องมี config แล้ว
+                    victoryStuck = 0
                     print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage)
                     placeAllForStage(stage, isFarmingActive)
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
