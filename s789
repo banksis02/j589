@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.0"
+local SCRIPT_VERSION = "v5.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1147,34 +1147,56 @@ if GAME_ID == "anime_expeditions" then
         return openCraftUI()
     end
 
+    -- ⭐ อ่าน Grey แบบ retry — กัน UI ยัง refresh ไม่เสร็จ (คืน 0 ปลอม)
+    local function readGreyRetry(colorName)
+        for i = 1, 4 do
+            local g = getGreyCount()
+            if g > 0 then return g end
+            -- อ่านได้ 0 — อาจเพราะ UI ปิด/ไม่มีสีถูกเลือก → ซ่อม
+            if not craftUIOpen() then
+                openCraftUI()
+                task.wait(1)
+            end
+            if colorName then
+                clickCraftButton(colorName)
+            end
+            task.wait(0.8)
+        end
+        return getGreyCount()
+    end
+
     local function craftOne(colorName, expectedCost)
         if not ensureCraftOpen() then return false end
         if not clickCraftButton(colorName) then return false end
         task.wait(1)
-        local before = getGreyCount()
+        local before = readGreyRetry(colorName)
         if before < expectedCost then
             print("[AE Craft] ⛔ " .. colorName .. " — Grey ไม่พอ (" .. before .. "/" .. expectedCost .. ")")
             return false
         end
-        if not clickCraftButton("craft ", true) then
-            warn("[AE Craft] ❌ กดปุ่ม Craft ไม่ได้")
-            return false
+        -- ⭐ กด Craft — ลองสูงสุด 2 ครั้ง (เผื่อ rate limit / UI ไม่พร้อม)
+        for attempt = 1, 2 do
+            if not clickCraftButton("craft ", true) then
+                warn("[AE Craft] ❌ กดปุ่ม Craft ไม่ได้ (ครั้ง " .. attempt .. ")")
+                task.wait(1)
+            else
+                task.wait(2)
+                -- เกมอาจปิดหน้าคราฟหลังคราฟ → เปิดใหม่ + เลือกสีเดิม
+                if not craftUIOpen() then
+                    openCraftUI()
+                    task.wait(1)
+                end
+                clickCraftButton(colorName)
+                task.wait(1)
+                local after = readGreyRetry(colorName)
+                if after < before then
+                    print("[AE Craft] ✅ " .. colorName .. " | Grey: " .. before .. " → " .. after)
+                    greyKnown = after
+                    return true
+                end
+                print("[AE Craft] ⚠️ " .. colorName .. " Grey ไม่ลด (" .. before .. "→" .. after .. ") ครั้ง " .. attempt)
+            end
         end
-        task.wait(1.5)
-        -- ⭐ เกมอาจปิดหน้าคราฟหลังคราฟสำเร็จ → เปิดใหม่ + เลือกสีเดิมเพื่ออ่านค่า
-        if not craftUIOpen() then
-            if not openCraftUI() then return false end
-            task.wait(0.5)
-        end
-        clickCraftButton(colorName)
-        task.wait(0.8)
-        local after = getGreyCount()
-        if after < before then
-            print("[AE Craft] ✅ " .. colorName .. " | Grey: " .. before .. " → " .. after)
-            greyKnown = after
-            return true
-        end
-        print("[AE Craft] ⚠️ " .. colorName .. " Grey ไม่ลด (" .. before .. " → " .. after .. ") = สีเต็ม?")
         return false
     end
 
@@ -1196,34 +1218,47 @@ if GAME_ID == "anime_expeditions" then
                 print("[AE Craft] 🌈 Rainbow 1 ลูก...")
                 craftOne("Sprite (Rainbow)", CRAFT_RAINBOW_COST)
             end
-            -- ⭐ สุ่มสีคราฟจนหมด — เปิดหน้าคราฟใหม่ทุกรอบถ้าถูกปิด + อ่าน Grey หลัง ensure
+            -- ⭐ สุ่มสีคราฟจนหมด — robust: retry อ่าน Grey + double-check ก่อนจบ
             local fullColors = {}
             while true do
                 if not ensureCraftOpen() then
                     warn("[AE Craft] ❌ เปิดหน้าคราฟกลับไม่ได้ — หยุดคราฟ")
                     break
                 end
-                -- ต้องเลือกสีก่อนถึงอ่าน Grey ได้ (Required Items แสดงเมื่อมี item เลือกอยู่)
                 local avail = {}
                 for _, c in ipairs(CRAFT_COLORS) do
                     if not fullColors[c] then table.insert(avail, c) end
                 end
                 if #avail == 0 then
-                    print("[AE Craft] ⛔ ทุกสีเต็มหมด — จบ")
+                    print("[AE Craft] ⛔ ทุกสีเต็ม/คราฟไม่ได้แล้ว — จบ")
                     break
                 end
                 local color = avail[math.random(#avail)]
                 clickCraftButton(color)
-                task.wait(0.8)
-                local g = getGreyCount()
+                task.wait(1)
+                local g = readGreyRetry(color)
+                print("[AE Craft] 🔍 " .. color .. " | Grey อ่านได้: " .. g)
                 if g < CRAFT_NORMAL_COST then
-                    print("[AE Craft] ⛔ Grey เหลือ " .. g .. " — จบ")
-                    break
+                    -- ⭐ double-check: reopen UI + อ่านซ้ำอีกรอบก่อนตัดสินใจจบ
+                    print("[AE Craft] 🔁 Grey < 5 — เช็คซ้ำอีกรอบ...")
+                    closeCraftUI()
+                    task.wait(1)
+                    if openCraftUI() then
+                        clickCraftButton(color)
+                        task.wait(1)
+                        g = readGreyRetry(color)
+                        print("[AE Craft] 🔍 เช็คซ้ำ | Grey: " .. g)
+                    end
+                    if g < CRAFT_NORMAL_COST then
+                        print("[AE Craft] ⛔ Grey เหลือ " .. g .. " จริง — จบ")
+                        break
+                    end
                 end
                 if not craftOne(color, CRAFT_NORMAL_COST) then
                     fullColors[color] = true
+                    print("[AE Craft] 🚫 ข้าม " .. color .. " ถาวร (เต็ม/คราฟไม่ได้)")
                 end
-                task.wait(0.5)
+                task.wait(1)
             end
             -- อ่าน Grey สุดท้าย (ensure + เลือกสีก่อนอ่าน)
             if ensureCraftOpen() then
