@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.1"
+local SCRIPT_VERSION = "v5.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1070,6 +1070,7 @@ if GAME_ID == "anime_expeditions" then
         "Sprite (Blue)", "Sprite (Green)", "Sprite (Pink)",
     }
     local greyKnown = 0   -- จำนวน Grey ที่ track ไว้ (อัพเดตตอนเปิดหน้าคราฟ + นับจาก reward)
+    local greyKnownSynced = false   -- ⭐ เคย sync ค่าจริงจากหน้าคราฟหรือยัง (กัน counter เพี้ยน)
 
     local function craftGuiRoot() return player.PlayerGui:FindFirstChild("Crafting") end
     local function craftUIOpen()
@@ -1209,9 +1210,10 @@ if GAME_ID == "anime_expeditions" then
         end
         clickCraftButton(CRAFT_COLORS[1])
         task.wait(1)
-        local grey = getGreyCount()
+        local grey = readGreyRetry(CRAFT_COLORS[1])
         greyKnown = grey
-        print("[AE Craft] Grey: " .. grey .. "/" .. CRAFT_GREY_FULL)
+        greyKnownSynced = true   -- ⭐ sync ค่าจริงแล้ว
+        print("[AE Craft] Grey: " .. grey .. "/" .. CRAFT_GREY_FULL .. " (synced)")
 
         if grey >= CRAFT_GREY_FULL then
             if grey >= CRAFT_RAINBOW_COST then
@@ -1866,9 +1868,13 @@ if GAME_ID == "anime_expeditions" then
                         end
                         task.wait(0.5)
 
-                        -- ⭐ โหมด M + Grey เต็ม → กลับ Lobby ไปคราฟ (แทน Restart)
-                        if farmMode == "actM" and greyKnown >= CRAFT_GREY_FULL then
-                            print("[AE Farm] 💿 Grey เต็มแล้ว → กลับ Lobby ไปคราฟ")
+                        -- ⭐ โหมด M: กลับ Lobby เมื่อ Grey เต็ม หรือยังไม่เคย sync ค่าจริง
+                        if farmMode == "actM" and (greyKnown >= CRAFT_GREY_FULL or not greyKnownSynced) then
+                            if not greyKnownSynced then
+                                print("[AE Farm] 🔄 ยังไม่เคยเช็ค Grey จริง → กลับ Lobby ไป sync + คราฟถ้าเต็ม")
+                            else
+                                print("[AE Farm] 💿 Grey เต็มแล้ว (" .. greyKnown .. ") → กลับ Lobby ไปคราฟ")
+                            end
                             backToLobby()
                             task.wait(8)  -- รอโหลดกลับ lobby (loop รอบหน้าจะคราฟ + เข้าด่านเอง)
                         else
