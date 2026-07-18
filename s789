@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.8"
+local SCRIPT_VERSION = "v4.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1140,19 +1140,41 @@ if GAME_ID == "anime_expeditions" then
         return not craftUIOpen()
     end
 
+    -- เช็คหน้าคราฟยังเปิดอยู่ไหม — ถ้าปิด (เกมปิดเองหลังคราฟ) ให้เปิดใหม่
+    local function ensureCraftOpen()
+        if craftUIOpen() then return true end
+        print("[AE Craft] 🚪 หน้าคราฟปิด → เปิดใหม่")
+        return openCraftUI()
+    end
+
     local function craftOne(colorName, expectedCost)
+        if not ensureCraftOpen() then return false end
         if not clickCraftButton(colorName) then return false end
         task.wait(1)
         local before = getGreyCount()
-        if before < expectedCost then return false end
-        if not clickCraftButton("craft ", true) then return false end
+        if before < expectedCost then
+            print("[AE Craft] ⛔ " .. colorName .. " — Grey ไม่พอ (" .. before .. "/" .. expectedCost .. ")")
+            return false
+        end
+        if not clickCraftButton("craft ", true) then
+            warn("[AE Craft] ❌ กดปุ่ม Craft ไม่ได้")
+            return false
+        end
         task.wait(1.5)
+        -- ⭐ เกมอาจปิดหน้าคราฟหลังคราฟสำเร็จ → เปิดใหม่ + เลือกสีเดิมเพื่ออ่านค่า
+        if not craftUIOpen() then
+            if not openCraftUI() then return false end
+            task.wait(0.5)
+        end
+        clickCraftButton(colorName)
+        task.wait(0.8)
         local after = getGreyCount()
         if after < before then
             print("[AE Craft] ✅ " .. colorName .. " | Grey: " .. before .. " → " .. after)
             greyKnown = after
             return true
         end
+        print("[AE Craft] ⚠️ " .. colorName .. " Grey ไม่ลด (" .. before .. " → " .. after .. ") = สีเต็ม?")
         return false
     end
 
@@ -1174,22 +1196,41 @@ if GAME_ID == "anime_expeditions" then
                 print("[AE Craft] 🌈 Rainbow 1 ลูก...")
                 craftOne("Sprite (Rainbow)", CRAFT_RAINBOW_COST)
             end
+            -- ⭐ สุ่มสีคราฟจนหมด — เปิดหน้าคราฟใหม่ทุกรอบถ้าถูกปิด + อ่าน Grey หลัง ensure
             local fullColors = {}
             while true do
-                local g = getGreyCount()
-                if g < CRAFT_NORMAL_COST then break end
+                if not ensureCraftOpen() then
+                    warn("[AE Craft] ❌ เปิดหน้าคราฟกลับไม่ได้ — หยุดคราฟ")
+                    break
+                end
+                -- ต้องเลือกสีก่อนถึงอ่าน Grey ได้ (Required Items แสดงเมื่อมี item เลือกอยู่)
                 local avail = {}
                 for _, c in ipairs(CRAFT_COLORS) do
                     if not fullColors[c] then table.insert(avail, c) end
                 end
-                if #avail == 0 then break end
+                if #avail == 0 then
+                    print("[AE Craft] ⛔ ทุกสีเต็มหมด — จบ")
+                    break
+                end
                 local color = avail[math.random(#avail)]
+                clickCraftButton(color)
+                task.wait(0.8)
+                local g = getGreyCount()
+                if g < CRAFT_NORMAL_COST then
+                    print("[AE Craft] ⛔ Grey เหลือ " .. g .. " — จบ")
+                    break
+                end
                 if not craftOne(color, CRAFT_NORMAL_COST) then
                     fullColors[color] = true
                 end
                 task.wait(0.5)
             end
-            greyKnown = getGreyCount()
+            -- อ่าน Grey สุดท้าย (ensure + เลือกสีก่อนอ่าน)
+            if ensureCraftOpen() then
+                clickCraftButton(CRAFT_COLORS[1])
+                task.wait(0.8)
+                greyKnown = getGreyCount()
+            end
             print("[AE Craft] จบคราฟ | Grey เหลือ: " .. greyKnown)
         end
         closeCraftUI()
