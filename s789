@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.3"
+local SCRIPT_VERSION = "v4.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -934,9 +934,11 @@ if GAME_ID == "anime_expeditions" then
     local RESTART_CONST = 59
     local SILVER_UNIT_NAMES = { "SANKZU", "ChefBum" }
 
-    -- Config ตำแหน่งวางแยกตาม stage + ประเภทตัว
+    -- Config ตำแหน่งวางแยกตาม stage (key = partial match — "School Grounds" ใช้ได้ทุก Act)
+    -- silver: ตำแหน่งตัวเงิน (ตามชนิด)
+    -- damageSeq: ลำดับการวางตัวดาเมจ — d = ตัวดาเมจลำดับที่ (map ไป slot ที่ไม่ใช่ตัวเงินอัตโนมัติ)
     local STAGE_CONFIG = {
-        ["School Grounds - Act 1"] = {
+        ["School Grounds"] = {   -- ⭐ ทุก Act ของ School Grounds ใช้ config นี้
             silver = {
                 SANKZU = {
                     CFrame.new(3105.920654296875, 1798.7340087890625, 3334.916748046875, 1, 0, 0, 0, 1, 0, 0, 0, 1),
@@ -946,18 +948,29 @@ if GAME_ID == "anime_expeditions" then
                     CFrame.new(3107.017333984375, 1798.7340087890625, 3320.510986328125, 1, 0, 0, 0, 1, 0, 0, 0, 1),
                 },
             },
-            damage = {
-                {   -- Damage 1: 2 ตำแหน่ง
-                    CFrame.new(3099.210693359375, 1798.9315185546875, 3257.333251953125, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                    CFrame.new(3090.116455078125, 1798.9315185546875, 3355.021484375, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
-                {   -- Damage 2: 2 ตำแหน่ง
-                    CFrame.new(3089.51611328125, 1799.1815185546875, 3348.9306640625, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                    CFrame.new(3094.560302734375, 1799.1815185546875, 3375.684326171875, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
+            damageSeq = {
+                { d = 1, cf = CFrame.new(3097.3603515625, 1798.9315185546875, 3258.609130859375, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 2, cf = CFrame.new(3091.100341796875, 1799.1815185546875, 3259.41796875, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 1, cf = CFrame.new(3093.49072265625, 1798.9315185546875, 3344.489501953125, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 1, cf = CFrame.new(3093.6669921875, 1798.9315185546875, 3351.0830078125, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 2, cf = CFrame.new(3089.320556640625, 1799.1815185546875, 3348.73681640625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 2, cf = CFrame.new(3088.909912109375, 1799.1815185546875, 3360.53125, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 3, cf = CFrame.new(3094.93701171875, 1799.0208740234375, 3370.177001953125, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
+                { d = 3, cf = CFrame.new(3094.222412109375, 1798.9315185546875, 3377.46875, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
             },
         },
     }
+
+    -- ⭐ หา config โดย partial match (stageName "School Grounds - Act 3" → config "School Grounds")
+    local function getStageConfig(stageName)
+        if not stageName then return nil end
+        for key, cfg in pairs(STAGE_CONFIG) do
+            if stageName:find(key, 1, true) then
+                return cfg
+            end
+        end
+        return nil
+    end
 
     -- ⭐ Restart — ยิงหลาย opcode (สุ่มเหมือน placement) + click ปุ่ม UI เป็น fallback
     local RESTART_OPCODES = { 58, 59, 60 }
@@ -1273,13 +1286,13 @@ if GAME_ID == "anime_expeditions" then
 
     -- วางตัวทั้งหมดตาม stage
     local function placeAllForStage(stageName)
-        local cfg = STAGE_CONFIG[stageName]
+        local cfg = getStageConfig(stageName)
         if not cfg then
             warn("[AE Farm] ❌ ไม่มี config สำหรับด่าน: " .. tostring(stageName))
             return false
         end
 
-        -- 1) วางตัวเงิน
+        -- 1) วางตัวเงิน (logic เดิม)
         local silverName, silverSlot = findMySilverUnit()
         if silverName and silverSlot then
             local positions = cfg.silver[silverName]
@@ -1294,14 +1307,18 @@ if GAME_ID == "anime_expeditions" then
             warn("[AE Farm] ⚠️ ไม่มีตัวเงินใน hotbar (ข้าม)")
         end
 
-        -- 2) วางตัวดาเมจ
+        -- 2) ⭐ วางตัวดาเมจตาม sequence (d = ตัวดาเมจลำดับที่ → map ไป slot ที่ไม่ใช่ตัวเงิน)
+        -- เช่น ตัวเงินอยู่ slot 1-2 → damage 1 = slot 3, damage 2 = slot 4, damage 3 = slot 5
         local damageSlots = findDamageSlots()
-        for i = 1, math.min(#damageSlots, #cfg.damage) do
-            local slot = damageSlots[i]
-            print("[AE Farm] ⚔️ วาง Damage " .. i .. " (slot " .. slot .. ")")
-            for _, cf in ipairs(cfg.damage[i]) do
-                placeUnit(slot, cf)
+        print("[AE Farm] ⚔️ damage slots: " .. table.concat(damageSlots, ", "))
+        for _, step in ipairs(cfg.damageSeq or {}) do
+            local slot = damageSlots[step.d]
+            if slot then
+                print("[AE Farm] ⚔️ Damage " .. step.d .. " → slot " .. slot)
+                placeUnit(slot, step.cf)
                 task.wait(1)
+            else
+                warn("[AE Farm] ⚠️ ไม่มี damage slot ลำดับ " .. step.d .. " (ข้าม)")
             end
         end
         return true
@@ -1364,7 +1381,7 @@ if GAME_ID == "anime_expeditions" then
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม → เริ่ม UI sequence เข้าด่าน")
                     enterStageSequence()
                     task.wait(6)  -- รอเกมโหลดหลังกด Start
-                elseif not STAGE_CONFIG[stage] then
+                elseif not getStageConfig(stage) then
                     print("[AE Farm] ⚠️ ไม่มี config: " .. stage)
                     task.wait(3)
                 else
