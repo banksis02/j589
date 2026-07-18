@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v5.4"
+local SCRIPT_VERSION = "v5.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1442,72 +1442,93 @@ if GAME_ID == "anime_expeditions" then
         return false
     end
 
-    local function backToLobby()
-        print("[AE] 🏠 กลับ Lobby...")
-        if not openSettings() then
-            warn("[AE] ❌ เปิด Settings ไม่ได้")
-            return false
-        end
-        task.wait(1)
-        if not clickSettingsRow("Back To Lobby") then
-            warn("[AE] ❌ กด Back To Lobby ไม่ได้")
-            return false
-        end
-        task.wait(1.5)
-        -- ยืนยัน "Return to Lobby" ใน Prompt (Exit Confirmation)
-        -- ⭐ ปุ่มนี้ MouseButton1Click=0 มีแต่ Activated — ยิงแล้วต้องเช็คว่ากล่องปิดจริง
-        --    ถ้ายังค้าง → VIM คลิกที่พิกัดปุ่มตรงๆ
-        local function findConfirmBtn()
-            local prompt = player.PlayerGui:FindFirstChild("Prompt")
-            if not prompt then return nil end
-            for _, btn in ipairs(prompt:GetDescendants()) do
-                if btn:IsA("GuiButton") and btn.Visible then
-                    for _, l in ipairs(btn:GetDescendants()) do
-                        if l:IsA("TextLabel") and l.Text == "Return to Lobby" then
-                            return btn
-                        end
+    -- ⭐ อยู่ lobby จริงไหม — lobby มี workspace.InteractZones.Crafting (ในด่านไม่มี)
+    local function inLobby()
+        local iz = workspace:FindFirstChild("InteractZones")
+        return iz ~= nil and iz:FindFirstChild("Crafting") ~= nil
+    end
+
+    local function findConfirmBtn()
+        local prompt = player.PlayerGui:FindFirstChild("Prompt")
+        if not prompt then return nil end
+        for _, btn in ipairs(prompt:GetDescendants()) do
+            if btn:IsA("GuiButton") and btn.Visible then
+                for _, l in ipairs(btn:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Text == "Return to Lobby" then
+                        return btn
                     end
                 end
             end
-            return nil
         end
+        return nil
+    end
 
-        local sawDialog = false
-        for i = 1, 6 do
-            local btn = findConfirmBtn()
-            if not btn then
-                if sawDialog then
-                    -- เคยเห็นกล่อง แล้วตอนนี้หายไป = กดสำเร็จ
-                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว (กล่องปิดแล้ว)")
-                    return true
-                end
-                task.wait(1)  -- กล่องยังไม่เด้ง รอ
+    -- ⭐ ปุ่มยืนยัน: Activated:Fire() ปิดกล่องได้แต่ "ไม่วาปจริง"!
+    --    ต้อง VIM คลิกพิกัดจริงเป็นหลัก แล้วเช็คว่าวาปถึง lobby (inLobby) เท่านั้น
+    local function backToLobby()
+        print("[AE] 🏠 กลับ Lobby...")
+        for attempt = 1, 3 do
+            if inLobby() then return true end
+
+            if not openSettings() then
+                warn("[AE] ❌ เปิด Settings ไม่ได้ (รอบ " .. attempt .. ")")
+                task.wait(2)
             else
-                sawDialog = true
-                fireButtonConns(btn)
-                task.wait(1.5)
-                if not findConfirmBtn() then
-                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว")
-                    return true
-                end
-                -- ยังค้าง → VIM คลิกพิกัดกลางปุ่ม
-                print("[AE] ⚠️ getconnections ไม่ผล → VIM คลิกพิกัดปุ่ม")
-                pcall(function()
-                    local inset = game:GetService("GuiService"):GetGuiInset()
-                    local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2
-                    local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y / 2 + inset.Y
-                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                    task.wait(0.05)
-                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                end)
-                task.wait(1.5)
-                if not findConfirmBtn() then
-                    print("[AE] ✅ ยืนยันกลับ Lobby แล้ว (VIM)")
-                    return true
+                task.wait(1)
+                if not clickSettingsRow("Back To Lobby") then
+                    warn("[AE] ❌ กด Back To Lobby ไม่ได้ (รอบ " .. attempt .. ")")
+                else
+                    -- รอกล่อง Exit Confirmation เด้ง (สูงสุด 5 วิ)
+                    local btn
+                    local t0 = tick()
+                    while tick() - t0 < 5 do
+                        btn = findConfirmBtn()
+                        if btn then break end
+                        task.wait(0.5)
+                    end
+
+                    if btn then
+                        -- วิธีหลัก: ยิง connection ทั้ง MouseButton1Click + Activated
+                        -- (พิสูจน์แล้วว่าวาปจริง — รอกล่องเด้งเต็มก่อนค่อยยิง)
+                        task.wait(0.5)
+                        pcall(function()
+                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                        end)
+                        pcall(function()
+                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+                        end)
+                        task.wait(3)
+                        -- ยังไม่วาป + กล่องยังค้าง → fallback VIM คลิกพิกัดกลางปุ่ม
+                        if not inLobby() and findConfirmBtn() then
+                            print("[AE] ⚠️ ยิง connection ไม่ผล → VIM คลิกพิกัดปุ่ม")
+                            pcall(function()
+                                local inset = game:GetService("GuiService"):GetGuiInset()
+                                local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2
+                                local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y / 2 + inset.Y
+                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                                task.wait(0.05)
+                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                            end)
+                        end
+
+                        -- ⭐ เช็คของจริง: รอวาปถึง lobby สูงสุด 20 วิ
+                        local t1 = tick()
+                        while tick() - t1 < 20 do
+                            if inLobby() then
+                                print("[AE] ✅ ถึง Lobby แล้ว")
+                                return true
+                            end
+                            task.wait(1)
+                        end
+                        warn("[AE] ⚠️ กล่องปิดแต่ยังไม่วาป → ลองใหม่ (รอบ " .. attempt .. ")")
+                    else
+                        warn("[AE] ❌ กล่องยืนยันไม่เด้ง (รอบ " .. attempt .. ")")
+                    end
                 end
             end
+            task.wait(2)
         end
-        warn("[AE] ❌ กดยืนยัน Return to Lobby ไม่สำเร็จ")
+        warn("[AE] ❌ กลับ Lobby ไม่สำเร็จหลังลอง 3 รอบ")
         return false
     end
 
