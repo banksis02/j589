@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v4.7"
+local SCRIPT_VERSION = "v4.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1281,6 +1281,111 @@ if GAME_ID == "anime_expeditions" then
         warn("[AE] ❌ ไม่เจอปุ่มยืนยัน Return to Lobby")
         return false
     end
+
+    -- ============================================================
+    -- [AE] Auto-Config Settings (เช็ค + ตั้งค่าทุกครั้งที่ script รัน)
+    -- toggle เปิด = UIGradient เขียว (136,255,0) | ปิด = แดง (255,51,51)
+    -- ============================================================
+    local SETTING_PREFS = {
+        { name = "Show Match End Rewards",     want = false },
+        { name = "Auto Retry",                 want = false },
+        { name = "Auto Next",                  want = false },
+        { name = "Auto Skip Waves",            want = true  },
+        { name = "Auto Vote Start",            want = true  },
+        { name = "Auto-Upgrade Placed Units",  want = true  },
+    }
+
+    -- หาปุ่ม toggle ของ setting (Settings เป็น 2 คอลัมน์ — เลือกปุ่มฝั่งเดียวกับ label)
+    local function findToggleButton(name)
+        local s = player.PlayerGui:FindFirstChild("Settings")
+        if not s then return nil end
+        local label
+        for _, l in ipairs(s:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible and l.Text == name then label = l; break end
+        end
+        if not label then return nil end
+        local lx, ly = label.AbsolutePosition.X, label.AbsolutePosition.Y
+        local best, bestDx
+        for _, btn in ipairs(s:GetDescendants()) do
+            if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40
+               and math.abs(btn.AbsolutePosition.Y - ly) < 15 then
+                local dx = btn.AbsolutePosition.X - lx
+                if dx > 0 and (not bestDx or dx < bestDx) then
+                    best, bestDx = btn, dx
+                end
+            end
+        end
+        return best
+    end
+
+    local function getSettingState(name)
+        local btn = findToggleButton(name)
+        if not btn then return nil end
+        for _, g in ipairs(btn:GetDescendants()) do
+            if g:IsA("UIGradient") then
+                local c = g.Color.Keypoints[1].Value
+                local r, gr = c.R * 255, c.G * 255
+                if gr > 200 and r < 200 then return "on" end
+                if r > 200 and gr < 100 then return "off" end
+            end
+        end
+        return nil
+    end
+
+    local function setSettingState(name, wantOn)
+        local state = getSettingState(name)
+        if state == nil then
+            warn("[AE Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. name)
+            return false
+        end
+        local wantState = wantOn and "on" or "off"
+        if state == wantState then
+            print("[AE Settings] ✓ " .. name .. " = " .. state .. " (ตรงแล้ว)")
+            return true
+        end
+        local btn = findToggleButton(name)
+        fireButtonConns(btn)
+        task.wait(0.6)
+        local newState = getSettingState(name)
+        print("[AE Settings] 🔄 " .. name .. ": " .. state .. " → " .. tostring(newState))
+        return newState == wantState
+    end
+
+    local function closeSettings()
+        local s = player.PlayerGui:FindFirstChild("Settings")
+        if not s or not settingsOpen() then return true end
+        for _, btn in ipairs(s:GetDescendants()) do
+            if btn:IsA("TextButton") and btn.Visible
+               and btn.AbsoluteSize.X <= 35 and btn.AbsoluteSize.Y <= 35 then
+                fireButtonConns(btn)
+                task.wait(1)
+                if not settingsOpen() then return true end
+            end
+        end
+        return not settingsOpen()
+    end
+
+    local function applyRecommendedSettings()
+        print("[AE Settings] ⚙️ เช็ค + ตั้งค่าอัตโนมัติ...")
+        if not openSettings() then
+            warn("[AE Settings] ❌ เปิด Settings ไม่ได้")
+            return
+        end
+        task.wait(1.5)
+        for _, pref in ipairs(SETTING_PREFS) do
+            setSettingState(pref.name, pref.want)
+            task.wait(0.4)
+        end
+        closeSettings()
+        print("[AE Settings] ✅ ตั้งค่าเสร็จ")
+    end
+    _G.AE_APPLY_SETTINGS = applyRecommendedSettings
+
+    -- ⭐ รันอัตโนมัติทุกครั้งที่ script โหลด (รอเกมโหลดก่อน 10 วิ)
+    task.spawn(function()
+        task.wait(10)
+        applyRecommendedSettings()
+    end)
 
     -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
     local function clickRepeatStageButton()
