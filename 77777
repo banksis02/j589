@@ -1,3518 +1,449 @@
 -- ============================================================
--- 📦 SCRIPT VERSION
+-- AE Carry — ตัวแบก (สคริปต์แยกเทส ยังไม่รวมสคริปต์หลัก)
+--
+-- คอนเซ็ปต์: "อัดครั้งเดียว เล่นซ้ำได้ตลอด"
+--   1. เข้าด่านที่จะแบก → กด ⏺ อัด → วางตัวเองแบบละเอียดจนพอใจ → กดหยุดอัด
+--      สคริปต์จำ: ชื่อยูนิต + ตำแหน่ง + จังหวะเวลาระหว่างวาง ผูกกับชื่อด่าน
+--   2. เปิด ▶ โหมดแบก → เจอด่านที่เคยอัดไว้ → วางตามที่อัดอัตโนมัติทุกตา
+--      (จับ restart ด้วย: ตัวในสนามหาย → วางใหม่)
+--
+-- บันทึกไฟล์: ae_carry_<ด่าน>_act_<แอค>.txt (JSON) — อัดทับได้ตลอด
 -- ============================================================
-local SCRIPT_VERSION = "v4.1"
-_G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
-print("════════════════════════════════════════")
-print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
-print("════════════════════════════════════════")
+local player = game:GetService("Players").LocalPlayer
+local HttpService = game:GetService("HttpService")
 
-local HttpService        = game:GetService("HttpService")
-local Players            = game:GetService("Players")
-local LogService         = game:GetService("LogService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local player             = Players.LocalPlayer
+-- ================== CONFIG ==================
+local PLACE_OPCODES = { 66, 64, 65, 67, 68, 69, 70 }
+local MAX_STEP_WAIT = 20     -- จังหวะรอระหว่างวางสูงสุด (วิ) — กันอัดตอนเผลอทิ้งช่วงนาน
+-- ============================================
 
-local BACKEND_URL = "https://overload-backend-production.up.railway.app"
-
-local placeId = game.PlaceId
-local GAME_NAME, GAME_ID
-if placeId == 16277809958 then
-    GAME_NAME = "Anime Vanguards"
-    GAME_ID   = "anime_vanguards"
-elseif placeId == 80353351682367 then
-    GAME_NAME = "Anime Overload"
-    GAME_ID   = "anime_overload"
-elseif placeId == 80877167393789 then
-    GAME_NAME = "Summon Heroes"
-    GAME_ID   = "summon_heroes"
-elseif placeId == 106402284955512 then
-    GAME_NAME = "Universal Tower Defense X"
-    GAME_ID   = "utdx"
-elseif placeId == 91255392593879 then
-    GAME_NAME = "Anime Squadron"
-    GAME_ID   = "anime_squadron"
-elseif placeId == 84515722934860 then
-    GAME_NAME = "Anime Expeditions"
-    GAME_ID   = "anime_expeditions"
-else
-    GAME_NAME = "Unknown (" .. placeId .. ")"
-    GAME_ID   = "unknown"
-end
-print("[OV] Game:", GAME_NAME)
-
--- ============================================================
--- 🛡️ ANTI-AFK (ทำงานทุกเกม)
--- ============================================================
-pcall(function()
-    -- 1) Idled event handler (Roblox's official AFK reset)
-    local VirtualUser = game:GetService("VirtualUser")
-    player.Idled:Connect(function()
-        print("[ANTI-AFK] Idled detected → reset (" .. GAME_NAME .. ")")
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new())
-    end)
-
-    -- 2) Periodic action ทุก 5 นาที (กระโดด → ถ้าไม่ได้ ให้เดินหน้า)
-    task.spawn(function()
-        while true do
-            task.wait(300)  -- 5 นาที
-            local jumped = false
-
-            -- ลองกระโดดหลายแบบ (บางเกม block บาง method)
-            pcall(function()
-                local ch = player.Character
-                local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-                if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
-                    -- Method 1: Jump property
-                    hum.Jump = true
-                    jumped = true
-                    -- Method 2: ChangeState (fallback)
-                    pcall(function()
-                        hum:ChangeState(Enum.HumanoidStateType.Jumping)
-                    end)
-                    -- Method 3: VirtualInputManager Space (fallback)
-                    pcall(function()
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-                        task.wait(0.1)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-                    end)
-                end
-            end)
-
-            if jumped then
-                print("[ANTI-AFK] 🦘 Jumped (" .. GAME_NAME .. ")")
-            else
-                -- ถ้ากระโดดไม่ได้ → เดินหน้า 0.3 วิ
-                pcall(function()
-                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
-                    task.wait(0.3)
-                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
-                    print("[ANTI-AFK] 🚶 Walked forward (" .. GAME_NAME .. ")")
-                end)
-            end
-        end
-    end)
-
-    print("[ANTI-AFK] ✅ Ready (Idled + Jump/Walk ทุก 5 นาที)")
-end)
-
--- ============================================================
--- Asset ID → Item Name Map (Anime Overload)
--- ============================================================
-local ITEM_NAMES = {
-    ["rbxassetid://83332308606244"]  = "Crystal",
-    ["rbxassetid://18410905863"]     = "Gold",
-    ["rbxassetid://102037405949146"] = "Bloodied Chains",
-    ["rbxassetid://125019585910098"] = "Crystalline Shells",
-    ["rbxassetid://106764375820901"] = "Grimoires",
-}
-
-local function getItemNameFromImage(imageId)
-    return ITEM_NAMES[imageId] or nil
-end
-
--- ============================================================
--- State
--- ============================================================
-local roundCount      = 0
-local lastVictoryTime = 0
-local isSending       = false
-
-local lastAct        = "N/A"
-local lastFile       = "N/A"
-local lastPlayTime   = "00:00"
-local lastRewards    = {}
-local lockPlayTime   = false
-local lastLevel      = 0
-local lastWave       = 0
-
--- ============================================================
--- Helper — ดึง Level และ Wave ปัจจุบัน
--- ============================================================
-local function getCurrentStats()
-    local level = 0
-    if GAME_ID == "anime_vanguards" then
-        pcall(function()
-            local lvlText = player.PlayerGui.Hotbar.Main.Level.Level.Text
-            level = tonumber(lvlText:match("%d+")) or 0
-        end)
-    elseif GAME_ID == "anime_overload" then
-        pcall(function()
-            local lvlText = player.PlayerGui.ExperienceGui.container.levelFrame.bg.inside.levelAmount.Text
-            level = tonumber(lvlText:match("%d+")) or 0
-        end)
-    elseif GAME_ID == "utdx" then
-        pcall(function()
-            local lvlText = player.PlayerGui.GameUI.HUD.Bottom.Hotbar.LevelBar.Level.Text
-            level = tonumber(lvlText:match("Level (%d+)")) or 0
-        end)
-    end
-    return level, lastWave
-end
-
--- ============================================================
--- Send
--- ============================================================
-local function sendToBackend(data)
-    local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    local level, wave = getCurrentStats()
-
-    local payload = {
-        username     = player.Name,
-        userId       = player.UserId,
-        serviceName  = GAME_NAME,
-        gameId       = GAME_ID,
-        progress     = 0,
-        currentStats = { level = level, bp = 0 },
-        matchInfo    = { map = data.file or "Unknown", wave = wave },
-        endScreen    = {
-            act      = data.act,
-            file     = data.file,
-            playTime = data.playTime,
-            quantity = data.quantity,
-        },
-        recentLog = {
-            act      = data.act,
-            file     = data.file,
-            playTime = data.playTime,
-            quantity = data.quantity,
-            status   = "COMPLETED",
-            time     = timestamp,
-            rewards  = data.quantity,
-        },
-    }
-    local ok, response = pcall(function()
-        return HttpService:RequestAsync({
-            Url     = BACKEND_URL .. "/api/overload/update",
-            Method  = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body    = HttpService:JSONEncode(payload)
-        })
-    end)
-    if ok and type(response) == "table" and response.Success then
-        print("[OV] ✅ Sent! Act=" .. tostring(data.act) .. " | File=" .. tostring(data.file) .. " | Time=" .. tostring(data.playTime) .. " | Rewards=" .. tostring(data.quantity) .. " | LVL=" .. level .. " | Wave=" .. wave)
-    else
-        warn("[OV] ❌ Send FAIL:", type(response) == "table" and response.StatusCode or tostring(response))
-    end
-end
-
--- ============================================================
--- [Anime Overload] Scan Rewards (scroll-based)
--- ============================================================
-local SKIP_NAMES = {
-    layer1     = true,
-    layer2     = true,
-    layer3     = true,
-    ImageLabel = true,
-    Quantity   = true,
-    isLoading  = true,
-    InputArea  = true,
-}
-
-local function scanRewards_AO(scroll)
-    local rewards = {}
-    for _, frame in ipairs(scroll:GetChildren()) do
-        for _, rarity in ipairs(frame:GetChildren()) do
-            local qty = rarity:FindFirstChild("Quantity")
-            local img = rarity:FindFirstChild("ImageLabel")
-            if qty and qty.Text ~= "" and qty.Text ~= "0" then
-                local itemName = nil
-                if img then
-                    itemName = getItemNameFromImage(img.Image)
-                end
-                if not itemName then
-                    for _, sub in ipairs(rarity:GetChildren()) do
-                        if sub:IsA("ImageLabel") and not SKIP_NAMES[sub.Name] then
-                            itemName = sub.Name
-                            break
-                        end
-                    end
-                end
-                local entry = itemName and (itemName .. " " .. qty.Text) or qty.Text
-                table.insert(rewards, entry)
-                print("[OV] reward →", entry)
-            end
-        end
-    end
-    return rewards
-end
-
--- ============================================================
--- [Anime Vanguards] Scan Rewards (fixed nodes)
--- Path: EndScreen.Holder.Main.StageRewards.Main
---   Gold.Holder.Main.Amount  → e.g. "x100"
---   Gems.Holder.Main.Amount  → e.g. "x180"
---   GreenBean (folder)       → children each have Amount + ItemName
--- ============================================================
-local function scanRewards_AV()
-    local rewards = {}
-    local ok, err = pcall(function()
-        local sr = player.PlayerGui.EndScreen.Holder.Main.StageRewards.Main
-
-        -- loop ทุก reward frame ไม่ hardcode
-        for _, rewardFrame in ipairs(sr:GetChildren()) do
-            if rewardFrame:IsA("Frame") then
-                local main = rewardFrame:FindFirstChild("Holder")
-                             and rewardFrame.Holder:FindFirstChild("Main")
-                if main then
-                    local amtLabel  = main:FindFirstChild("Amount")
-                    local nameLabel = main:FindFirstChild("ItemName")
-                    local amt  = amtLabel  and amtLabel.Text or ""
-                    local name = nameLabel and nameLabel.Text or rewardFrame.Name
-                    if amt ~= "" and amt ~= "x0" then
-                        local entry = name .. " " .. amt
-                        table.insert(rewards, entry)
-                        print("[AV] reward →", entry)
-                    end
+-- ---------- สถานะปัจจุบัน: ด่าน + Act ----------
+-- ⭐ ไม่ฟิคลิสต์ด่าน — จับ label "<ชื่อด่านอะไรก็ได้> - Act <X>" จาก HUD
+--    รองรับทุกโหมด: Story (School Grounds - Act 1), Raid (Spirit City - Act 1) ฯลฯ
+local function getCurrentStageKey()
+    local found = nil
+    pcall(function()
+        for _, l in ipairs(player.PlayerGui:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible and #l.Text < 60 then
+                local stage, act = l.Text:match("^%s*(.-)%s*%-%s*Act%s+(%S+)%s*$")
+                if stage and stage ~= "" and #stage >= 3 then
+                    found = { stage = stage, act = act }
+                    return
                 end
             end
         end
     end)
-    if not ok then warn("[AV] scanRewards_AV error:", err) end
-    return rewards
+    return found
 end
 
--- ============================================================
--- [Anime Overload] Watchers
--- ============================================================
-local function setupWatchers_AO()
-    local gui = player.PlayerGui
-    local ok, err = pcall(function()
-        local ct = gui.statusGui.endScreens.story.mid.leftBase.content
-
-        ct.act:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = ct.act.Text
-            if t ~= "" and t ~= "N/A" then
-                lastAct = t
-                print("[OV] act →", lastAct)
-            end
-        end)
-
-        ct.file:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = ct.file.Text
-            if t ~= "" and t ~= "N/A" then
-                lastFile = t
-                print("[OV] file →", lastFile)
-            end
-        end)
-
-        local amount = ct.stats.play.content.amount
-        amount:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = amount.Text
-            if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
-                lastPlayTime = t
-                print("[OV] playTime →", lastPlayTime)
-            end
-        end)
-    end)
-    if not ok then warn("[OV] setupWatchers_AO error:", err) end
+local function keyToFile(info)
+    return ("ae_carry_%s_act_%s.txt")
+        :format(info.stage:gsub("[^%w]", "_"), tostring(info.act):gsub("[^%w]", "_"))
 end
 
-local function setupRewardWatcher_AO()
-    local gui = player.PlayerGui
-    local ok, err = pcall(function()
-        local scroll = gui.statusGui.endScreens.story.mid.rewardsBase.scroll
-        scroll.ChildAdded:Connect(function(_)
-            task.wait(0.1)
-            lastRewards = scanRewards_AO(scroll)
-        end)
-    end)
-    if not ok then warn("[OV] setupRewardWatcher_AO error:", err) end
-end
-
--- ============================================================
--- [Anime Vanguards] Watchers
--- ============================================================
-local function setupWatchers_AV()
-    local gui = player.PlayerGui
-    local ok, err = pcall(function()
-        local stageInfo  = gui.EndScreen.Holder.Main.StageInfo.Main
-        local stageStats = gui.EndScreen.Holder.Main.StageStatistics
-        local playTime   = stageStats.PlayTime.Amount
-
-        -- ActName  → lastAct
-        stageInfo.ActName:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = stageInfo.ActName.Text
-            if t ~= "" then
-                lastAct = t
-                print("[AV] act →", lastAct)
-            end
-        end)
-
-        -- StageName → lastFile  (e.g. "Planet Namak")
-        stageInfo.StageName:GetPropertyChangedSignal("Text"):Connect(function()
-            local t = stageInfo.StageName.Text
-            if t ~= "" then
-                lastFile = t
-                print("[AV] stage →", lastFile)
-            end
-        end)
-
-        -- Watch SessionTimer ระหว่างเกม เก็บค่าล่าสุดเสมอ
-        -- (ย้ายไป setupSessionTimer แล้ว)
-
-        -- EndScreen becomes visible → scan rewards
-        gui.EndScreen:GetPropertyChangedSignal("Enabled"):Connect(function()
-            if gui.EndScreen.Enabled then
-                task.wait(0.3)  -- ให้ rewards โหลดก่อน
-                lastRewards = scanRewards_AV()
-            end
-        end)
-    end)
-    if not ok then warn("[AV] setupWatchers_AV error:", err) end
-end
-
--- ============================================================
--- [Anime Vanguards] SessionTimer + Wave Watcher
--- ============================================================
-local function setupSessionTimer()
-    local gui = player.PlayerGui
-    -- SessionTimer
-    local ok1, err1 = pcall(function()
-        local sessionTimer = gui.HUD.Map.SessionTimer.Label
-        sessionTimer:GetPropertyChangedSignal("Text"):Connect(function()
-            if lockPlayTime then return end
-            local t = sessionTimer.Text
-            -- เก็บเฉพาะค่าที่มากกว่า 00:00 และไม่ใช่ค่าว่าง
-            if t ~= "" and t ~= "00:00" and t ~= "00:00:00" then
-                lastPlayTime = t
-            end
-            -- ถ้า reset กลับเป็น 00:00 ไม่ทับค่าเดิม (lastPlayTime ยังเป็นค่าเก่า)
-        end)
-        print("[AV] ✅ SessionTimer watcher ready!")
-    end)
-    if not ok1 then warn("[AV] SessionTimer error:", err1) end
-
-    -- Wave
-    local ok2, err2 = pcall(function()
-        local wavesAmount = gui.HUD.Map.WavesAmount
-        local function parseWave(text)
-            -- ดึงตัวเลขสุดท้ายออกจาก RichText เช่น ">11</font>" หรือ ">15</font>"
-            local nums = {}
-            for n in text:gmatch(">(%d+)<") do
-                table.insert(nums, tonumber(n))
-            end
-            -- ถ้าไม่มี tag ลอง match ตัวเลขธรรมดา
-            if #nums == 0 then
-                for n in text:gmatch("%d+") do
-                    table.insert(nums, tonumber(n))
-                end
-            end
-            -- เอาค่ามากสุด (wave total มักเป็นตัวสุดท้าย)
-            local max = 0
-            for _, v in ipairs(nums) do
-                if v > max then max = v end
-            end
-            return max
-        end
-
-        wavesAmount:GetPropertyChangedSignal("Text"):Connect(function()
-            if lockPlayTime then return end
-            local w = parseWave(wavesAmount.Text)
-            if w > 0 then lastWave = w end
-        end)
-        lastWave = parseWave(wavesAmount.Text)
-        print("[AV] ✅ Wave watcher ready! Current wave:", lastWave)
-    end)
-    if not ok2 then warn("[AV] Wave watcher error:", err2) end
-end
-task.spawn(function()
-    task.wait(5)
-    if GAME_ID == "anime_overload" then
-        setupWatchers_AO()
-        setupRewardWatcher_AO()
-        print("[OV] ✅ Anime Overload watchers ready!")
-    elseif GAME_ID == "anime_vanguards" then
-        setupWatchers_AV()
-        setupSessionTimer()
-        print("[AV] ✅ Anime Vanguards watchers ready!")
-    end
-end)
-
--- ============================================================
--- [Anime Overload] Victory Trigger → log "load victory screen"
--- ============================================================
-if GAME_ID == "anime_overload" then
-    LogService.MessageOut:Connect(function(message, messageType)
-        if not message:lower():find("load victory screen") then return end
-
-        local now = tick()
-        if now - lastVictoryTime < 30 then
-            print("[OV] Skipped (cooldown)")
-            return
-        end
-        if isSending then
-            print("[OV] Skipped (already sending)")
-            return
-        end
-
-        lastVictoryTime = now
-        isSending = true
-        roundCount = roundCount + 1
-        print("[OV] 🏆 Victory! Round " .. roundCount)
-
-        task.spawn(function()
-            local waited = 0
-            while waited < 5 do
-                pcall(function()
-                    local ct = player.PlayerGui.statusGui.endScreens.story.mid.leftBase.content
-                    local a = ct.act.Text
-                    if a ~= "" and a ~= "N/A" then lastAct = a end
-                    local f = ct.file.Text
-                    if f ~= "" and f ~= "N/A" then lastFile = f end
-                    local t = ct.stats.play.content.amount.Text
-                    if t ~= "" and t ~= "999999" and t ~= "00:00" and t ~= "00:00:00" then
-                        lastPlayTime = t
-                    end
-                end)
-
-                local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
-                local hasAct  = lastAct ~= "N/A"
-                local hasFile = lastFile ~= "N/A"
-                if hasTime and hasAct and hasFile then break end
-
-                task.wait(0.1)
-                waited = waited + 0.1
-            end
-
-            local rewardsStr   = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
-            local sendAct      = lastAct
-            local sendFile     = lastFile
-            local sendPlayTime = lastPlayTime
-
-            print("[OV] Final → Act:", sendAct, "| File:", sendFile, "| Time:", sendPlayTime, "| Rewards:", rewardsStr)
-
-            lastRewards  = {}
-            lastPlayTime = "00:00"
-            lastAct      = "N/A"
-            lastFile     = "N/A"
-            isSending    = false
-
-            sendToBackend({
-                act      = sendAct,
-                file     = sendFile,
-                playTime = sendPlayTime,
-                quantity = rewardsStr,
-            })
-        end)
-    end)
-end
-
--- ============================================================
--- [Anime Vanguards] Victory Trigger → EndScreen.Enabled = true
--- ============================================================
-if GAME_ID == "anime_vanguards" then
-    task.spawn(function()
-        task.wait(6)
-        print("[AV] 👀 Watching for EndScreen...")
-        local lastEndScreenState = false
-
-        while true do
-            local ok = pcall(function()
-                local gui = player.PlayerGui
-                local endScreen = gui:FindFirstChild("EndScreen")
-                local isVisible = endScreen ~= nil and endScreen.Enabled == true
-
-                if isVisible and not lastEndScreenState then
-                    lastEndScreenState = true
-
-                    local now = tick()
-                    if now - lastVictoryTime < 30 then
-                        print("[AV] Skipped (cooldown)")
-                        return
-                    end
-                    if isSending then
-                        print("[AV] Skipped (already sending)")
-                        return
-                    end
-
-                    lastVictoryTime = now
-                    isSending = true
-                    lockPlayTime = true
-                    roundCount = roundCount + 1
-
-                    -- ดึง wave จาก EndScreen ทันทีที่โผล่
-                    pcall(function()
-                        local wc = player.PlayerGui.EndScreen.Holder.Main.StageStatistics.WavesCompleted.Amount.Text
-                        local w = tonumber(wc) or 0
-                        if w > 0 then lastWave = w end
-                    end)
-
-                    print("[AV] 🏆 Victory! Round " .. roundCount)
-                    print("[AV] playTime locked at:", lastPlayTime, "| wave locked at:", lastWave)
-
-                    task.spawn(function()
-                        task.wait(0.1) -- รอแค่ 0.1 วิ
-
-                        local waited = 0
-                        while waited < 8 do
-                            pcall(function()
-                                local es = player.PlayerGui:FindFirstChild("EndScreen")
-                                if not es then return end
-                                local si = es.Holder.Main.StageInfo.Main
-                                local ss = es.Holder.Main.StageStatistics
-
-                                local a = si.ActName.Text
-                                if a ~= "" then lastAct = a end
-
-                                local f = si.StageName.Text
-                                if f ~= "" then lastFile = f end
-
-                                -- playTime ถูก watch จาก SessionTimer แล้ว ไม่ต้องดึงซ้ำ
-
-                                -- scan rewards ทันที
-                                if #lastRewards == 0 then
-                                    lastRewards = scanRewards_AV()
-                                end
-                            end)
-
-                            local hasTime = lastPlayTime ~= "00:00" and lastPlayTime ~= "00:00:00"
-                            local hasAct  = lastAct ~= "N/A"
-                            local hasFile = lastFile ~= "N/A"
-                            local hasRewards = #lastRewards > 0
-                            if hasTime and hasAct and hasFile and hasRewards then break end
-
-                            task.wait(0.1)
-                            waited = waited + 0.1
-                        end
-
-                        local rewardsStr   = (#lastRewards > 0) and table.concat(lastRewards, ", ") or "N/A"
-                        local sendAct      = lastAct
-                        local sendFile     = lastFile
-                        local sendPlayTime = lastPlayTime
-                        local sendWave = lastWave  -- ใช้ค่าที่ lock ไว้ตอน EndScreen โผล่
-                        local sendLevel    = 0
-                        pcall(function()
-                            local lvlText = player.PlayerGui.Hotbar.Main.Level.Level.Text
-                            sendLevel = tonumber(lvlText:match("%d+")) or 0
-                        end)
-
-                        print("[AV] Final → Act:", sendAct, "| Stage:", sendFile, "| Time:", sendPlayTime, "| Wave:", sendWave, "| LVL:", sendLevel, "| Rewards:", rewardsStr)
-
-                        lastRewards  = {}
-                        lastPlayTime = "00:00"
-                        lastAct      = "N/A"
-                        lastFile     = "N/A"
-                        -- ไม่ reset lastWave เพราะ watcher จะ update ให้เอง
-                        lockPlayTime = false
-                        isSending    = false
-
-                        -- ส่งพร้อม level และ wave ที่ capture ไว้
-                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                        local payload = {
-                            username     = player.Name,
-                            userId       = player.UserId,
-                            serviceName  = GAME_NAME,
-                            gameId       = GAME_ID,
-                            progress     = 0,
-                            currentStats = { level = sendLevel, bp = 0 },
-                            matchInfo    = { map = sendFile or "Unknown", wave = sendWave },
-                            endScreen    = {
-                                act      = sendAct,
-                                file     = sendFile,
-                                playTime = sendPlayTime,
-                                quantity = rewardsStr,
-                            },
-                            recentLog = {
-                                act      = sendAct,
-                                file     = sendFile,
-                                playTime = sendPlayTime,
-                                quantity = rewardsStr,
-                                status   = "COMPLETED",
-                                time     = timestamp,
-                                rewards  = rewardsStr,
-                            },
-                        }
-                        local ok2, response = pcall(function()
-                            return HttpService:RequestAsync({
-                                Url     = BACKEND_URL .. "/api/overload/update",
-                                Method  = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body    = HttpService:JSONEncode(payload)
-                            })
-                        end)
-                        if ok2 and response.Success then
-                            print("[AV] ✅ Sent! LVL=" .. sendLevel .. " | Wave=" .. sendWave)
-                        else
-                            warn("[AV] ❌ Send FAIL:", response and response.StatusCode)
-                        end
-                    end)
-
-                elseif not isVisible then
-                    lastEndScreenState = false
-                end
-            end)
-
-            task.wait(0.1) -- poll ทุก 0.1 วิ แทน 0.5 วิ
-        end
-    end)
-end
-
--- ============================================================
--- [Summon Heroes] Victory Trigger — poll RoundEnd GUI
--- ============================================================
-if GAME_ID == "summon_heroes" then
-    task.spawn(function()
-        task.wait(5)
-        print("[SH] 👀 Watching for RoundEnd...")
-        local lastRoundEndState = false
-
-        while true do
-            pcall(function()
-                local gui = player.PlayerGui
-                local roundEnd = gui:FindFirstChild("RoundEnd")
-                local isVisible = roundEnd ~= nil and roundEnd.Enabled == true
-
-                if isVisible and not lastRoundEndState then
-                    lastRoundEndState = true
-
-                    local now = tick()
-                    if now - lastVictoryTime < 30 then
-                        print("[SH] Skipped (cooldown)")
-                        return
-                    end
-                    if isSending then
-                        print("[SH] Skipped (already sending)")
-                        return
-                    end
-
-                    lastVictoryTime = now
-                    isSending = true
-                    roundCount = roundCount + 1
-                    print("[SH] 🏆 Victory! Round " .. roundCount)
-
-                    task.spawn(function()
-                        task.wait(0.3)
-
-                        local act, file_, playTime, rewards = "N/A", "N/A", "N/A", "N/A"
-                        local level = 0
-
-                        pcall(function()
-                            local summary = roundEnd.Frame.Contents.Summary
-                            act   = summary.StageName.Text or "N/A"
-                            file_ = summary.MapName.Text or "N/A"
-                            playTime = summary.RoundStats.PlayTime.Amount.Text or "N/A"
-                        end)
-
-                        -- rewards
-                        pcall(function()
-                            local rewardList = roundEnd.Frame.Contents.Rewards.List
-                            local gems  = rewardList.Gems.Container.InventoryCount.Text or "0"
-                            local coins = rewardList.Coins.Container.InventoryCount.Text or "0"
-                            local candy = rewardList:FindFirstChild("Candy") and 
-                                          rewardList.Candy.Container.InventoryCount.Text or nil
-                            rewards = "Gems " .. gems .. ", Coins " .. coins
-                            if candy then rewards = rewards .. ", Candy " .. candy end
-                        end)
-
-                        -- level
-                        pcall(function()
-                            local lvlText = player.PlayerGui.Hotbar.Frame.PlayerLevel.LevelInfo.Text
-                            level = tonumber(lvlText:match("Lv%. (%d+)")) or 0
-                        end)
-
-                        print("[SH] Final → Act:", act, "| Map:", file_, "| Time:", playTime, "| Rewards:", rewards, "| LVL:", level)
-
-                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                        local payload = {
-                            username     = player.Name,
-                            userId       = player.UserId,
-                            serviceName  = GAME_NAME,
-                            gameId       = GAME_ID,
-                            progress     = 0,
-                            currentStats = { level = level, bp = 0 },
-                            matchInfo    = { map = file_ or "Unknown", wave = 0 },
-                            endScreen    = {
-                                act      = act,
-                                file     = file_,
-                                playTime = playTime,
-                                quantity = rewards,
-                            },
-                            recentLog = {
-                                act      = act,
-                                file     = file_,
-                                playTime = playTime,
-                                quantity = rewards,
-                                status   = "COMPLETED",
-                                time     = timestamp,
-                                rewards  = rewards,
-                            },
-                        }
-
-                        local ok, response = pcall(function()
-                            return HttpService:RequestAsync({
-                                Url     = BACKEND_URL .. "/api/overload/update",
-                                Method  = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body    = HttpService:JSONEncode(payload)
-                            })
-                        end)
-
-                        if ok and response.Success then
-                            print("[SH] ✅ Sent!")
-                        else
-                            warn("[SH] ❌ Send FAIL:", response and response.StatusCode)
-                        end
-
-                        isSending = false
-                    end)
-
-                elseif not isVisible then
-                    lastRoundEndState = false
-                end
-            end)
-
-            task.wait(0.2)
-        end
-    end)
-end
-
--- ============================================================
--- [Anime Expeditions] Placement Macro + Stage Detection
--- ============================================================
-if GAME_ID == "anime_expeditions" then
-    -- ⭐ Helper: เช็คว่าอยู่ล็อบบี้หรือในเกม + ชื่อด่าน
-    -- return: stageName (string หรือ nil), mode (string หรือ nil), difficulty (string หรือ nil)
-    local function getStageInfo()
-        local pg = player.PlayerGui
-        
-        -- ⭐ [FIX] ถ้าหน้าต่าง Prompt (จบเกม) ยังเปิดอยู่ ให้ถือว่ายังไม่พร้อมเล่นเพื่อกันบั๊กวางตัวก่อนเวลา
-        local prompt = pg:FindFirstChild("Prompt")
-        if prompt and prompt.Enabled then
-            return nil, nil, nil
-        end
-
-        local rh = pg:FindFirstChild("RightGameHUD")
-        if not rh or not rh.Enabled then
-            return nil, nil, nil  -- อยู่ล็อบบี้
-        end
-        local stage, mode, difficulty
-        for _, d in ipairs(rh:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text ~= "" then
-                local t = d.Text
-                -- ชื่อด่านมักมี " - Act " หรือ "Act. X" หรือชื่อ + level
-                if t:find(" %- Act ") or t:find("Act%.") then
-                    stage = t
-                elseif t == "Story" or t == "Endless" or t == "Challenge" or t == "Raid" then
-                    mode = t
-                elseif t:find("Mode$") or t == "Normal" or t == "Hard" or t == "Nightmare" then
-                    difficulty = t
-                end
-            end
-        end
-        return stage, mode, difficulty
-    end
-
-    local function isInGame() return getStageInfo() ~= nil end
-    local function isInLobby() return not isInGame() end
-
-    -- Expose สำหรับใช้จากภายนอก
-    _G.AE_GET_STAGE = getStageInfo
-    _G.AE_IN_GAME = isInGame
-    _G.AE_IN_LOBBY = isInLobby
-
-    -- print ทุก 5 วิเมื่อ state เปลี่ยน (in-game ↔ lobby)
-    task.spawn(function()
-        local lastState = nil
-        while true do
-            local stage, mode, diff = getStageInfo()
-            local currentState = stage and (stage .. "|" .. tostring(mode) .. "|" .. tostring(diff)) or "Lobby"
-            if currentState ~= lastState then
-                if stage then
-                    print("[AE] 🎮 In-Game: " .. stage
-                        .. (mode and (" | " .. mode) or "")
-                        .. (diff and (" | " .. diff) or ""))
-                else
-                    print("[AE] 🏠 อยู่ Lobby")
-                end
-                lastState = currentState
-            end
-            task.wait(2)
-        end
-    end)
-
-
-    -- ⭐ PLACEMENTS by unit NAME (ไม่ใช่ slot) — ระบบจะหา slot อัตโนมัติ
-    local PLACEMENTS = {
-        { unitName = "Yuta",   pos = CFrame.new(3101.24560546875, 1798.7340087890625, 3361.392822265625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
-        { unitName = "Diane",  pos = CFrame.new(3094.541748046875, 1799.1815185546875, 3342.9375, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
-        { unitName = "Sabo",   pos = CFrame.new(3076.77734375, 1798.7340087890625, 3341.86767578125, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
-        { unitName = "SANKZU", pos = CFrame.new(3088.156494140625, 1798.9315185546875, 3346.728515625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
-        { unitName = "ChefBum",pos = CFrame.new(3073.70751953125, 1798.7340087890625, 3342.795166015625, 1, 0, 0, 0, 1, 0, 0, 0, 1) },
-    }
-    local PLACE_ID_CONST = 65
-
-    -- ⭐ หา slot ของยูนิตใน hotbar โดยใช้ชื่อ (dynamic)
-    local function findSlotByUnitName(name)
-        local bh = player.PlayerGui:FindFirstChild("BottomHUD")
-        if not bh then return nil end
-        local lower = name:lower()
-
-        -- หา TextButton ที่มี ViewportFrame (= slot จริง ตัด buttons อื่น)
-        local slots = {}
-        for _, tb in ipairs(bh:GetDescendants()) do
-            if tb:IsA("TextButton") then
-                local hasVPF = false
-                for _, d in ipairs(tb:GetChildren()) do
-                    for _, dd in ipairs(d:GetDescendants()) do
-                        if dd:IsA("ViewportFrame") then hasVPF = true; break end
-                    end
-                    if hasVPF then break end
-                end
-                if hasVPF then table.insert(slots, tb) end
-            end
-        end
-
-        -- ค้นแต่ละ slot ว่า descendants มีชื่อยูนิต match
-        for i, tb in ipairs(slots) do
+-- ---------- hotbar: slot <-> ชื่อยูนิต ----------
+local GENERIC = { Model = true, AnimSaves = true, WorldModel = true, Folder = true }
+local function getSlotButtons()
+    local bh = player.PlayerGui:FindFirstChild("BottomHUD")
+    if not bh then return {} end
+    local slots = {}
+    for _, tb in ipairs(bh:GetDescendants()) do
+        if tb:IsA("TextButton") then
             for _, d in ipairs(tb:GetDescendants()) do
-                if d.Name:lower():find(lower) then
-                    return i
+                if d:IsA("ViewportFrame") then
+                    table.insert(slots, tb)
+                    break
                 end
             end
         end
-        return nil
     end
+    return slots
+end
 
-    -- ⭐ เกมสุ่ม opcode 64/65 → ยิงทั้งสอง (server accepts valid one)
-    local PLACE_OPCODES = { 64, 65 }
-    local function placeUnit(slot, cframe)
-        local sig = game:GetService("ReplicatedStorage")
-            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-        for _, op in ipairs(PLACE_OPCODES) do
-            pcall(function()
-                sig:FireServer(op, "PlaceGameUnit", slot, cframe)
-            end)
-            task.wait(0.1)
+local function slotUnitName(slotIndex)
+    local slots = getSlotButtons()
+    local tb = slots[slotIndex]
+    if not tb then return nil end
+    for _, d in ipairs(tb:GetDescendants()) do
+        if d:IsA("Model") and not GENERIC[d.Name] then
+            return d.Name
         end
-        print("[AE] ✅ Placed slot " .. slot .. " (opcode 64+65)")
     end
+    return nil
+end
 
-    local isPlacing = false
-    local function autoPlaceAll()
-        if isPlacing then print("[AE] ⏳ ยังกำลังวาง"); return end
-        isPlacing = true
-        print("[AE] 🎯 เริ่มวาง " .. #PLACEMENTS .. " ยูนิต...")
-        for _, p in ipairs(PLACEMENTS) do
-            local slot = findSlotByUnitName(p.unitName)
-            if slot then
-                print("[AE] " .. p.unitName .. " → slot " .. slot)
-                placeUnit(slot, p.pos)
-                task.wait(0.8)
-            else
-                warn("[AE] ⚠️ ไม่เจอยูนิต: " .. p.unitName .. " (ข้าม)")
+local function findSlotByUnitName(name)
+    local lower = name:lower()
+    for i, tb in ipairs(getSlotButtons()) do
+        for _, d in ipairs(tb:GetDescendants()) do
+            if d.Name:lower():find(lower, 1, true) then
+                return i
             end
         end
-        print("[AE] ✅ วางครบแล้ว!")
-        isPlacing = false
     end
+    return nil
+end
 
-    -- Debug: dump slot mapping ปัจจุบัน
-    local function dumpSlots()
-        print("[AE] ===== Slot mapping ปัจจุบัน =====")
-        for _, p in ipairs(PLACEMENTS) do
-            local slot = findSlotByUnitName(p.unitName)
-            print("  " .. p.unitName .. " → " .. tostring(slot or "❌ ไม่เจอ"))
-        end
-    end
+local function unitCount()
+    local u = workspace:FindFirstChild("Units")
+    return u and #u:GetChildren() or 0
+end
 
-    -- Keybind: P = auto-place, O = dump slots
-    local UIS = game:GetService("UserInputService")
-    UIS.InputBegan:Connect(function(input, processed)
-        if processed then return end
-        if input.KeyCode == Enum.KeyCode.P then
-            autoPlaceAll()
-        elseif input.KeyCode == Enum.KeyCode.O then
-            dumpSlots()
-        end
-    end)
-
-    _G.AE_PLACE = autoPlaceAll
-    _G.AE_PLACE_ONE = placeUnit
-    _G.AE_DUMP_SLOTS = dumpSlots
-
-    print("[AE] ✅ Ready! กด P = วาง, O = เช็ค slot mapping")
-
-    -- ============================================================
-    -- [AE] Farm System — วาง + รอจบ + Restart + วนซ้ำ
-    -- ============================================================
-    local RESTART_CONST = 59
-    local SILVER_UNIT_NAMES = { "SANKZU", "ChefBum" }
-
-    -- ⭐ [FIX] ย้ายตัวแปรฟาร์มขึ้นมาด้านบน เพื่อให้ Watcher เช็คได้ว่ากำลังฟาร์มอยู่หรือไม่
-    local farmingActive = false
-    local function isFarmingActive() return farmingActive end
-
-    -- Config ตำแหน่งวางแยกตาม stage + ประเภทตัว
-    local STAGE_CONFIG = {
-        ["School Grounds - Act 1"] = {
-            silver = {
-                SANKZU = {
-                    CFrame.new(3105.920654296875, 1798.7340087890625, 3334.916748046875, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                    CFrame.new(3108.498291015625, 1798.7340087890625, 3343.731201171875, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
-                ChefBum = {
-                    CFrame.new(3107.017333984375, 1798.7340087890625, 3320.510986328125, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
-            },
-            damage = {
-                {   -- Damage 1: 2 ตำแหน่ง
-                    CFrame.new(3099.210693359375, 1798.9315185546875, 3257.333251953125, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                    CFrame.new(3090.116455078125, 1798.9315185546875, 3355.021484375, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
-                {   -- Damage 2: 2 ตำแหน่ง
-                    CFrame.new(3089.51611328125, 1799.1815185546875, 3348.9306640625, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                    CFrame.new(3094.560302734375, 1799.1815185546875, 3375.684326171875, 1, 0, 0, 0, 1, 0, 0, 0, 1),
-                },
-            },
-        },
-    }
-
-    -- ⭐ StartGame — เข้าด่านจาก lobby (Play menu → Start)
-    local START_CONST = 58
-    local function fireStartGame()
+-- ---------- ยิงวาง ----------
+local replayFiring = false
+local function firePlace(slot, cf)
+    local sig = game:GetService("ReplicatedStorage")
+        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+    replayFiring = true
+    for _, op in ipairs(PLACE_OPCODES) do
         pcall(function()
-            game:GetService("ReplicatedStorage"):WaitForChild("RemoteEvents", 5)
-                :WaitForChild("ReplicaSignal", 5)
-                :FireServer(START_CONST, "StartGame")
+            sig:FireServer(op, "PlaceGameUnit", slot, cf)
         end)
-        print("[AE Farm] 🚀 StartGame fired")
+        task.wait(0.05)
     end
-
-    -- ⭐ [เน้นหลัก] Click "Repeat Stage" button ใน Prompt
-    local function clickRepeatStageButton()
-        local prompt = player.PlayerGui:FindFirstChild("Prompt")
-        if not prompt or not prompt.Enabled then return false end
-        
-        for _, btn in ipairs(prompt:GetDescendants()) do
-            if btn:IsA("TextButton") and btn.Visible and btn.Active then
-                -- หา TextLabel "Repeat Stage" ในลูก
-                local found = false
-                for _, lbl in ipairs(btn:GetDescendants()) do
-                    if lbl:IsA("TextLabel") and lbl.Text == "Repeat Stage" then
-                        found = true
-                        break
-                    end
-                end
-                
-                if found then
-                    -- พยายามกดด้วยหลายวิธีเพื่อให้แน่ใจว่าติด
-                    pcall(function()
-                        if firesignal then
-                            firesignal(btn.MouseButton1Click)
-                            firesignal(btn.Activated)
-                        end
-                    end)
-                    pcall(function()
-                        local pos = btn.AbsolutePosition
-                        local sz = btn.AbsoluteSize
-                        local cx = pos.X + sz.X / 2
-                        local cy = pos.Y + sz.Y / 2
-                        VirtualInputManager:SendMouseMoveEvent(cx, cy, game)
-                        task.wait(0.1)
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                        task.wait(0.1)
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                    end)
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
-    -- ========== End Screen (Prompt) Watcher — ส่งข้อมูลไปเว็บ ==========
-    local function getEndScreenData()
-        local prompt = player.PlayerGui:FindFirstChild("Prompt")
-        if not prompt or not prompt.Enabled then return nil end
-        local stats = {
-            result = "N/A", clearTime = "N/A", yen = "N/A",
-            kills = "N/A", damage = "N/A",
-            stage = "N/A", mode = "N/A", difficulty = "N/A",
-            rewards = {},
-        }
-        local hasEndText = false
-        for _, d in ipairs(prompt:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Text ~= "" then
-                local t = d.Text
-                if t == "Victory" or t == "Defeat" then
-                    stats.result = t; hasEndText = true
-                elseif t:find(" %- Act ") then stats.stage = t
-                elseif t == "Story" or t == "Endless" or t == "Challenge" or t == "Raid" then stats.mode = t
-                elseif t:find("Mode$") then stats.difficulty = t
-                elseif t == "Clear Time" or t == "Total Yen" or t == "Total Kills" or t == "Total Damage" then
-                    local parent = d.Parent
-                    if parent then
-                        for _, sib in ipairs(parent:GetChildren()) do
-                            if sib:IsA("TextLabel") and sib ~= d and sib.Text ~= "" and sib.Text ~= t then
-                                if t == "Clear Time" then stats.clearTime = sib.Text
-                                elseif t == "Total Yen" then stats.yen = sib.Text
-                                elseif t == "Total Kills" then stats.kills = sib.Text
-                                elseif t == "Total Damage" then stats.damage = sib.Text end
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        for _, sf in ipairs(prompt:GetDescendants()) do
-            if sf:IsA("ScrollingFrame") then
-                for _, frame in ipairs(sf:GetChildren()) do
-                    if frame:IsA("Frame") then
-                        local itemName, itemQty
-                        for _, lbl in ipairs(frame:GetDescendants()) do
-                            if lbl:IsA("TextLabel") and lbl.Text ~= "" then
-                                local txt = lbl.Text
-                                if txt:match("^[%d,]+x$") then
-                                    itemQty = txt
-                                elseif not txt:find("Lvl")
-                                    and not txt:match("^%d")
-                                    and not txt:find("Gained")
-                                    and not txt:find("<font") then
-                                    itemName = itemName or txt
-                                end
-                            end
-                        end
-                        if itemName and itemQty then
-                            local qtyPrefixed = itemQty:gsub("(.+)x$", "x%1")
-                            table.insert(stats.rewards, itemName .. " " .. qtyPrefixed)
-                        end
-                    end
-                end
-            end
-        end
-
-        if not hasEndText then return nil end
-        return stats
-    end
-
-    local function sendAEDataToWeb(stats)
-        local ts = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        local actFull = stats.stage
-        if stats.mode ~= "N/A" then actFull = actFull .. " - " .. stats.mode end
-        if stats.difficulty ~= "N/A" then actFull = actFull .. " " .. stats.difficulty end
-        local rewardsStr = (#stats.rewards > 0) and table.concat(stats.rewards, ", ") or "N/A"
-        local payload = {
-            username     = player.Name,
-            userId       = player.UserId,
-            serviceName  = GAME_NAME,
-            gameId       = GAME_ID,
-            progress     = 0,
-            currentStats = { level = 0, bp = 0 },
-            matchInfo    = { map = stats.stage, wave = 0 },
-            endScreen    = {
-                act      = actFull,
-                file     = stats.stage,
-                playTime = stats.clearTime,
-                quantity = rewardsStr,
-            },
-            recentLog = {
-                act      = actFull,
-                file     = stats.stage,
-                playTime = stats.clearTime,
-                quantity = rewardsStr,
-                status   = "COMPLETED",
-                time     = ts,
-                rewards  = rewardsStr,
-            },
-        }
-        local ok, resp = pcall(function()
-            return HttpService:RequestAsync({
-                Url = BACKEND_URL .. "/api/overload/update",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode(payload)
-            })
-        end)
-        if ok and type(resp) == "table" and resp.Success then
-            print("[AE] ✅ Sent to web!")
-        else
-            warn("[AE] ❌ Send FAIL:", type(resp) == "table" and resp.StatusCode or tostring(resp))
-        end
-    end
-
-    local lastSentEndScreenTime = 0
-    _G.AE_LAST_SENT = function() return lastSentEndScreenTime end
-    _G.AE_MARK_SENT = function() lastSentEndScreenTime = tick() end
-
-    -- Watch end screen — ส่งข้อมูลเมื่อ farm ไม่ได้เปิด (fallback)
-    task.spawn(function()
-        task.wait(5)
-        print("[AE] 👀 Watching Prompt for end screen...")
-        local lastState = false
-        while true do
-            pcall(function()
-                -- ⭐ [FIX สำคัญ] ถ้าระบบฟาร์มกำลังทำงานอยู่ ให้ Watcher หยุดส่งข้อมูล เพื่อกันส่งซ้ำ 2 รอบ
-                if isFarmingActive() then
-                    lastState = false
-                    return
-                end
-
-                local stats = getEndScreenData()
-                if stats and not lastState then
-                    lastState = true
-                    task.wait(1)
-                    local s = getEndScreenData()
-                    if s then
-                        local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
-                        print("[AE Watcher " .. SCRIPT_VERSION .. "] " .. s.result
-                            .. " | " .. s.stage
-                            .. " | " .. s.clearTime
-                            .. " | Rewards: " .. rewardsList)
-                        sendAEDataToWeb(s)
-                        lastSentEndScreenTime = tick()
-                    end
-                elseif not stats then
-                    lastState = false
-                end
-            end)
-            task.wait(1)
-        end
-    end)
-
-    local function findMySilverUnit()
-        for _, name in ipairs(SILVER_UNIT_NAMES) do
-            local slot = findSlotByUnitName(name)
-            if slot then return name, slot end
-        end
-        return nil, nil
-    end
-
-    local function findDamageSlots()
-        local silverSlots = {}
-        for _, name in ipairs(SILVER_UNIT_NAMES) do
-            local s = findSlotByUnitName(name)
-            if s then silverSlots[s] = true end
-        end
-        local bh = player.PlayerGui:FindFirstChild("BottomHUD")
-        if not bh then return {} end
-        local slots = {}
-        local count = 0
-        for _, tb in ipairs(bh:GetDescendants()) do
-            if tb:IsA("TextButton") then
-                local hasVPF = false
-                for _, d in ipairs(tb:GetChildren()) do
-                    for _, dd in ipairs(d:GetDescendants()) do
-                        if dd:IsA("ViewportFrame") then hasVPF = true; break end
-                    end
-                    if hasVPF then break end
-                end
-                if hasVPF then
-                    count = count + 1
-                    if not silverSlots[count] then
-                        table.insert(slots, count)
-                    end
-                end
-            end
-        end
-        return slots
-    end
-
-    local function placeAllForStage(stageName)
-        local cfg = STAGE_CONFIG[stageName]
-        if not cfg then
-            warn("[AE Farm] ❌ ไม่มี config สำหรับด่าน: " .. tostring(stageName))
-            return false
-        end
-
-        local silverName, silverSlot = findMySilverUnit()
-        if silverName and silverSlot then
-            local positions = cfg.silver[silverName]
-            if positions then
-                print("[AE Farm] 🥈 วาง " .. silverName .. " (slot " .. silverSlot .. ") x" .. #positions)
-                for _, cf in ipairs(positions) do
-                    placeUnit(silverSlot, cf)
-                    task.wait(1.2)
-                end
-            end
-        else
-            warn("[AE Farm] ⚠️ ไม่มีตัวเงินใน hotbar (ข้าม)")
-        end
-
-        local damageSlots = findDamageSlots()
-        for i = 1, math.min(#damageSlots, #cfg.damage) do
-            local slot = damageSlots[i]
-            print("[AE Farm] ⚔️ วาง Damage " .. i .. " (slot " .. slot .. ")")
-            for _, cf in ipairs(cfg.damage[i]) do
-                placeUnit(slot, cf)
-                task.wait(1.2)
-            end
-        end
-        return true
-    end
-
-    local function waitMatchEnd(farmingActiveFn)
-        while farmingActiveFn() do
-            local prompt = player.PlayerGui:FindFirstChild("Prompt")
-            if prompt and prompt.Enabled then
-                task.wait(5)
-                for _, d in ipairs(prompt:GetDescendants()) do
-                    if d:IsA("TextLabel") and (d.Text == "Victory" or d.Text == "Defeat") then
-                        return true
-                    end
-                end
-            end
-            local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
-            if not rh or not rh.Enabled then return true end
-            task.wait(1)
-        end
-        return false
-    end
-
-    -- Farm main loop
-    local function startFarm()
-        if farmingActive then return end
-        farmingActive = true
-        print("[AE Farm] ▶ เริ่มฟาร์ม")
-        task.spawn(function()
-            while farmingActive do
-                local stage, mode, diff = getStageInfo()
-                if not stage then
-                    -- ⭐ [FIX] ถ้าไม่ได้อยู่ในเกม ให้เช็คก่อนว่าติดหน้าจบเกมค้างอยู่ไหม ถ้าค้างให้กดปุ่มรีเพลแทนการยิง Start
-                    local prompt = player.PlayerGui:FindFirstChild("Prompt")
-                    if prompt and prompt.Enabled then
-                        print("[AE Farm] ⚠️ ติดหน้าจบเกมค้าง! พยายามกด Repeat Stage...")
-                        clickRepeatStageButton()
-                        task.wait(2)
-                    else
-                        print("[AE Farm] 🚀 ไม่อยู่ในเกม → ยิง StartGame")
-                        fireStartGame()
-                        task.wait(8)
-                    end
-                elseif not STAGE_CONFIG[stage] then
-                    print("[AE Farm] ⚠️ ไม่มี config: " .. stage)
-                    task.wait(3)
-                else
-                    print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage)
-                    placeAllForStage(stage)
-                    print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
-                    waitMatchEnd(isFarmingActive)
-                    
-                    if farmingActive then
-                        task.wait(2)
-                        local s = getEndScreenData()
-                        if s then
-                            local rewardsList = (#s.rewards > 0) and table.concat(s.rewards, ", ") or "N/A"
-                            print("[AE Farm] 📤 " .. s.result .. " | " .. s.stage .. " | Rewards: " .. rewardsList)
-                            sendAEDataToWeb(s)
-                            lastSentEndScreenTime = tick()
-                        end
-                        
-                        task.wait(1)
-                        
-                        -- ⭐ [เปลี่ยนหลัก] กดปุ่ม Repeat Stage จาก UI เกม แทนการยิง Remote
-                        print("[AE Farm] 🖱️ กำลังกด Repeat Stage จาก UI เกม...")
-                        local waitClose = tick()
-                        local clickAttempts = 0
-                        
-                        -- วนลูปกดปุ่มทุก 1 วินาที จนกว่าหน้าต่างจะหายไป
-                        while tick() - waitClose < 60 do
-                            local prompt = player.PlayerGui:FindFirstChild("Prompt")
-                            if not prompt or not prompt.Enabled then
-                                break -- UI หายไปแล้ว ออกจากลูป
-                            end
-                            
-                            clickAttempts = clickAttempts + 1
-                            if clickAttempts % 5 == 0 then
-                                print("[AE Farm] 🖱️ พยายามกด Repeat Stage (ครั้งที่ " .. clickAttempts .. ")...")
-                            end
-                            
-                            clickRepeatStageButton()
-                            task.wait(1)
-                        end
-                        
-                        -- ถ้ากดปุ่มไม่ติดเป็นเวลา 60 วิ ให้เตะ Remote StartGame เผื่อทำงาน
-                        if tick() - waitClose >= 60 then
-                            print("[AE Farm] ❌ กดปุ่มไม่ติดนาน 60 วิ! พยายามยิง StartGame เป็น Fallback")
-                            fireStartGame()
-                            task.wait(5)
-                        else
-                            print("[AE Farm] ✅ เข้ารอบใหม่แล้ว รอ 2 วิเพื่อเริ่มวางยูนิต...")
-                            task.wait(2)
-                        end
-                    end
-                end
-            end
-            print("[AE Farm] ⏹ หยุดฟาร์ม")
-        end)
-    end
-
-    local function stopFarm()
-        farmingActive = false
-    end
-
-    _G.AE_FARM_START = startFarm
-    _G.AE_FARM_STOP = stopFarm
-
-    -- ============================================================
-    -- [AE] Simple UI
-    -- ============================================================
-    task.spawn(function()
-        task.wait(2)
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "AE_UI"
-        screenGui.ResetOnSpawn = false
-        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        screenGui.Parent = player.PlayerGui
-
-        local frame = Instance.new("Frame", screenGui)
-        frame.Size = UDim2.new(0, 170, 0, 100)
-        frame.Position = UDim2.new(0, 10, 0.5, -50)
-        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
-        frame.BorderSizePixel = 0
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
-        local ms = Instance.new("UIStroke", frame)
-        ms.Color = Color3.fromRGB(255, 107, 53); ms.Thickness = 2
-
-        local dragBar = Instance.new("TextButton", frame)
-        dragBar.Size = UDim2.new(1, 0, 0, 24); dragBar.BackgroundTransparency = 1
-        dragBar.Text = "⚔ AE UI"; dragBar.TextColor3 = Color3.fromRGB(255, 107, 53)
-        dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
-
-        local btnFarm = Instance.new("TextButton", frame)
-        btnFarm.Size = UDim2.new(1, -16, 0, 32)
-        btnFarm.Position = UDim2.new(0, 8, 0, 30)
-        btnFarm.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-        btnFarm.TextColor3 = Color3.fromRGB(200, 200, 200)
-        btnFarm.Text = "▶ ฟาร์มเพชร"; btnFarm.TextSize = 12
-        btnFarm.Font = Enum.Font.GothamBold; btnFarm.BorderSizePixel = 0
-        Instance.new("UICorner", btnFarm).CornerRadius = UDim.new(0, 4)
-        local btnStroke = Instance.new("UIStroke", btnFarm)
-        btnStroke.Color = Color3.fromRGB(80, 80, 100); btnStroke.Thickness = 1
-
-        local FARM_STATE_FILE = "ae_farm_state.txt"
-        local function saveFarmState(on)
-            pcall(writefile, FARM_STATE_FILE, on and "1" or "0")
-        end
-        local function loadFarmState()
-            local ok, c = pcall(readfile, FARM_STATE_FILE)
-            return ok and c == "1"
-        end
-
-        local farmOn = false
-        local function setFarmVisualOn()
-            btnFarm.Text = "⏹ ฟาร์มเพชร"
-            btnFarm.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-            btnStroke.Color = Color3.fromRGB(255, 80, 80)
-        end
-        local function setFarmVisualOff()
-            btnFarm.Text = "▶ ฟาร์มเพชร"
-            btnFarm.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
-            btnStroke.Color = Color3.fromRGB(80, 80, 100)
-        end
-
-        btnFarm.MouseButton1Click:Connect(function()
-            farmOn = not farmOn
-            saveFarmState(farmOn)
-            if farmOn then
-                setFarmVisualOn()
-                startFarm()
-            else
-                setFarmVisualOff()
-                stopFarm()
-            end
-        end)
-
-        if loadFarmState() then
-            farmOn = true
-            setFarmVisualOn()
-            print("[AE UI] 🔁 Auto-restore Farm: ON")
-            startFarm()
-        end
-
-        local UIS = game:GetService("UserInputService")
-        local dragging, dragStart, frameStart
-        dragBar.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = true
-                dragStart = UIS:GetMouseLocation()
-                frameStart = frame.AbsolutePosition
-            end
-        end)
-        UIS.InputChanged:Connect(function(i)
-            if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-                local m = UIS:GetMouseLocation()
-                frame.Position = UDim2.new(0, frameStart.X + m.X - dragStart.X, 0, frameStart.Y + m.Y - dragStart.Y)
-            end
-        end)
-        UIS.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-        end)
-
-        print("[AE UI] ✅ Ready")
-    end)
+    replayFiring = false
 end
 
 -- ============================================================
--- [Anime Squadron] Victory Trigger — EndScreen.Visible = true
+-- โหมดอัด (Recorder)
 -- ============================================================
-if GAME_ID == "anime_squadron" then
-    task.spawn(function()
-        task.wait(5)
-        print("[AS] 👀 Watching for EndScreen...")
-        local lastState = false
+local recording = false
+local recSteps = {}
+local recLastT = 0
+local recKey = nil
+local recPending = {}   -- ⭐ hook จดใส่คิวอย่างเดียว (เบาสุด) — ประมวลผลนอก hook
 
-        while true do
-            pcall(function()
-                local menus = player.PlayerGui:FindFirstChild("Menus")
-                local endScreen = menus and menus:FindFirstChild("EndScreen")
-                local isVisible = endScreen and endScreen.Visible
-
-                if isVisible and not lastState then
-                    lastState = true
-                    local now = tick()
-                    if now - lastVictoryTime < 30 then
-                        print("[AS] Skipped (cooldown)")
-                        return
-                    end
-                    if isSending then
-                        print("[AS] Skipped (already sending)")
-                        return
-                    end
-
-                    lastVictoryTime = now
-                    isSending = true
-                    roundCount = roundCount + 1
-                    print("[AS] 🏆 Victory! Round " .. roundCount)
-
-                    task.spawn(function()
-                        task.wait(0.5) -- รอ UI populate
-
-                        -- Stats: World/Mode/Chapter/Difficulty
-                        local world, mode, chapter, difficulty = "N/A", "N/A", "N/A", "N/A"
-                        pcall(function()
-                            local stats = endScreen.Stats
-                            world      = stats.World.Text or "N/A"
-                            mode       = stats.Mode.Text or "N/A"
-                            difficulty = stats.Difficulty.Text or "N/A"
-                            -- "Act. <font color='rgb(0,255,0)'>1</font>" → "Act. 1"
-                            local ch = stats.Chapter.Text or ""
-                            chapter = ch:gsub("<[^>]+>", "")
-                        end)
-
-                        -- Left: TotalDamage, Takedowns, PlayTime
-                        local damage, takedowns, playTime = "0", "0", "N/A"
-                        pcall(function()
-                            local left = endScreen.Left
-                            damage    = left.TotalDamage.Amount.Text or "0"
-                            takedowns = left.Takedowns.Amount.Text or "0"
-                            playTime  = left.PlayTime.Amount.Text or "N/A"
-                        end)
-
-                        -- Right: YenEarned, ExpEarned, UnitsSummoned
-                        local yen, expEarned, unitsSummoned = "0", "0", "0"
-                        pcall(function()
-                            local right = endScreen.Right
-                            yen           = right.YenEarned.Amount.Text or "0"
-                            expEarned     = right.ExpEarned.Amount.Text or "0"
-                            unitsSummoned = right.UnitsSummoned.Amount.Text or "0"
-                        end)
-
-                        -- Rewards: Rewards.ScrollingFrame.<Item>.{ItemName, Quantity, Chance}
-                        local rewards = {}
-                        pcall(function()
-                            local rf = endScreen.Rewards.ScrollingFrame
-                            for _, child in ipairs(rf:GetChildren()) do
-                                if child:IsA("ImageButton") then
-                                    local itemName = child:FindFirstChild("ItemName")
-                                    local qty      = child:FindFirstChild("Quantity")
-                                    if itemName and qty and itemName.Text ~= "" then
-                                        local name = itemName.Text
-                                        local q    = qty.Text
-                                        table.insert(rewards, name .. " " .. q)
-                                        print("[AS] reward →", name, q)
-                                    end
-                                end
-                            end
-                        end)
-                        local rewardsStr = (#rewards > 0) and table.concat(rewards, ", ") or "N/A"
-
-                        local actFull = world .. " - " .. mode .. " " .. difficulty .. " " .. chapter
-
-                        print("[AS " .. SCRIPT_VERSION .. "] " .. actFull
-                            .. " | " .. playTime .. " | DMG:" .. damage
-                            .. " | Yen:" .. yen .. " | Rewards: " .. rewardsStr)
-
-                        local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                        local payload = {
-                            username     = player.Name,
-                            userId       = player.UserId,
-                            serviceName  = GAME_NAME,
-                            gameId       = GAME_ID,
-                            progress     = 0,
-                            currentStats = { level = 0, bp = 0 },
-                            matchInfo    = { map = world, wave = tonumber(takedowns) or 0 },
-                            endScreen    = {
-                                act      = actFull,
-                                file     = world,
-                                playTime = playTime,
-                                quantity = rewardsStr,
-                                damage   = damage,
-                                yen      = yen,
-                                exp      = expEarned,
-                            },
-                            recentLog = {
-                                act      = actFull,
-                                file     = world,
-                                playTime = playTime,
-                                quantity = rewardsStr,
-                                status   = "COMPLETED",
-                                time     = timestamp,
-                                rewards  = rewardsStr,
-                            },
-                        }
-
-                        local ok2, response = pcall(function()
-                            return HttpService:RequestAsync({
-                                Url     = BACKEND_URL .. "/api/overload/update",
-                                Method  = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body    = HttpService:JSONEncode(payload)
-                            })
-                        end)
-                        if ok2 and type(response) == "table" and response.Success then
-                            print("[AS] ✅ Sent!")
-                        else
-                            warn("[AS] ❌ Send FAIL:", type(response) == "table" and response.StatusCode or tostring(response))
-                        end
-
-                        isSending = false
-                    end)
-
-                elseif not isVisible then
-                    lastState = false
-                end
-            end)
-            task.wait(0.3)
+pcall(function()
+    local replicaSig = game:GetService("ReplicatedStorage")
+        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+    local oldNC
+    oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+        -- ⚠️ ห้ามทำงานหนักในนี้เด็ดขาด — แค่จดแล้วปล่อยผ่านทันที
+        if recording and not replayFiring and self == replicaSig
+           and getnamecallmethod() == "FireServer" then
+            local _, a2, a3, a4 = ...
+            if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
+                recPending[#recPending + 1] = { slot = a3, cf = a4, t = tick() }
+            end
         end
+        return oldNC(self, ...)
     end)
-end
-
--- ============================================================
--- [Universal Tower Defense X] Victory Trigger — จับ "open MatchFinished"
--- ============================================================
-if GAME_ID == "utdx" then
-    local ITEM_NAMES_UTDX = {
-        ["rbxassetid://85775841880015"]  = "Gems",
-        ["rbxassetid://118622829363922"] = "Cursed Finger",
-        ["rbxassetid://99445539698599"]  = "Boundless Orb",
-        ["rbxassetid://93499184204977"]  = "Gold",
-        ["rbxassetid://79485605398734"]  = "Family Eye Currency",
-        ["rbxassetid://121805709165537"] = "Moon",
-        ["rbxassetid://88547227449378"]  = "MoonGold",
-        ["rbxassetid://97554990018157"]  = "Potara",
-        ["rbxassetid://123094098594418"] = "Unrivaled 1 (Gogeta)",
-        ["rbxassetid://140094120842771"] = "Item_140094",  -- ใหม่หลังอัพเดต (ยังไม่รู้ชื่อ)
-    }
-
-    LogService.MessageOut:Connect(function(message, messageType)
-        if not message:find("open MatchFinished") then return end
-
-        local now = tick()
-        if now - lastVictoryTime < 30 then
-            print("[UTDX] Skipped (cooldown)")
-            return
-        end
-        if isSending then
-            print("[UTDX] Skipped (already sending)")
-            return
-        end
-
-        lastVictoryTime = now
-        isSending = true
-        roundCount = roundCount + 1
-        print("[UTDX] 🏆 Victory! Round " .. roundCount)
-
-        task.spawn(function()
-            -- ⭐ อ่านทันที ไม่รอ MRF Enabled — Frame อาจมีอยู่แล้ว
-            -- game auto-Replay กดเร็วมาก (อาจไม่ถึง 0.5 วิ) ต้องรีบอ่าน
-
-            local gui = player.PlayerGui
-            local act, difficulty, playTime, wave, level = "N/A", "", "N/A", 0, 0
-            local rewards = "N/A"
-
-            -- ⭐ อ่านชื่อด่านจาก HUD ก่อน (เกมมี bug MRF ไม่ populate)
-            local stageName = ""
-            pcall(function()
-                local stage = gui.GameUI.HUD.RightFrame.Stage
-                -- ลองอ่าน MapName + Act
-                local mn = stage:FindFirstChild("MapName")
-                local ac = stage:FindFirstChild("Act")
-                if mn and mn.Text ~= "" then stageName = mn.Text end
-                if ac and ac.Text ~= "" then
-                    if stageName ~= "" then act = stageName .. " - " .. ac.Text
-                    else act = ac.Text end
-                else
-                    act = stageName
-                end
-            end)
-
-            -- ⭐ Retry MRF — ลด timeout จาก 8 → 2 วิ (กัน MRF หายก่อน Rewards retry เริ่ม)
-            local waited = 0
-            while waited < 2 do
-                -- Banner.ActName + Difficulty (ลอง MRF ใหม่ก่อน)
-                pcall(function()
-                    local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
-                    local banner
-                    if mrfn then
-                        banner = mrfn.Root.MainVictory.Content.Description.Content.Banner.Container
-                    else
-                        banner = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Banner.Container
-                    end
-                    local a = banner.ActName.Text or ""
-                    local d = banner.DifficultyPercent.Text or ""
-                    if a ~= "" and not a:find("Act Name") and not a:find("%.%.%.") then
-                        act = a
-                    end
-                    if d ~= "" and not d:find("%.%.%.") then
-                        difficulty = d
-                    end
-                end)
-
-                -- Stats.PlayTime
-                pcall(function()
-                    local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
-                    local statsFrame
-                    if mrfn then
-                        statsFrame = mrfn.Root.MainVictory.Content.Description.Content.Stats.frame
-                    else
-                        statsFrame = gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Stats.frame
-                    end
-                    for _, child in ipairs(statsFrame:GetChildren()) do
-                        local statName = child:FindFirstChild("StatName")
-                        local statValue = child:FindFirstChild("StatValue")
-                        if statName and statName.Text == "Play Time" and statValue then
-                            local t = statValue.Text or ""
-                            if t ~= "" and not t:find("N/A") then
-                                playTime = t
-                            end
-                        end
-                    end
-                end)
-
-                if act ~= "N/A" and playTime ~= "N/A" then break end
-
-                task.wait(0.1)  -- เร็วขึ้น
-                waited = waited + 0.1
-            end
-
-            -- Fallback playTime: อ่านจาก HUD ถ้า MRF ไม่มี
-            if playTime == "N/A" then
-                pcall(function()
-                    local t = gui.GameUI.HUD.Upper.WaveInformations.Container.Time.Value.Text
-                    if t and t ~= "" then playTime = t end
-                end)
-            end
-
-            -- Wave (อ่านจาก HUD)
-            pcall(function()
-                local waveText = gui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text
-                wave = tonumber(waveText:match("Wave (%d+)")) or 0
-            end)
-
-            -- Level
-            pcall(function()
-                local lvlText = gui.GameUI.HUD.Bottom.Hotbar.LevelBar.Level.Text
-                level = tonumber(lvlText:match("Level (%d+)")) or 0
-            end)
-
-            -- Rewards (เกมอัพเดต — ย้ายไป MissionResultFrameNew)
-            -- ⚠️ ไม่อ่าน Units.frame.Unit_1..6 เพราะนั่นคือ "ยูนิตที่เอามาเล่น" ไม่ใช่รางวัล
-            -- ยูนิตที่ drop จริงจะอยู่ใน Rewards.frame (เป็น ContainerNoBottom ที่มี ViewportFrame ไม่มี ItemIcon)
-            local units = {}
-            local items = {}
-            local rewardsRetry = 0
-
-            local dbg = { "===== UTDX Match " .. os.date("%H:%M:%S") .. " =====" }
-            local function dbgLog(s) table.insert(dbg, s) end
-
-            while rewardsRetry < 60 and #items == 0 do  -- 60 × 0.05 = 3 วิ (เร็ว+ทันการ)
-            pcall(function()
-                -- ⭐ ใช้ MRFNew เป็นหลัก ถ้าไม่มี fallback MRF เก่า — ไม่เช็ค container count
-                -- ถ้า Rewards.frame ว่าง → iterate ก็จะเป็น empty loop → รอบหน้า retry
-                local rewardFrame = nil
-                local mrfn = gui.GameUI:FindFirstChild("MissionResultFrameNew")
-                if mrfn then
-                    local root = mrfn:FindFirstChild("Root")
-                    local mv = root and root:FindFirstChild("MainVictory")
-                    local content = mv and mv:FindFirstChild("Content")
-                    local desc = content and content:FindFirstChild("Description")
-                    local dc = desc and desc:FindFirstChild("Content")
-                    local rewards = dc and dc:FindFirstChild("Rewards")
-                    rewardFrame = rewards and rewards:FindFirstChild("frame")
-                end
-                if not rewardFrame then
-                    local ok, rf = pcall(function()
-                        return gui.GameUI.MissionResultFrame.Main.Content.Description.Content.Rewards.frame
-                    end)
-                    if ok then rewardFrame = rf end
-                end
-                if not rewardFrame then
-                    dbgLog("try " .. (rewardsRetry+1) .. "/15 — no Rewards frame")
-                    return
-                end
-                for _, child in ipairs(rewardFrame:GetChildren()) do
-                    if child:IsA("Frame") and child.Name == "ContainerNoBottom" then
-                        local icon      = child:FindFirstChild("ItemIcon")
-                        local rightInfo = child:FindFirstChild("RightInfos")
-                        local unitName  = rightInfo and rightInfo:FindFirstChild("UnitName")
-                        local vpf       = child:FindFirstChild("Unit")
-
-                        -- 🎴 ตัวละคร = ไม่มี ItemIcon แต่ ViewportFrame มี Model
-                        if not icon and vpf then
-                            local model = vpf:FindFirstChildWhichIsA("Model")
-                            if model then
-                                -- ใช้ UnitName.Text เป็นหลัก (ชื่อ in-game ที่ผู้เล่นเห็น)
-                                -- เช่น Vegito → "Fused Warrior", Ancient Shinobi → "Ancient Shinobi"
-                                -- ถ้าไม่มี UnitName ค่อย fallback Model.Name (ตัด suffix :shiny:boundless)
-                                local title    = (unitName and unitName.Text ~= "") and unitName.Text or ""
-                                local charName = model.Name:match("^([^:]+)") or model.Name
-                                local GENERIC_MODELS = { WorldModel=true, Model=true, Character=true, Unit=true }
-                                local display
-                                if title ~= "" then
-                                    display = title  -- ใช้ display name จาก UI
-                                elseif not GENERIC_MODELS[charName] then
-                                    display = charName  -- ใช้ Model.Name ถ้าไม่ใช่ generic
-                                else
-                                    display = "Unknown Unit"
-                                end
-                                table.insert(units, display)
-                                dbgLog("🎴 UNIT: " .. display .. " (model=" .. model.Name .. ")")
-                            end
-
-                        -- ไอเทมทั่วไป
-                        elseif icon and unitName then
-                            local itemName = ITEM_NAMES_UTDX[icon.Image] or "Item"
-                            local qty = (unitName.Text ~= "") and unitName.Text or "x1"
-                            table.insert(items, itemName .. " " .. qty)
-                            if not ITEM_NAMES_UTDX[icon.Image] then
-                                dbgLog("❓ Unknown item: " .. icon.Image .. " qty=" .. qty)
-                            end
-                        end
-                    end
-                end
-
-                -- ใช้ comma แยกทุก entry (backend parse ได้ถูก)
-                -- แต่ละ unit จะมี "x1" ต่อท้ายเสมอ → backend นับเป็น 1 ตัวต่อ entry
-                local parts = {}
-                for _, u in ipairs(units) do
-                    table.insert(parts, "🎴" .. u .. " x1")
-                end
-                for _, it in ipairs(items) do
-                    table.insert(parts, it)
-                end
-                if #parts > 0 then rewards = table.concat(parts, ", ") end
-            end)
-            if #units > 0 or #items > 0 then break end
-            task.wait(0.05)  -- poll เร็วสุดกัน game auto-Replay ทำลาย MRF
-            rewardsRetry = rewardsRetry + 1
-            end  -- close while
-
-            local actFull = act
-            if difficulty ~= "" then actFull = act .. " " .. difficulty end
-
-            -- ⭐ Summary print 1 บรรทัด + append ไฟล์ log (ดูง่ายไม่โดน error spam ดัน)
-            print("[UTDX " .. SCRIPT_VERSION .. "] " .. actFull .. " | " .. playTime .. " | W:" .. wave .. " | L:" .. level .. " | " .. rewards)
-
-            -- เขียน debug log ลงไฟล์ (เปิดดูใน workspace/utdx_log.txt)
-            table.insert(dbg, "act: " .. actFull)
-            table.insert(dbg, "time: " .. playTime .. " | wave: " .. wave .. " | level: " .. level)
-            table.insert(dbg, "rewards: " .. rewards)
-            table.insert(dbg, "units: " .. (#units > 0 and table.concat(units, ", ") or "none"))
-            table.insert(dbg, "")
-            pcall(function()
-                local existing = ""
-                pcall(function() existing = readfile("utdx_log.txt") or "" end)
-                writefile("utdx_log.txt", existing .. table.concat(dbg, "\n") .. "\n")
-            end)
-
-            local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-            local payload = {
-                username     = player.Name,
-                userId       = player.UserId,
-                serviceName  = GAME_NAME,
-                gameId       = GAME_ID,
-                progress     = 0,
-                currentStats = { level = level, bp = 0 },
-                matchInfo    = { map = act or "Unknown", wave = wave },
-                endScreen    = {
-                    act      = actFull,
-                    file     = act,
-                    playTime = playTime,
-                    quantity = rewards,
-                    units    = units,           -- ⭐ ส่ง list ตัวละครที่ได้
-                },
-                recentLog = {
-                    act      = actFull,
-                    file     = act,
-                    playTime = playTime,
-                    quantity = rewards,
-                    units    = units,           -- ⭐
-                    status   = "COMPLETED",
-                    time     = timestamp,
-                    rewards  = rewards,
-                },
-            }
-
-            local ok, response = pcall(function()
-                return HttpService:RequestAsync({
-                    Url     = BACKEND_URL .. "/api/overload/update",
-                    Method  = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body    = HttpService:JSONEncode(payload)
-                })
-            end)
-
-            if ok and response.Success then
-                local unitMsg = (#units > 0) and (" | 🎴UNIT=" .. table.concat(units, ",")) or ""
-                print("[UTDX] ✅ Sent! LVL=" .. level .. " | Wave=" .. wave .. unitMsg)
-            else
-                warn("[UTDX] ❌ Send FAIL:", response and response.StatusCode)
-            end
-
-            isSending = false
-        end)
-    end)
-
-    print("[UTDX] ✅ Ready!")
-
-    -- Auto Activate Hand
-    task.spawn(function()
-        while true do
-            for _, obj in ipairs(game.Workspace:GetDescendants()) do
-                if obj:IsA("ProximityPrompt") and obj.ActionText == "Activate Hand" then
-                    local attachment = obj.Parent
-                    if attachment and attachment:IsA("Attachment") then
-                        local pos = attachment.WorldPosition
-                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-                            task.wait(0.3)
-                            fireproximityprompt(obj)
-                            print("[UTDX] Activated:", obj.ObjectText)
-                            task.wait(1)
-                        end
-                    end
-                end
-            end
-            task.wait(0.2)
-        end
-    end)
-
-    -- ============================================================
-    -- [UTDX] Auto Vote GohanRiftCards — เลือก Cooldown เสมอ
-    -- ============================================================
-    task.spawn(function()
-        task.wait(5)
-        print("[CARD] 👀 Watching for GohanRiftCards...")
-        local lastVoteTime = 0
-
-        local function getCardContainer()
-            local pg = player.PlayerGui
-            local ok, container = pcall(function()
-                return pg.GameUI.HUD.RightFrame.TutorialHolder.GohanRiftCards
-            end)
-            if ok and container and container.Visible then return container end
-            return nil
-        end
-
-        -- หา index ของการ์ด Cooldown โดยค้นใน descendants
-        local function findCooldownIndex(container)
-            -- iterate top-level card containers (Card1, Card2, Card3 หรือชื่ออื่น)
-            -- เก็บ container ที่มี LayoutOrder เพื่อเรียงตามตำแหน่ง
-            local cardList = {}
-            for _, child in ipairs(container:GetDescendants()) do
-                if child:IsA("TextLabel") and child.Text ~= "" then
-                    local t = child.Text:lower()
-                    if t:find("cooldown") then
-                        -- walk up หา parent card
-                        local p = child.Parent
-                        while p and p ~= container do
-                            -- ถ้า parent มีชื่อเป็นเลข หรือมี LayoutOrder = card หลัก
-                            if p.Name:match("^%d+$") or p.Name:lower():find("card") then
-                                local n = tonumber(p.Name:match("(%d+)"))
-                                if n then return n end
-                            end
-                            p = p.Parent
-                        end
-                        -- ถ้าหา parent index ไม่ได้ ลอง count position
-                        -- โดยดูว่า cooldown ตัวนี้อยู่ลำดับที่เท่าไหร่ใน list
-                    end
-                end
-            end
-            return nil
-        end
-
-        -- หา index แบบ position-based (ดูตำแหน่ง X ของการ์ดบนจอ)
-        local function findCooldownIndexByPosition(container)
-            -- เก็บ card frame + position
-            local cards = {}
-            local seen = {}
-            for _, d in ipairs(container:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Text ~= "" then
-                    local lower = d.Text:lower()
-                    -- หา card frame ที่ครอบ label นี้
-                    local frame = d.Parent
-                    while frame and frame ~= container and not frame:IsA("GuiObject") do
-                        frame = frame.Parent
-                    end
-                    -- หา top-level card frame (ลูกตรงของ container)
-                    local top = d.Parent
-                    while top and top.Parent ~= container do
-                        top = top.Parent
-                        if not top then break end
-                    end
-                    if top and not seen[top] then
-                        seen[top] = true
-                        -- เก็บ text รวม + AbsolutePosition.X
-                        local pos = top:IsA("GuiObject") and top.AbsolutePosition.X or 0
-                        table.insert(cards, { top = top, x = pos, texts = {} })
-                    end
-                end
-            end
-            -- รวม text ของแต่ละ card
-            for _, card in ipairs(cards) do
-                for _, lbl in ipairs(card.top:GetDescendants()) do
-                    if lbl:IsA("TextLabel") then
-                        table.insert(card.texts, lbl.Text:lower())
-                    end
-                end
-            end
-            -- เรียงตาม X (จากซ้ายไปขวา)
-            table.sort(cards, function(a,b) return a.x < b.x end)
-            -- หาว่า index ไหนมี "cooldown"
-            for i, card in ipairs(cards) do
-                for _, t in ipairs(card.texts) do
-                    if t:find("cooldown") then return i end
-                end
-            end
-            return nil
-        end
-
-        local function voteCard(choice)
-            local ok, err = pcall(function()
-                local re = game:GetService("ReplicatedStorage")
-                    :WaitForChild("Packages", 5):WaitForChild("_Index", 5)
-                    :WaitForChild("sleitnick_knit@1.7.0", 5):WaitForChild("knit", 5)
-                    :WaitForChild("Services", 5):WaitForChild("CardChoiceService", 5)
-                    :WaitForChild("RE", 5):WaitForChild("VoteCard", 5)
-                re:FireServer("GohanRift", choice)
-            end)
-            if ok then print("[CARD] ✅ Voted GohanRift card", choice, "(Cooldown)")
-            else warn("[CARD] ❌ Vote failed:", err) end
-            return ok
-        end
-
-        while true do
-            local now = tick()
-            local container = getCardContainer()
-            if container and (now - lastVoteTime > 5) then
-                -- ลองหา Cooldown ก่อน
-                local idx = findCooldownIndex(container) or findCooldownIndexByPosition(container)
-                if idx then
-                    voteCard(idx)
-                    lastVoteTime = now
-                else
-                    warn("[CARD] ⚠️ ไม่เจอ Cooldown ใน card — fallback vote 1")
-                    voteCard(1)
-                    lastVoteTime = now
-                end
-            end
-            task.wait(0.5)
-        end
-    end)
-
-    -- Auto GreenZone
-    task.spawn(function()
-        while true do
-            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            local zone = workspace:FindFirstChild("ShinobiAllianceRuntime")
-            if zone and hrp then
-                local greenZone = zone:FindFirstChild("GreenZone")
-                if greenZone then
-                    print("[UTDX] Found GreenZone! Warping...")
-                    hrp.CFrame = CFrame.new(greenZone.Position + Vector3.new(0, 3, 0))
-                    task.wait(6)
-                end
-            end
-            task.wait(0.5)
-        end
-    end)
-
-    -- ============================================================
-    -- บูส FPS — ปิด effects, ลบ decoration, ซ่อนศัตรู
-    -- ============================================================
-    -- ⚠️ ห้ามใส่ "rock","stone","grass" — เพราะ map บางด่าน มี floor ชื่อพวกนี้
-    local DECO_KEYWORDS = {
-        "tree","bush","plant","flower","leaf","leaves",
-        "decoration","decor","vegetation",
-        "cloud","fog"
-    }
-    -- whitelist: ห้ามแตะ ถึงแม้ชื่อจะเข้า keyword ก็ตาม
-    -- ครอบคลุม: พื้นปกติ + map ที่อยู่บนเขา/ภูเขา + พื้นโครงสร้าง
-    local FLOOR_KEYWORDS = {
-        "floor","ground","base","tile","road","path","wall","ceiling","platform",
-        "hill","mountain","land","terrain","cliff","rock","stone","grass",
-        "bridge","stair","step","pillar","column","arena","field","plain"
-    }
-    local function isFloorPart(obj)
-        local n = obj.Name:lower()
-        for _, kw in ipairs(FLOOR_KEYWORDS) do
-            if n:find(kw) then return true end
-        end
-        return false
-    end
-    local ENEMY_FOLDERS = {
-        "Enemies","Mobs","Zombies","EnemyFolder","Enemy",
-        "EnemiesFolder","MobFolder","ActiveEnemies",
-        "Units","UnitFolder",  -- บาง UTDX เก็บใน Units
-        "Characters"
-    }
-    -- folder ที่ทั้งก้อนเป็น effects — ปิดทั้งกลุ่ม
-    local KILL_FOLDERS = { "Lumina Particles","VFX","Particles","Effects" }
-
-    local function isDecoration(obj)
-        -- ⭐ ถ้าเป็น floor/path/wall → ห้ามนับว่า decoration
-        if isFloorPart(obj) then return false end
-        local n = obj.Name:lower()
-        for _, kw in ipairs(DECO_KEYWORDS) do
-            if n:find(kw) then return true end
-        end
-        local parentName = obj.Parent and obj.Parent.Name:lower() or ""
-        for _, kw in ipairs(DECO_KEYWORDS) do
-            if parentName:find(kw) then return true end
-        end
-        return false
-    end
-
-    local function hideEnemyVisuals(model)
-        for _, d in ipairs(model:GetDescendants()) do
-            if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                pcall(function() d.Transparency = 1 end)
-                pcall(function() d.CastShadow = false end)
-                pcall(function() d.LocalTransparencyModifier = 1 end)
-            elseif d:IsA("Decal") or d:IsA("Texture") then
-                pcall(function() d.Transparency = 1 end)
-            elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                pcall(function() d.Enabled = false end)
-            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-                -- ปิด HP bar / nameplate
-                pcall(function() d.Enabled = false end)
-            elseif d:IsA("Humanoid") then
-                -- ปิด nameplate ของ Humanoid
-                pcall(function() d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
-                pcall(function() d.NameDisplayDistance = 0 end)
-                pcall(function() d.HealthDisplayDistance = 0 end)
-            end
-        end
-        -- Hook part ใหม่ที่จะ add เข้ามาภายใน model นี้
-        model.DescendantAdded:Connect(function(d)
-            task.wait(0.05)
-            if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                pcall(function() d.Transparency = 1 end)
-                pcall(function() d.CastShadow = false end)
-                pcall(function() d.LocalTransparencyModifier = 1 end)
-            elseif d:IsA("Decal") or d:IsA("Texture") then
-                pcall(function() d.Transparency = 1 end)
-            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-                pcall(function() d.Enabled = false end)
-            end
-        end)
-    end
-
-    -- เช็คว่า object อยู่ใน folder ที่ห้ามแตะหรือไม่
-    local PROTECTED_PARENTS = { PathDECO=true, TerrainParts=true, Path=true, Spawns=true }
-    local function isProtected(obj)
-        local p = obj.Parent
-        while p and p ~= workspace do
-            if PROTECTED_PARENTS[p.Name] then return true end
-            p = p.Parent
-        end
-        return false
-    end
-
-    local function processInstance(obj)
-        -- ⭐ Effects (Particle/Trail/Beam/Smoke/Fire/Sparkles/Explosion) — ปิด"เสมอ" ไม่ว่าจะอยู่ที่ไหน
-        if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-           or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
-           or obj:IsA("Explosion") then
-            pcall(function() obj.Enabled = false end)
-            return
-        end
-        -- Lights — ปิดเสมอ
-        if obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then
-            pcall(function() obj.Enabled = false end)
-            return
-        end
-        -- Post-effects — ปิดเสมอ
-        if obj:IsA("BlurEffect") or obj:IsA("BloomEffect")
-           or obj:IsA("SunRaysEffect") or obj:IsA("ColorCorrectionEffect")
-           or obj:IsA("DepthOfFieldEffect") then
-            pcall(function() obj.Enabled = false end)
-            return
-        end
-
-        -- ตรงจุดนี้เป็น BasePart/Decal/Texture — เช็ค protected ก่อนแตะ
-        if isProtected(obj) then return end
-
-        -- ลบ decal/texture
-        if obj:IsA("Decal") or obj:IsA("Texture") then
-            pcall(function() obj.Transparency = 1 end)
-            return
-        end
-        -- BasePart: ซ่อน decoration / ลด material
-        if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation") then
-            if isDecoration(obj) then
-                pcall(function() obj.Transparency = 1 end)
-                pcall(function() obj.CanCollide = false end)
-            end
-            pcall(function() obj.Material = Enum.Material.SmoothPlastic end)
-            pcall(function() obj.CastShadow = false end)
-            pcall(function() obj.Reflectance = 0 end)
-        end
-    end
-
-    local function boostFPS()
-        -- 1) Lighting + Fog ตัดระยะ render
-        pcall(function()
-            local L = game:GetService("Lighting")
-            L.GlobalShadows = false
-            L.Brightness = 1
-            L.EnvironmentSpecularScale = 0
-            L.EnvironmentDiffuseScale = 0
-            -- ⭐ ตัด render distance ด้วย Fog (ของไกลกลายเป็นหมอก ไม่ render)
-            L.FogEnd = 300        -- 300 stud = ของไกลกว่านี้หาย
-            L.FogStart = 250
-            L.FogColor = Color3.fromRGB(80,80,80)
-            -- ปิด post-effects ทั้งหมด
-            for _, fx in ipairs(L:GetChildren()) do
-                if fx:IsA("BlurEffect") or fx:IsA("BloomEffect")
-                   or fx:IsA("SunRaysEffect") or fx:IsA("ColorCorrectionEffect")
-                   or fx:IsA("DepthOfFieldEffect") or fx:IsA("Atmosphere") then
-                    pcall(function() fx.Enabled = false end)
-                end
-            end
-        end)
-
-        -- 2) Render quality ต่ำสุด + ปิด detail
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
-        end)
-
-        -- 3) Terrain
-        pcall(function()
-            local t = workspace.Terrain
-            t.WaterReflectance = 0
-            t.WaterTransparency = 1
-            t.WaterWaveSize = 0
-            t.WaterWaveSpeed = 0
-            t.Decoration = false
-        end)
-
-        local playerNames = {}
-        for _, p in ipairs(game.Players:GetPlayers()) do
-            playerNames[p.Name] = true
-        end
-
-        -- 4) ปิด folder effects ทั้งกลุ่ม (Lumina Particles, VFX, ฯลฯ)
-        for _, fname in ipairs(KILL_FOLDERS) do
-            local f = workspace:FindFirstChild(fname)
-            if f then
-                for _, d in ipairs(f:GetDescendants()) do
-                    pcall(processInstance, d)
-                end
-            end
-        end
-
-        -- 5) ⭐ workspace.Folder.* (Fodder, DBZ, HuecoMaterials, ...) → ศัตรูจริงๆ
-        local themedRoot = workspace:FindFirstChild("Folder")
-        if themedRoot then
-            for _, sub in ipairs(themedRoot:GetChildren()) do
-                for _, m in ipairs(sub:GetDescendants()) do
-                    if m:IsA("Model") and not playerNames[m.Name] then
-                        pcall(hideEnemyVisuals, m)
-                    elseif m:IsA("BasePart") or m:IsA("MeshPart") then
-                        pcall(function() m.CastShadow = false end)
-                        pcall(function() m.Material = Enum.Material.SmoothPlastic end)
-                    end
-                end
-            end
-        end
-
-        -- 6) ⭐ Map.Decorations/Props/Border — DESTROY (free memory จริงๆ)
-        -- ⚠️ ห้าม destroy: PathDECO, TerrainParts, Path
-        local map = workspace:FindFirstChild("Map")
-        if map then
-            for _, subName in ipairs({ "Decorations","Decoration","Props","Border" }) do
-                local sub = map:FindFirstChild(subName)
-                if sub then
-                    for _, child in ipairs(sub:GetChildren()) do
-                        if not isFloorPart(child) then
-                            pcall(function() child:Destroy() end)
-                        end
-                    end
-                end
-            end
-
-            -- ⭐ ซ่อน Boss/Mob ที่เป็น Model ตรงๆ ใน Map (Vegito, Trunks, GokuBlack, Zamasu, ...)
-            -- ⚠️ KEEP = ไม่แตะ (เก็บไว้ให้เห็น)
-            local KEEP = {
-                Path=true, PathDECO=true, TerrainParts=true,    -- ⭐ พื้น + เส้นทาง
-                Spawns=true, Static1=true, Static2=true,
-                ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true
-            }
-            for _, m in ipairs(map:GetChildren()) do
-                if m:IsA("Model") and not KEEP[m.Name] then
-                    -- ⭐ ถ้า Model ชื่อเป็น floor/hill/terrain → ห้ามแตะ
-                    if not isFloorPart(m) then
-                        pcall(hideEnemyVisuals, m)
-                    end
-                end
-            end
-        end
-
-        -- 7) Ignore.Effects/Drops/GhostUnits/Hitboxes — ซ่อน ไม่ DESTROY (เกมต้องใช้ ref อยู่)
-        local ignore = workspace:FindFirstChild("Ignore")
-        if ignore then
-            for _, subName in ipairs({ "Effects","Drops","GhostUnits","Hitboxes" }) do
-                local sub = ignore:FindFirstChild(subName)
-                if sub then
-                    for _, d in ipairs(sub:GetDescendants()) do
-                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                            pcall(function() d.Transparency = 1 end)
-                            pcall(function() d.CastShadow = false end)
-                            pcall(function() d.LocalTransparencyModifier = 1 end)
-                        elseif d:IsA("Decal") or d:IsA("Texture") then
-                            pcall(function() d.Transparency = 1 end)
-                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                            pcall(function() d.Enabled = false end)
-                        end
-                    end
-                end
-            end
-
-            -- ⭐ Ignore.Units = ยูนิตเรา (UUID) + ศัตรู (เลข)
-            -- - ยูนิตเรา: ชื่อเป็น UUID (8-4-4-4-12) หรือมี Identifier attribute → เก็บไว้ + ปิดแค่ effects
-            -- - ศัตรู: ชื่อเป็นเลขล้วน ไม่มี Identifier → ซ่อนทั้งตัว
-            local myUnits = ignore:FindFirstChild("Units")
-            if myUnits then
-                local function isPlayerUnit(m)
-                    if m:GetAttribute("Identifier") then return true end
-                    if m:GetAttribute("ManualTargeting") ~= nil then return true end
-                    -- UUID format: 8-4-4-4-12 hex chars
-                    if m.Name:match("^[%w]+%-[%w]+%-[%w]+%-[%w]+%-[%w]+$") then return true end
-                    return false
-                end
-                -- sub-model ในยูนิตเราที่ถือว่าเป็น effect (Aura/Glow/Slash/Aurora/...)
-                local FX_SUBMODELS = {
-                    aura=true, glow=true, slash=true, blast=true, wave=true, beam=true,
-                    explosion=true, particle=true, effect=true, shockwave=true,
-                    aurora=true, energy=true, ki=true, halo=true, ring=true,
-                    cloak=true, trail=true, dome=true, light=true, fire=true,
-                    fx=true, vfx=true, ["fx_"]=true,
-                }
-                local function isFXSubModel(name)
-                    local lower = name:lower()
-                    for kw in pairs(FX_SUBMODELS) do
-                        if lower:find(kw) then return true end
-                    end
-                    return false
-                end
-
-                for _, unit in ipairs(myUnits:GetChildren()) do
-                    if unit:IsA("Model") then
-                        if isPlayerUnit(unit) then
-                            -- ยูนิตเรา: ปิด effects + ซ่อน FX sub-model (Aura/Glow/Slash)
-                            for _, d in ipairs(unit:GetDescendants()) do
-                                if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                                    pcall(function() d.Enabled = false end)
-                                elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                                    pcall(function() d.Enabled = false end)
-                                end
-                            end
-                            -- ⭐ ซ่อน FX sub-model (Aura/Glow/etc.) ในยูนิต
-                            for _, sub in ipairs(unit:GetChildren()) do
-                                if (sub:IsA("Model") or sub:IsA("Folder")) and isFXSubModel(sub.Name) then
-                                    for _, d in ipairs(sub:GetDescendants()) do
-                                        if d:IsA("BasePart") or d:IsA("MeshPart") then
-                                            pcall(function() d.Transparency = 1 end)
-                                            pcall(function() d.CanCollide = false end)
-                                        elseif d:IsA("Decal") or d:IsA("Texture") then
-                                            pcall(function() d.Transparency = 1 end)
-                                        end
-                                    end
-                                end
-                            end
-                        else
-                            -- ⭐ ศัตรู: ซ่อนทั้งตัว
-                            pcall(hideEnemyVisuals, unit)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- 7.5) Camera = skill effects — ซ่อน ไม่ DESTROY (เกมต้องใช้ structure อยู่)
-        local cam = workspace:FindFirstChild("Camera")
-        if cam then
-            for _, d in ipairs(cam:GetDescendants()) do
-                if d:IsA("BasePart") or d:IsA("MeshPart") then
-                    pcall(function() d.Transparency = 1 end)
-                    pcall(function() d.CastShadow = false end)
-                    pcall(function() d.LocalTransparencyModifier = 1 end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                    pcall(function() d.Enabled = false end)
-                end
-            end
-        end
-
-        -- 8) Terrain.TempVFX
-        local tempVfx = workspace.Terrain:FindFirstChild("TempVFX")
-        if tempVfx then
-            for _, d in ipairs(tempVfx:GetDescendants()) do
-                pcall(processInstance, d)
-            end
-        end
-
-        -- 9) ซ่อนยูนิตศัตรูใน folder อื่นๆ (เผื่อมี)
-        for _, fname in ipairs(ENEMY_FOLDERS) do
-            local f = workspace:FindFirstChild(fname)
-            if f then
-                for _, e in ipairs(f:GetChildren()) do
-                    if e:IsA("Model") and not playerNames[e.Name] then
-                        pcall(hideEnemyVisuals, e)
-                    end
-                end
-            end
-        end
-
-        -- 10) Process ทุก descendant ใน workspace (final pass)
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            processInstance(obj)
-        end
-    end
-
-    task.spawn(function()
-        task.wait(2)
-        print("[UTDX] 🚀 บูส FPS ON | v4 (DESTROY Decorations/Effects/Camera + Fog 300)")
-        boostFPS()
-        pcall(function() collectgarbage("collect") end)
-
-        -- Hook ของใหม่ที่ spawn เข้ามา → process ทันที
-        workspace.DescendantAdded:Connect(function(obj)
-            task.wait(0.1)
-            pcall(processInstance, obj)
-        end)
-
-        -- ⭐ Hook workspace.Folder.* (themed enemies — Fodder, DBZ, ...) → ซ่อนศัตรูใหม่
-        local themedRoot = workspace:FindFirstChild("Folder")
-        if themedRoot then
-            local function processNew(d)
-                -- ดักทุก descendant — ไม่ต้องเป็น Model
-                if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                    pcall(function() d.Transparency = 1 end)
-                    pcall(function() d.CastShadow = false end)
-                    pcall(function() d.LocalTransparencyModifier = 1 end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                    or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                    pcall(function() d.Enabled = false end)
-                elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-                    pcall(function() d.Enabled = false end)
-                elseif d:IsA("Humanoid") then
-                    pcall(function() d.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
-                end
-            end
-
-            local function hookSub(sub)
-                -- ดักทุก descendant ใหม่ที่เพิ่มเข้ามา
-                sub.DescendantAdded:Connect(function(d)
-                    task.wait(0.05)
-                    pcall(processNew, d)
-                end)
-                -- ซ่อนของที่มีอยู่แล้วในตอนนั้น
-                for _, d in ipairs(sub:GetDescendants()) do
-                    pcall(processNew, d)
-                end
-            end
-            for _, sub in ipairs(themedRoot:GetChildren()) do
-                hookSub(sub)
-            end
-            -- Hook sub-folder ใหม่ที่ themed root เพิ่มเข้ามา
-            themedRoot.ChildAdded:Connect(function(sub)
-                task.wait(0.05)
-                hookSub(sub)
-            end)
-        end
-
-        -- ซ่อนศัตรูใหม่ใน enemy folder อื่นๆ
-        for _, fname in ipairs(ENEMY_FOLDERS) do
-            local f = workspace:FindFirstChild(fname)
-            if f then
-                f.ChildAdded:Connect(function(child)
-                    task.wait(0.2)
-                    if child:IsA("Model") then
-                        pcall(hideEnemyVisuals, child)
-                    end
-                end)
-            end
-        end
-
-        -- ⭐ Hook Ignore.Units → ปิด effects ของยูนิตเรา + ซ่อนศัตรูใหม่ที่ spawn
-        local ignoreFolder = workspace:FindFirstChild("Ignore")
-        if ignoreFolder then
-            local myUnits = ignoreFolder:FindFirstChild("Units")
-            if myUnits then
-                local function isPlayerUnit(m)
-                    if m:GetAttribute("Identifier") then return true end
-                    if m:GetAttribute("ManualTargeting") ~= nil then return true end
-                    if m.Name:match("^[%w]+%-[%w]+%-[%w]+%-[%w]+%-[%w]+$") then return true end
-                    return false
-                end
-
-                -- ⭐ มอนใหม่ spawn (ChildAdded ที่ Units folder) → ตรวจชื่อ ถ้าเป็นเลข = ศัตรู ซ่อนทันที
-                myUnits.ChildAdded:Connect(function(unit)
-                    task.wait(0.1)
-                    if unit:IsA("Model") and not isPlayerUnit(unit) then
-                        pcall(hideEnemyVisuals, unit)
-                    end
-                end)
-
-                -- ปิด effect ของยูนิตเรา (ทุก descendant ใหม่)
-                myUnits.DescendantAdded:Connect(function(d)
-                    task.wait(0.05)
-                    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                       or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
-                       or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                        pcall(function() d.Enabled = false end)
-                    end
-                end)
-            end
-
-            -- ⭐ Hook Ignore.Effects + Drops + GhostUnits + Hitboxes — บังคับซ่อนทันทีที่ effect spawn
-            for _, fname in ipairs({"Effects","Drops","GhostUnits","Hitboxes"}) do
-                local f = ignoreFolder:FindFirstChild(fname)
-                if f then
-                    f.DescendantAdded:Connect(function(d)
-                        task.wait(0.03)
-                        if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                            pcall(function() d.Transparency = 1 end)
-                            pcall(function() d.CastShadow = false end)
-                            pcall(function() d.LocalTransparencyModifier = 1 end)
-                        elseif d:IsA("Decal") or d:IsA("Texture") then
-                            pcall(function() d.Transparency = 1 end)
-                        elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles")
-                           or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                            pcall(function() d.Enabled = false end)
-                        end
-                    end)
-                end
-            end
-        end
-
-        -- Hook Camera.DescendantAdded — ซ่อน effects ใหม่ ไม่ destroy
-        local camFolder = workspace:FindFirstChild("Camera")
-        if camFolder then
-            camFolder.DescendantAdded:Connect(function(d)
-                task.wait(0.05)
-                if d:IsA("BasePart") or d:IsA("MeshPart") then
-                    pcall(function() d.Transparency = 1 end)
-                    pcall(function() d.CastShadow = false end)
-                    pcall(function() d.LocalTransparencyModifier = 1 end)
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    pcall(function() d.Transparency = 1 end)
-                elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                   or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                    pcall(function() d.Enabled = false end)
-                end
-            end)
-        end
-
-        -- ⭐ Hook workspace.Map.ChildAdded → boss/มอน spawn ใหม่ใน Map → ซ่อนทันที
-        local map = workspace:FindFirstChild("Map")
-        if map then
-            local KEEP = { Path=true, PathDECO=true, TerrainParts=true,
-                          Spawns=true, Static1=true, Static2=true,
-                          ActorSpawn=true, ActorSpawn2=true, ActorSpawn3=true }
-            map.ChildAdded:Connect(function(child)
-                task.wait(0.1)
-                if child:IsA("Model") and not KEEP[child.Name] and not isFloorPart(child) then
-                    pcall(hideEnemyVisuals, child)
-                end
-            end)
-
-            -- Hook Map.Decorations.DescendantAdded สำหรับ deco ที่ load ทีหลัง
-            local deco = map:FindFirstChild("Decorations")
-            if deco then
-                deco.DescendantAdded:Connect(function(d)
-                    task.wait(0.05)
-                    if d:IsA("BasePart") or d:IsA("MeshPart") then
-                        pcall(function() d.Transparency = 1 end)
-                        pcall(function() d.CanCollide = false end)
-                        pcall(function() d.CastShadow = false end)
-                    end
-                end)
-            end
-        end
-
-        -- ⭐ Loop aggressive ทุก 0.5 วิ — ดักทุก effect (particle + mesh ใน Ignore.Effects/Camera)
-        task.spawn(function()
-            while true do
-                task.wait(0.5)
-                pcall(function()
-                    -- ปิด particle/beam/trail ทั่ว workspace
-                    for _, d in ipairs(workspace:GetDescendants()) do
-                        if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                            if d.Enabled then d.Enabled = false end
-                        elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-                            if d.Enabled then d.Enabled = false end
-                        end
-                    end
-                    -- ⭐ บังคับ Transparency = 1 ทุก Part ใน Ignore.Effects + Camera
-                    local ig = workspace:FindFirstChild("Ignore")
-                    if ig then
-                        for _, sub in ipairs({ig:FindFirstChild("Effects"), ig:FindFirstChild("Drops"),
-                                              ig:FindFirstChild("GhostUnits"), ig:FindFirstChild("Hitboxes")}) do
-                            if sub then
-                                for _, d in ipairs(sub:GetDescendants()) do
-                                    if d:IsA("BasePart") or d:IsA("MeshPart") or d:IsA("UnionOperation") then
-                                        if d.Transparency ~= 1 then d.Transparency = 1 end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    -- ซ่อน Camera children ที่สะสม (ไม่ destroy เพราะเกมต้องใช้ ref)
-                    local cm = workspace:FindFirstChild("Camera")
-                    if cm then
-                        for _, d in ipairs(cm:GetDescendants()) do
-                            if d:IsA("BasePart") or d:IsA("MeshPart") then
-                                if d.Transparency ~= 1 then d.Transparency = 1 end
-                            elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
-                                if d.Enabled then d.Enabled = false end
-                            end
-                        end
-                    end
-
-                    -- ⭐ บังคับ Fog ใหม่ (เผื่อโดน reset)
-                    local L = game:GetService("Lighting")
-                    if L.FogEnd > 500 then
-                        L.FogEnd = 300
-                        L.FogStart = 250
-                    end
-                end)
-            end
-        end)
-
-        -- รีเฟรชเต็มทุก 5 วิ + force GC
-        while true do
-            task.wait(5)
-            pcall(boostFPS)
-            pcall(function() collectgarbage("collect") end)
-        end
-    end)
-
-end
-
--- Free Unit watcher ถูกย้ายไปอยู่ในปุ่ม UI "แก้มัด" (ปุ่ม #10)
-
-print("[OV] 🚀 Ready! Game:", GAME_NAME)
-
-if game.PlaceId == 133410800847665 then
-    -- ============================================================
-    -- [UTDX Lobby] Auto Redeem Codes
-    -- ============================================================
-    task.spawn(function()
-        local CODES = {
-            "300kInterestedBeast",
-            "275kInterestedBeast!",
-            "subto_s3resutiaru!",
-            "SmallUtopiaPatch!",
-            "200kInterestedBeast!",
-            "3.0Part2Update!",
-            "FusionUpdate!",
-            "MercilessGodIsHere!",
-            "NewBattlePass!!",
-            "UniversalInfo3.0Part2!",
-            "DBSUpdPatch!",
-            "StayTunedDBS!",
-            "TheShinyCode!",
-            "DBSLagFixes!",
-            "3.0Part2.5Update!",
-            "TheBeast!",
-            "BeastDelay!",
-            "ExclusiveRelics!",
-            "DropRateFixes!",
-            "ArrancarSupremacy!",
-            "200KInterestedSouls!",
-        }
-        task.wait(8)  -- รอเข้า lobby + Packages โหลดเสร็จ
-        local ok, redeemRF = pcall(function()
-            return game:GetService("ReplicatedStorage")
-                :WaitForChild("Packages", 10):WaitForChild("_Index", 10)
-                :WaitForChild("sleitnick_knit@1.7.0", 10):WaitForChild("knit", 10)
-                :WaitForChild("Services", 10):WaitForChild("CodeService", 10)
-                :WaitForChild("RF", 10):WaitForChild("Redeem", 10)
-        end)
-        if not ok or not redeemRF then
-            warn("[REDEEM] ไม่พบ Redeem RF")
-            return
-        end
-        print("[REDEEM] 🎁 เริ่ม redeem", #CODES, "โค้ด...")
-        local success, failed = 0, 0
-        for _, code in ipairs(CODES) do
-            local ok2, result = pcall(function()
-                return redeemRF:InvokeServer(code)
-            end)
-            if ok2 then
-                print("[REDEEM] ✅", code, "→", tostring(result))
-                success = success + 1
-            else
-                warn("[REDEEM] ❌", code, "→", tostring(result))
-                failed = failed + 1
-            end
-            task.wait(1)  -- ช้าลงนิดเผื่อ rate limit
-        end
-        print(string.format("[REDEEM] 🎁 เสร็จ! สำเร็จ %d | ไม่ได้ %d", success, failed))
-    end)
-end
-
--- ============================================================
--- [UTDX] Auto Claim Mission (ทุก 5 นาที)
--- ============================================================
-if game.PlaceId == 133410800847665 or game.PlaceId == 106402284955512 then
-    task.spawn(function()
-        -- ⭐ Claims ทั้งหมด: { event, mission } ทุก 5 นาที
-        local CLAIMS = {
-            -- BattleOfTheStrongest
-            { event = "BattleOfTheStrongest", mission = "winClash1" },
-            -- FlamesAndWaves
-            { event = "FlamesAndWaves", mission = "weeklyDPSClass" },
-            { event = "FlamesAndWaves", mission = "dailySameTag" },
-            { event = "FlamesAndWaves", mission = "dailySameClass" },
-            { event = "FlamesAndWaves", mission = "weeklySameTag" },
-            { event = "FlamesAndWaves", mission = "dailyClearStageWithPlayer" },
-            { event = "FlamesAndWaves", mission = "dailySameElement" },
-            -- DevilWithin (เก่า)
-            { event = "DevilWithin", mission = "weeklySupportClass" },
-            { event = "DevilWithin", mission = "weeklySameClass" },
-            { event = "DevilWithin", mission = "dailyClearStageWithPlayer0" },
-            { event = "DevilWithin", mission = "dailyClearStageWithPlayer1" },
-            { event = "DevilWithin", mission = "weeklyFree" },
-            { event = "DevilWithin", mission = "dailyFree" },
-            { event = "DevilWithin", mission = "dailySameElement" },
-            { event = "DevilWithin", mission = "dailySameClass" },
-            { event = "DevilWithin", mission = "dailySupportClass" },
-        }
-
-        local function claimAll()
-            local ok, claimRF = pcall(function()
-                return game:GetService("ReplicatedStorage")
-                    :WaitForChild("Packages"):WaitForChild("_Index")
-                    :WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit")
-                    :WaitForChild("Services"):WaitForChild("CalendarEventService")
-                    :WaitForChild("RF"):WaitForChild("claimMission")
-            end)
-            if not ok or not claimRF then
-                warn("[Claim] ไม่พบ claimMission RF")
-                return
-            end
-            local success, failed = 0, 0
-            for _, c in ipairs(CLAIMS) do
-                local ok2, err = pcall(function()
-                    claimRF:InvokeServer(c.event, c.mission)
-                end)
-                if ok2 then
-                    success = success + 1
-                else
-                    failed = failed + 1
-                end
-                task.wait(1) -- รอ 1 วิ ตามที่ user spec
-            end
-            print(string.format("[Claim] 🎁 รอบนี้: ✅%d ❌%d (รวม %d)", success, failed, #CLAIMS))
-        end
-
-        task.wait(8) -- เริ่มหลัง load 8 วิ (รอ packages)
-        while true do
-            claimAll()
-            task.wait(300) -- 5 นาที
-        end
-    end)
-end
-
-
--- ============================================================
--- UTDX UI (รันเฉพาะใน UTDX เท่านั้น)
--- ============================================================
-do
-    local UTDX_LOBBY_ID = 133410800847665
-    local UTDX_GAME_ID  = 106402284955512
-    local curPlace = game.PlaceId
-    if curPlace ~= UTDX_LOBBY_ID and curPlace ~= UTDX_GAME_ID then
-        -- ไม่ใช่ UTDX ข้ามไป
-    else
-        local RS_UI = game:GetService("ReplicatedStorage")
-        local playerGui = player.PlayerGui
-
-        local function saveFile(name, state) pcall(writefile, name, state and "1" or "0") end
-        local function loadFile(name) local ok,c = pcall(readfile,name); return ok and c=="1" end
-
-        -- บันทึก/โหลด ตำแหน่ง UI (จำตำแหน่งที่ลากล่าสุด)
-        local UI_POS_FILE = "utdx_ui_pos.txt"
-        local function savePos(x, y)
-            pcall(writefile, UI_POS_FILE, tostring(math.floor(x)) .. "," .. tostring(math.floor(y)))
-        end
-        local function loadPos()
-            local ok, content = pcall(readfile, UI_POS_FILE)
-            if not ok or not content then return nil end
-            local sx, sy = content:match("(-?%d+),(-?%d+)")
-            if sx and sy then return tonumber(sx), tonumber(sy) end
-            return nil
-        end
-
-        -- ========== Helpers สำหรับเช็คสถานที่ ==========
-        local function inLobby() return game.PlaceId == UTDX_LOBBY_ID end
-        local function inGame()  return game.PlaceId == UTDX_GAME_ID  end
-
-        -- ========== One-shot Warp (ปุ่ม 1, 2, 3) ==========
-        local function warpTo(pos, label)
-            return function()
-                if not inLobby() then
-                    print("[UI] ⚠️", label, "— ใช้ได้ในล็อบบี้เท่านั้น")
-                    return
-                end
-                task.wait(2)
-                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = CFrame.new(pos)
-                    print("[UI] ✅ Warped:", label)
-                else
-                    warn("[UI] ❌", label, "— ไม่มี Character")
-                end
-            end
-        end
-        local runStory     = warpTo(Vector3.new(-3241.04443359375, 128.85284423828125, -260.1893615722656), "สตอรี่")
-        local runRaid      = warpTo(Vector3.new(-3238.815673828125, 130.6044158935547, 273.1611328125),    "เรท")
-        local runChallenge = warpTo(Vector3.new(-3339.0986328125, 128.723388671875, -156.7079620361328),    "ชาเล้น")
-
-        -- ========== One-shot Use-Item (ปุ่ม 5, 6) ==========
-        local function useItem(itemKey, label)
-            return function()
-                if not inLobby() then
-                    print("[UI] ⚠️", label, "— ใช้ได้ในล็อบบี้เท่านั้น")
-                    return
-                end
-                task.wait(2)
-                local ok, err = pcall(function()
-                    RS_UI:WaitForChild("Packages", 5):WaitForChild("_Index", 5)
-                        :WaitForChild("sleitnick_knit@1.7.0", 5):WaitForChild("knit", 5)
-                        :WaitForChild("Services", 5):WaitForChild("ItemService", 5)
-                        :WaitForChild("RF", 5):WaitForChild("UseItem", 5)
-                        :InvokeServer(itemKey)
-                end)
-                if ok then print("[UI] ✅ Used:", label, "(" .. itemKey .. ")")
-                else warn("[UI] ❌", label, "failed:", err) end
-            end
-        end
-        local runNarutoDoor = useItem("KuramaFightKey4", "ประตูนารูโต๊ะ T4")
-        local runVegitoDoor = useItem("GokuBlackKey3",   "ประตูเบจิโต้ T3")
-
-        -- ========== ใคโด loop (ปุ่ม 4) — วนหาห้องทุก 60 วิ ==========
-        local function runKaido()
-            if not inLobby() then return end
-            pcall(function()
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(
-                    buffer.fromstring("+\005\000Kaido\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
-                task.wait(1)
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
-                print("[ใคโด] 🔄 Sent room request")
-            end)
-        end
-
-        -- ========== เซลแม็ก loop (ปุ่ม 11) — วนหาห้องทุก 60 วิ ==========
-        local function runCellMax()
-            if not inLobby() then return end
-            task.wait(2)
-            pcall(function()
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(
-                    buffer.fromstring("+\a\000CellMax\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
-                task.wait(1)
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
-                print("[เซลแม็ก] 🔄 Sent room request")
-            end)
-        end
-
-        -- ========== ราชามด loop (ปุ่ม 6) — วนหาห้องทุก 60 วิ ==========
-        local function runAntKing()
-            if not inLobby() then return end
-            task.wait(2)
-            pcall(function()
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(
-                    buffer.fromstring("+\a\000AntKing\000\000\000\128?\001\0001\000\t\000Nightmare\000\000\t\000WorldRaid\000\000"))
-                task.wait(1)
-                RS_UI:WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(".\001"))
-                print("[ราชามด] 🔄 Sent room request")
-            end)
-        end
-
-        -- ========== โกโจ/สุคุนะ/โกฮัง warp (ปุ่ม 12) — one-shot ใน lobby ==========
-        local runGojo = warpTo(Vector3.new(-2686.33056640625, 126.10442352294922, -63.13169479370117), "โกโจ/สุคุนะ/โกฮัง")
-
-        -- ========== แก้มัด (ปุ่ม 10) — ปล่อย ProximityPrompt "Free Unit" / "ยูนิตฟรี" ==========
-        local function isFreeUnitPrompt(obj)
-            local at = obj.ActionText or ""
-            local ot = obj.ObjectText or ""
-            -- รองรับทุกภาษา + ตรวจ ObjectText ด้วย (เผื่อภาษาอื่น)
-            if at == "Free Unit" or at == "ยูนิตฟรี" then return true end
-            if at:lower():find("free") and at:lower():find("unit") then return true end
-            if at:find("ยูนิตฟรี") or at:find("ฟรียูนิต") or at:find("ปลด") or at:find("แก้") then return true end
-            -- ObjectText บอกว่าโดน effect (Mochi แข็งตัว, Frozen, ฯลฯ)
-            if ot:find("แข็งตัว") or ot:lower():find("frozen") or ot:lower():find("trap") or ot:lower():find("bind") then return true end
-            return false
-        end
-
-        local function freeUnit()
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("ProximityPrompt") and obj.Enabled and isFreeUnitPrompt(obj) then
-                    local part = obj.Parent
-                    local pos = nil
-                    if part:IsA("Attachment") then pos = part.WorldPosition
-                    elseif part:IsA("BasePart") then pos = part.Position end
-                    if pos then
-                        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-                            task.wait(0.3)
-                            pcall(fireproximityprompt, obj)
-                            print("[FREE] Freed:", obj.ObjectText, "| Action:", obj.ActionText)
-                            task.wait(0.5)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- ========== คลิกกลางจอ (ปุ่ม 9) — เก็บไอเทมในเกม ทุก 5 วิ ==========
-        local function clickCenter()
-            if not inGame() then return end
-            local cam = workspace.CurrentCamera
-            if not cam then return end
-            local sz = cam.ViewportSize
-            local cx, cy = sz.X / 2, sz.Y / 2
-            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
-            task.wait(0.05)
-            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-        end
-
-        -- UI Frame
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "KaidoUI"; screenGui.ResetOnSpawn = false
-        screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        screenGui.Parent = playerGui
-
-        local frame = Instance.new("Frame")
-        -- 11 ปุ่ม × 36 + title 24 + padding 16 ≈ 436
-        frame.Name = "Main"; frame.Size = UDim2.new(0,170,0,432)
-        -- โหลดตำแหน่งล่าสุดที่ลากไว้ ถ้าไม่มี → fallback ที่ซ้ายบน (พ้นเมนู Roblox)
-        local savedX, savedY = loadPos()
-        if savedX and savedY then
-            frame.Position = UDim2.new(0, savedX, 0, savedY)
-            print("[UI] โหลดตำแหน่งล่าสุด:", savedX, savedY)
-        else
-            frame.Position = UDim2.new(0, 230, 0, 10)
-        end
-        frame.BackgroundColor3 = Color3.fromRGB(10,10,20)
-        frame.BorderSizePixel = 0; frame.Parent = screenGui
-        Instance.new("UICorner",frame).CornerRadius = UDim.new(0,6)
-        local ms = Instance.new("UIStroke",frame); ms.Color=Color3.fromRGB(255,107,53); ms.Thickness=2
-
-        -- TitleBar สำหรับลาก + ปุ่มย่อ
-        local dragBar = Instance.new("TextButton", frame)
-        dragBar.Name = "DragBar"
-        dragBar.Size = UDim2.new(1, 0, 0, 24)
-        dragBar.Position = UDim2.new(0, 0, 0, 0)
-        dragBar.BackgroundTransparency = 1
-        dragBar.Text = ""; dragBar.ZIndex = 10
-
-        local ttl = Instance.new("TextLabel", dragBar)
-        -- ลดความกว้าง title เพื่อเหลือที่ใส่ปุ่ม Replay/NextMap
-        ttl.Size=UDim2.new(0,80,1,0); ttl.Position=UDim2.new(0,4,0,0)
-        ttl.BackgroundTransparency=1; ttl.Text="⚔ UTDX UI"
-        ttl.TextColor3=Color3.fromRGB(255,107,53); ttl.TextSize=11; ttl.Font=Enum.Font.GothamBold
-        ttl.TextXAlignment=Enum.TextXAlignment.Left
-
-        -- ⭐ ปุ่ม Replay (▶) บน title bar — กดได้แม้ UI ย่ออยู่
-        local btnRp = Instance.new("TextButton", frame)
-        btnRp.Name = "TopBtnReplay"
-        btnRp.Size = UDim2.new(0,26,0,18); btnRp.Position = UDim2.new(0,86,0,3)
-        btnRp.BackgroundColor3 = Color3.fromRGB(30,30,50); btnRp.BorderSizePixel = 0
-        btnRp.Text = "▶"; btnRp.TextColor3 = Color3.fromRGB(100,255,100)
-        btnRp.TextSize = 14; btnRp.Font = Enum.Font.GothamBold; btnRp.ZIndex = 15
-        Instance.new("UICorner", btnRp).CornerRadius = UDim.new(0,4)
-        local sRp = Instance.new("UIStroke", btnRp); sRp.Color = Color3.fromRGB(80,80,100); sRp.Thickness = 1
-
-        -- ⭐ ปุ่ม NextMap (▶▶) บน title bar
-        local btnNm = Instance.new("TextButton", frame)
-        btnNm.Name = "TopBtnNextMap"
-        btnNm.Size = UDim2.new(0,28,0,18); btnNm.Position = UDim2.new(0,116,0,3)
-        btnNm.BackgroundColor3 = Color3.fromRGB(30,30,50); btnNm.BorderSizePixel = 0
-        btnNm.Text = "▶▶"; btnNm.TextColor3 = Color3.fromRGB(100,255,100)
-        btnNm.TextSize = 11; btnNm.Font = Enum.Font.GothamBold; btnNm.ZIndex = 15
-        Instance.new("UICorner", btnNm).CornerRadius = UDim.new(0,4)
-        local sNm = Instance.new("UIStroke", btnNm); sNm.Color = Color3.fromRGB(80,80,100); sNm.Thickness = 1
-
-        -- ปุ่มย่อ/ขยาย
-        local btnMin = Instance.new("TextButton", frame)
-        btnMin.Size = UDim2.new(0,18,0,18); btnMin.Position = UDim2.new(1,-22,0,3)
-        btnMin.BackgroundColor3 = Color3.fromRGB(50,50,70); btnMin.BorderSizePixel = 0
-        btnMin.Text = "—"; btnMin.TextColor3 = Color3.fromRGB(200,200,200)
-        btnMin.TextSize = 11; btnMin.Font = Enum.Font.GothamBold; btnMin.ZIndex = 15
-        Instance.new("UICorner", btnMin).CornerRadius = UDim.new(0,4)
-
-
-        local function makeButton(text, posY)
-            local b = Instance.new("TextButton",frame)
-            b.Size=UDim2.new(1,-16,0,28); b.Position=UDim2.new(0,8,0,posY)
-            b.BackgroundColor3=Color3.fromRGB(30,30,50); b.TextColor3=Color3.fromRGB(200,200,200)
-            b.Text=text; b.TextSize=11; b.Font=Enum.Font.GothamBold; b.BorderSizePixel=0
-            Instance.new("UICorner",b).CornerRadius=UDim.new(0,4)
-            local s=Instance.new("UIStroke",b); s.Color=Color3.fromRGB(80,80,100); s.Thickness=1
-            return b,s
-        end
-
-        -- 11 ปุ่ม (Replay/NextMap ย้ายไปบน title bar แล้ว)
-        local btnSt, sSt   = makeButton("▶ สตอรี่",              26)   -- 1
-        local btnRt, sRt   = makeButton("▶ เรท",                 62)   -- 2
-        local btnCh, sCh   = makeButton("▶ ชาเล้น",              98)   -- 3
-        local btnKd, sKd   = makeButton("▶ ใคโด",                134)  -- 4
-        local btnCM, sCM   = makeButton("▶ เซลแม็ก",              170)  -- 5
-        local btnAK, sAK   = makeButton("▶ ราชามด",              206)  -- 6
-        local btnGj, sGj   = makeButton("▶ โกโจ/สุคุนะ/โกฮัง",   242)  -- 7
-        local btnNd, sNd   = makeButton("▶ ประตูนารูโต๊ะ T4",   278)  -- 8
-        local btnVd, sVd   = makeButton("▶ ประตูเบจิโต้ T3",    314)  -- 9
-        local btnCC, sCC   = makeButton("▶ คลิกกลางจอ",          350)  -- 10
-        local btnFU, sFU   = makeButton("▶ แก้มัด",               386)  -- 11
-
-        -- เก็บปุ่มทั้งหมดเข้า list (ไม่รวม btnRp/btnNm ที่อยู่บน title bar)
-        local ALL_BTNS = { btnSt, btnRt, btnCh, btnKd, btnCM, btnAK, btnGj, btnNd, btnVd, btnCC, btnFU }
-        local function setBtnsVisible(v)
-            for _, b in ipairs(ALL_BTNS) do b.Visible = v end
-        end
-
-        -- ย่อ/ขยาย UI
-        local isMinimized = true
-        local FULL_SIZE   = UDim2.new(0,170,0,432)
-        local MINI_SIZE   = UDim2.new(0,170,0,24)
-
-        -- เริ่มต้นด้วยสถานะย่อ
-        frame.Size  = MINI_SIZE
-        btnMin.Text = "□"
-        setBtnsVisible(false)
-
-        btnMin.MouseButton1Click:Connect(function()
-            isMinimized = not isMinimized
-            if isMinimized then
-                frame.Size  = MINI_SIZE
-                btnMin.Text = "□"
-                setBtnsVisible(false)
-            else
-                frame.Size  = FULL_SIZE
-                btnMin.Text = "—"
-                setBtnsVisible(true)
-            end
-        end)
-
-        -- Drag (จับ offset ณ จุดที่กด แล้วลากตามเมาส์อย่างถูกต้อง)
-        local UIS2 = game:GetService("UserInputService")
-        local dragging2 = false
-        local dragStart, frameStart
-
-        dragBar.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging2 = true
-                dragStart  = UIS2:GetMouseLocation()
-                frameStart = frame.AbsolutePosition
-            end
-        end)
-
-        UIS2.InputChanged:Connect(function(i)
-            if dragging2 and i.UserInputType == Enum.UserInputType.MouseMovement then
-                local mp = UIS2:GetMouseLocation()
-                local dx = mp.X - dragStart.X
-                local dy = mp.Y - dragStart.Y
-                frame.Position = UDim2.new(0, frameStart.X + dx, 0, frameStart.Y + dy)
-            end
-        end)
-
-        UIS2.InputEnded:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1 then
-                if dragging2 then
-                    -- บันทึกตำแหน่งล่าสุดทันทีหลังเลิกลาก
-                    savePos(frame.AbsolutePosition.X, frame.AbsolutePosition.Y)
-                end
-                dragging2 = false
-            end
-        end)
-
-        -- ========== One-shot helper (กดทีทำงานครั้งเดียว, รีเซ็ตสีทันที) ==========
-        local function makeOneShot(btn, stroke, runFn, label)
-            btn.MouseButton1Click:Connect(function()
-                local origBg = btn.BackgroundColor3
-                local origStroke = stroke.Color
-                -- flash สีเขียวสั้นๆ 0.2 วิ แล้วรีเซ็ตเลย (ไม่รอ runFn)
-                btn.BackgroundColor3 = Color3.fromRGB(50, 120, 50)
-                stroke.Color = Color3.fromRGB(80, 200, 80)
-                task.spawn(function()
-                    task.wait(0.2)
-                    btn.BackgroundColor3 = origBg
-                    stroke.Color = origStroke
-                end)
-                -- งานจริงทำเบื้องหลัง — ปุ่มกลับมาคลิกได้ทันที
-                task.spawn(function()
-                    local ok, err = pcall(runFn)
-                    if not ok then warn("[UI] error in", label, ":", err) end
-                end)
-            end)
-        end
-
-        -- ========== Action Flag Toggle (กด ON = ทำงาน 1 ครั้ง + แดงค้าง, กดอีก = ปิด) ==========
-        local function makeActionFlagToggle(btn, stroke, saveName, runFn, label)
-            local isOn = false
-            local function setVisualOn()
-                btn.Text = "⏹ " .. label
-                btn.BackgroundColor3 = Color3.fromRGB(180,40,40)
-                stroke.Color = Color3.fromRGB(255,80,80)
-            end
-            local function setVisualOff()
-                btn.Text = "▶ " .. label
-                btn.BackgroundColor3 = Color3.fromRGB(30,30,50)
-                stroke.Color = Color3.fromRGB(80,80,100)
-            end
-            local function start()
-                isOn = true
-                setVisualOn()
-                saveFile(saveName, true)
-                -- ทำงาน 1 ครั้งเบื้องหลัง — ไม่บล็อก UI
-                task.spawn(function()
-                    local ok, err = pcall(runFn)
-                    if not ok then warn("[UI] error in", label, ":", err) end
-                end)
-            end
-            local function stop()
-                isOn = false
-                setVisualOff()
-                saveFile(saveName, false)
-            end
-            btn.MouseButton1Click:Connect(function()
-                if not isOn then start() else stop() end
-            end)
-            -- auto-restore: แค่ set visual = ON (ไม่ re-execute)
-            return function()
-                if loadFile(saveName) then
-                    isOn = true
-                    setVisualOn()
-                    print("[UI] Restored ON:", label)
-                end
-            end
-        end
-
-        -- ========== Loop toggle (กดเปิด → ลูปเรื่อยๆ, กดอีกที = หยุด) ==========
-        local function makeToggle(btn, stroke, saveName, runFn, label, intervalSec)
-            intervalSec = intervalSec or 2
-            local isOn=false; local lp=nil
-            local function start()
-                isOn=true; btn.Text="⏹ "..label
-                btn.BackgroundColor3=Color3.fromRGB(180,40,40); stroke.Color=Color3.fromRGB(255,80,80)
-                saveFile(saveName,true)
-                lp=task.spawn(function()
-                    while isOn do
-                        pcall(runFn)
-                        task.wait(intervalSec)
-                    end
-                end)
-            end
-            local function stop()
-                isOn=false; if lp then pcall(task.cancel, lp); lp=nil end
-                btn.Text="▶ "..label
-                btn.BackgroundColor3=Color3.fromRGB(30,30,50); stroke.Color=Color3.fromRGB(80,80,100)
-                saveFile(saveName,false)
-            end
-            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
-            return function() if loadFile(saveName) then print("[UI] Auto:", label); start() end end
-        end
-
-        -- ========== Flag toggle (Replay/NextMap — แค่ flip flag) ==========
-        local autoFlags = { replay = false, nextMap = false }
-        local function makeFlagToggle(btn, stroke, saveName, label, flagKey)
-            local isOn = false
-            local function start()
-                isOn = true
-                btn.Text = "⏹ " .. label
-                btn.BackgroundColor3 = Color3.fromRGB(180,40,40); stroke.Color = Color3.fromRGB(255,80,80)
-                saveFile(saveName, true)
-                autoFlags[flagKey] = true
-            end
-            local function stop()
-                isOn = false
-                btn.Text = "▶ " .. label
-                btn.BackgroundColor3 = Color3.fromRGB(30,30,50); stroke.Color = Color3.fromRGB(80,80,100)
-                saveFile(saveName, false)
-                autoFlags[flagKey] = false
-            end
-            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
-            return function() if loadFile(saveName) then print("[UI] Auto:", label); start() end end
-        end
-
-        -- ========== ผูกปุ่มกับฟังก์ชัน ==========
-        -- 1-3: One-shot (ล็อบบี้) — กด = warp + flash เขียว
-        makeOneShot(btnSt, sSt, runStory,     "สตอรี่")
-        makeOneShot(btnRt, sRt, runRaid,      "เรท")
-        makeOneShot(btnCh, sCh, runChallenge, "ชาเล้น")
-
-        -- 4: ใคโด loop toggle (ล็อบบี้, ทุก 60 วิ)
-        local autoKd = makeToggle(btnKd, sKd, "kaido_state.txt", runKaido, "ใคโด", 60)
-
-        -- 7-8: One-shot use-item (ล็อบบี้) — กด = flash + ใช้ item ครั้งเดียว
-        makeOneShot(btnNd, sNd, runNarutoDoor, "ประตูนารูโต๊ะ T4")
-        makeOneShot(btnVd, sVd, runVegitoDoor, "ประตูเบจิโต้ T3")
-
-        -- Top-bar Flag toggle: ไม่เปลี่ยนข้อความ แค่เปลี่ยนสี bg เป็นแดงเมื่อ ON
-        local function makeTopBarFlagToggle(btn, stroke, saveName, flagKey)
-            local isOn = false
-            local function start()
-                isOn = true
-                btn.BackgroundColor3 = Color3.fromRGB(180,40,40)
-                btn.TextColor3 = Color3.fromRGB(255,255,255)
-                stroke.Color = Color3.fromRGB(255,80,80)
-                saveFile(saveName, true)
-                autoFlags[flagKey] = true
-            end
-            local function stop()
-                isOn = false
-                btn.BackgroundColor3 = Color3.fromRGB(30,30,50)
-                btn.TextColor3 = Color3.fromRGB(100,255,100)
-                stroke.Color = Color3.fromRGB(80,80,100)
-                saveFile(saveName, false)
-                autoFlags[flagKey] = false
-            end
-            btn.MouseButton1Click:Connect(function() if not isOn then start() else stop() end end)
-            return function() if loadFile(saveName) then print("[UI] Auto: top-bar", flagKey); start() end end
-        end
-
-        -- Top bar: Replay (▶) + NextMap (▶▶)
-        local autoR  = makeTopBarFlagToggle(btnRp, sRp, "replay_state.txt",  "replay")
-        local autoNm = makeTopBarFlagToggle(btnNm, sNm, "nextmap_state.txt", "nextMap")
-
-        -- 9: คลิกกลางจอ loop toggle (ในเกม, ทุก 5 วิ)
-        local autoCC = makeToggle(btnCC, sCC, "clickcenter_state.txt", clickCenter, "คลิกกลางจอ", 5)
-
-        -- 10: แก้มัด loop toggle — สแกน Free Unit prompts ทุก 0.2 วิ
-        local autoFU = makeToggle(btnFU, sFU, "freeunit_state.txt", freeUnit, "แก้มัด", 0.2)
-
-        -- 5: เซลแม็ก loop toggle (ล็อบบี้, ทุก 60 วิ)
-        local autoCM = makeToggle(btnCM, sCM, "cellmax_state.txt", runCellMax, "เซลแม็ก", 60)
-
-        -- 6: ราชามด loop toggle (ล็อบบี้, ทุก 60 วิ)
-        local autoAK = makeToggle(btnAK, sAK, "antking_state.txt", runAntKing, "ราชามด", 60)
-
-        -- 7: โกโจ/สุคุนะ/โกฮัง one-shot warp (ล็อบบี้)
-        makeOneShot(btnGj, sGj, runGojo, "โกโจ/สุคุนะ/โกฮัง")
-
-        -- Hook MatchFinished → fire Replay/NextMap ตาม flag
-        local LogServiceUI = game:GetService("LogService")
-        local lastFireTime = 0
-
-        -- หา MissionResultFrame โผล่มาแล้วหรือยัง (สู้ popup เช่น tamed beast)
-        -- ⚠️ MissionResultFrame เป็น ScreenGui → ใช้ .Enabled (ไม่ใช่ .Visible)
-        local function isResultVisible()
-            local pg = game.Players.LocalPlayer:FindFirstChild("PlayerGui")
-            local ui = pg and pg:FindFirstChild("GameUI")
-            local mrf = ui and ui:FindFirstChild("MissionResultFrame")
-            if not mrf then return false end
-            local ok, result = pcall(function()
-                if mrf:IsA("ScreenGui") then return mrf.Enabled end
-                if mrf:IsA("GuiObject") then return mrf.Visible end
-                return false
-            end)
-            return ok and result or false
-        end
-
-        -- ⭐ ปิด popup ที่บัง MissionResultFrame
-        -- ScreenGui ที่มักโผล่บัง: Drops (item drop), UltraBossNotification, Resonance, etc.
-        local VIM_UI = game:GetService("VirtualInputManager")
-        local POPUP_NAMES = {
-            "Drops",
-            "UltraBossNotification",
-            "Resonance",
-            "UnrivaledGUI",
-            "Dialogue",              -- ⭐ "Universal Gems Part" / cutscene popup
-            "Rewards",
-            "Finished",
-            "BlackScreen",
-        }
-
-        local function forceDisablePopups()
-            local closed = 0
-            for _, name in ipairs(POPUP_NAMES) do
-                local sg = player.PlayerGui:FindFirstChild(name)
-                if sg then
-                    -- ลองหาปุ่มปิด/skip/continue ใน popup ก่อน
-                    local clicked = false
-                    for _, btn in ipairs(sg:GetDescendants()) do
-                        if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-                            local nm = btn.Name:lower()
-                            local tx = (btn:IsA("TextButton") and btn.Text or ""):lower()
-                            if nm:find("close") or nm:find("skip") or nm:find("continue")
-                               or nm:find("ok") or nm:find("confirm") or nm:find("dismiss")
-                               or tx:find("close") or tx:find("skip") or tx:find("continue")
-                               or tx:find("ok") or tx:find("confirm") then
-                                pcall(function()
-                                    if firesignal then firesignal(btn.MouseButton1Click) end
-                                end)
-                                pcall(function()
-                                    if firesignal then firesignal(btn.Activated) end
-                                end)
-                                clicked = true
-                                break
-                            end
-                        end
-                    end
-                    -- fallback: disable ScreenGui เลย
-                    if sg:IsA("ScreenGui") and sg.Enabled then
-                        sg.Enabled = false
-                        closed = closed + 1
-                        print("[UI] 🚫 Force-closed popup:", name, clicked and "(via button)" or "(disabled)")
-                    end
-                end
-            end
-            return closed > 0
-        end
-
-        -- เช็ค popup ใดๆ ที่รู้จัก enabled อยู่
-        local function anyPopupEnabled()
-            for _, name in ipairs(POPUP_NAMES) do
-                local sg = player.PlayerGui:FindFirstChild(name)
-                if sg and sg:IsA("ScreenGui") and sg.Enabled then
-                    return name
-                end
-            end
-            return nil
-        end
-
-        local function dismissPopups(maxClicks)
-            local cam = workspace.CurrentCamera
-            if not cam then return false end
-            for i = 1, maxClicks do
-                -- ⭐ ปิด popup ที่รู้จัก "ก่อน" เสมอ (เพราะ Rewards/Drops ทับ MissionResult ได้)
-                local popupName = anyPopupEnabled()
-                if popupName then
-                    print("[UI] 🔍 พบ popup blocking:", popupName, "→ ปิด")
-                    forceDisablePopups()
-                    task.wait(0.3)
-                end
-
-                -- เช็ค MissionResult — ถ้า visible และไม่มี popup ค้าง = พร้อม vote
-                if isResultVisible() and not anyPopupEnabled() then
-                    print("[UI] ✅ MissionResult พร้อมแล้ว (รอบ", i, ")")
-                    return true
-                end
-
-                -- fallback: คลิกกลางจอ
-                local size = cam.ViewportSize
-                local cx, cy = size.X / 2, size.Y / 2
-                VIM_UI:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
-                task.wait(0.05)
-                VIM_UI:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                task.wait(0.5)
-            end
-            return isResultVisible() and not anyPopupEnabled()
-        end
-
-        local function waitForResultFrame(timeout)
-            local elapsed = 0
-            while elapsed < timeout do
-                if isResultVisible() then return true end
-                task.wait(0.3)
-                elapsed = elapsed + 0.3
-            end
-            return false
-        end
-
-        local function fireVote(remoteName, label)
-            -- ใช้ FindFirstChild ป้องกัน yield ค้าง ถ้า path ไม่มี
-            local ok, err = pcall(function()
-                local pkgs = RS_UI:WaitForChild("Packages", 5)
-                if not pkgs then error("no Packages") end
-                local idx = pkgs:WaitForChild("_Index", 5); if not idx then error("no _Index") end
-                local knit = idx:WaitForChild("sleitnick_knit@1.7.0", 5):WaitForChild("knit", 5)
-                local svc  = knit:WaitForChild("Services", 5):WaitForChild("WaveService", 5)
-                local re   = svc:WaitForChild("RE", 5):WaitForChild(remoteName, 5)
-                if not re then error("no remote " .. remoteName) end
-                re:FireServer()
-            end)
-            if ok then print("[UI] ▶ " .. label .. " fired")
-            else warn("[UI] ❌ " .. label .. " failed:", err) end
-        end
-
-        LogServiceUI.MessageOut:Connect(function(message)
-            if not message:find("open MatchFinished") then return end
-            local now = tick()
-            if now - lastFireTime < 15 then return end
-            lastFireTime = now
-
-            task.spawn(function()
-                -- คลิกกลางจอเพื่อปิด popup (tamed beast / item drop) ทีละอันจน MissionResultFrame โผล่
-                local shown = dismissPopups(30)  -- คลิกได้สูงสุด 30 ครั้ง (~15 วิ)
-                if not shown then
-                    -- เผื่อ MissionResult โผล่ช้ากว่า popup หมด — รออีกหน่อย
-                    shown = waitForResultFrame(10)
-                end
-                if not shown then
-                    warn("[UI] MissionResultFrame ไม่โผล่ — ยังจะลองยิง")
-                end
-                task.wait(1.5) -- buffer ให้ vote UI ready
-
-                -- ยิงซ้ำ 3 ครั้ง ห่างกัน 2 วิ กัน race กับ popup
-                -- ⭐ ลำดับความสำคัญ: Replay > NextMap > Lobby(Kaido)
-                local kaidoOn = loadFile("kaido_state.txt")
-                for i = 1, 3 do
-                    if autoFlags.replay then
-                        fireVote("VoteReplay", "VoteReplay #" .. i)
-                    elseif autoFlags.nextMap then
-                        fireVote("NextMap", "NextMap #" .. i)
-                    elseif kaidoOn then
-                        fireVote("Lobby", "Lobby (Kaido auto) #" .. i)
-                    else
-                        break
-                    end
-                    task.wait(2)
-                end
-            end)
-        end)
-
-        -- Auto-restore toggle ที่เปิดไว้ก่อน rejoin
-        task.wait(1)
-        autoKd()  -- ใคโด (loop จะรันต่อ)
-        autoR()   -- Replay
-        autoNm()  -- NextMap
-        autoCC()  -- คลิกกลางจอ (loop จะรันต่อ)
-        autoFU()  -- แก้มัด (loop จะรันต่อ)
-        autoCM()  -- เซลแม็ก (loop จะรันต่อ)
-        autoAK()  -- ราชามด (loop จะรันต่อ)
-        print("[UI] Ready! PlaceId:", game.PlaceId)
-    end
-end
-
--- ============================================================
--- [UTDX] Merciless God Fight Auto Handler
--- ============================================================
-task.spawn(function()
-    local HOME_POS = Vector3.new(194.84361267089844, 3.4146347045898438, -6796.5986328125)
-    local ZENO_POS = Vector3.new(161.1033935546875, 4.182663917541504, -6715.64990234375)
-    local lastHandle = {}
-    local VIS = game:GetService("VirtualInputManager")
-
-    local function getCurrentStage()
-        local stage = ""
-        pcall(function()
-            stage = game.Players.LocalPlayer.PlayerGui.GameUI.HUD.RightFrame.Stage.Act.Text
-        end)
-        return stage
-    end
-
-    local function handlePrompt(obj)
-        if not obj or not obj.Parent then return end
-        if not getCurrentStage():lower():find("merciless god") then return end
-        if not obj.Enabled then return end
-
-        local key = tostring(obj)
-        if tick() - (lastHandle[key] or 0) < 5 then return end
-        lastHandle[key] = tick()
-
-        print("[AUTO] Handling:", obj.ActionText)
-        local part = obj.Parent
-        local pos = nil
-        if part:IsA("Attachment") then pos = part.WorldPosition
-        elseif part:IsA("BasePart") then pos = part.Position end
-
-        if pos then
-            local hrp = game.Players.LocalPlayer.Character and
-                        game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-                task.wait(0.3)
-                fireproximityprompt(obj)
-                print("[AUTO] Done:", obj.ActionText)
-
-                if obj.ActionText == "Activate" then
-                    -- รอ 2 วิ แล้วไปกด E ค้างที่จุด Zeno
-                    task.wait(2)
-                    hrp.CFrame = CFrame.new(ZENO_POS)
-                    task.wait(0.3)
-                    print("[AUTO] Holding E at Zeno position...")
-                    VIS:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                    task.wait(5)
-                    VIS:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                    print("[AUTO] Done holding E!")
-                end
-
-                task.wait(0.5)
-                hrp.CFrame = CFrame.new(HOME_POS)
-                print("[AUTO] Warped back home!")
-            end
-        end
-    end
-
-    task.spawn(function()
-        local inStage = false
-        local lastStage = ""
-        while true do
-            local stage = getCurrentStage()
-            -- debug: print เมื่อ stage เปลี่ยน
-            if stage ~= lastStage then
-                print("[AUTO DEBUG] Stage:", string.format("%q", stage))
-                lastStage = stage
-            end
-            if stage:lower():find("merciless god") then
-                if not inStage then
-                    inStage = true
-                    lastHandle = {}
-                    print("[AUTO] 🎯 Entered Merciless God stage!")
-                    local hrp = game.Players.LocalPlayer.Character and
-                                game.Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        hrp.CFrame = CFrame.new(HOME_POS)
-                        print("[AUTO] Warped to home!")
-                    end
-                end
-                for _, obj in ipairs(game.Workspace:GetDescendants()) do
-                    if obj:IsA("ProximityPrompt") and obj.Enabled then
-                        local at = obj.ActionText or ""
-                        if at == "Pay 10000 Yen" or at == "Activate"
-                           or at:lower():find("pay") or at:lower():find("activate") then
-                            task.spawn(function() handlePrompt(obj) end)
-                        end
-                    end
-                end
-            else
-                inStage = false
-            end
-            task.wait(0.1)
-        end
-    end)
-
-    print("Merciless God Fight watcher ready!")
 end)
+
+-- ⭐ ตัวประมวลผลคิว (นอก hook): หา ชื่อยูนิต + คำนวณ dt + print
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        while #recPending > 0 do
+            local item = table.remove(recPending, 1)
+            local dt = math.min(item.t - recLastT, MAX_STEP_WAIT)
+            if dt < 0 then dt = 0 end
+            recLastT = item.t
+            local uname = "slot_" .. tostring(item.slot)
+            pcall(function()
+                uname = slotUnitName(item.slot) or uname
+            end)
+            table.insert(recSteps, {
+                unit = uname,
+                slot = item.slot,
+                dt = math.floor(dt * 10) / 10,
+                cf = { item.cf:GetComponents() },
+            })
+            print(("[Carry ⏺] #%d %s (slot %s) | หน่วง %.1fs")
+                :format(#recSteps, uname, tostring(item.slot), dt))
+        end
+    end
+end)
+
+local function startRecord()
+    local info = getCurrentStageKey()
+    if not info then
+        warn("[Carry] ❌ ไม่รู้ว่าอยู่ด่านไหน — ต้องอัดตอนอยู่ในด่าน")
+        return false
+    end
+    recKey = info
+    recSteps = {}
+    recPending = {}
+    recLastT = tick()
+    recording = true
+    print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย ทุกการวางจะถูกจำ")
+        :format(info.stage, info.act))
+    return true
+end
+
+local function stopRecord()
+    recording = false
+    -- รอคิวประมวลผลเก็บตกให้หมดก่อนบันทึก
+    local t0 = tick()
+    while #recPending > 0 and tick() - t0 < 3 do
+        task.wait(0.2)
+    end
+    task.wait(0.5)
+    if not recKey or #recSteps == 0 then
+        warn("[Carry] ⚠️ ไม่มีข้อมูลอัด — ไม่บันทึก")
+        return false
+    end
+    local file = keyToFile(recKey)
+    local ok = pcall(function()
+        writefile(file, HttpService:JSONEncode({
+            stage = recKey.stage,
+            act = recKey.act,
+            steps = recSteps,
+        }))
+    end)
+    if ok then
+        print(("[Carry 💾] บันทึกแล้ว: %s (%d ตัว)"):format(file, #recSteps))
+    else
+        warn("[Carry] ❌ เขียนไฟล์ไม่สำเร็จ")
+    end
+    return ok
+end
+
+local function loadRecord(info)
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(keyToFile(info)))
+    end)
+    if ok and type(data) == "table" and type(data.steps) == "table" and #data.steps > 0 then
+        return data
+    end
+    return nil
+end
+
+-- ============================================================
+-- ⭐ Auto-Replay: จบด่านแล้วกดรีเพลเอง (เฉพาะตอนโหมดแบก ON)
+-- ============================================================
+local RESTART_OPCODES = { 61, 58, 59, 60, 62, 63, 64 }
+
+local function findRepeatBtn()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil end
+    for _, btn in ipairs(prompt:GetDescendants()) do
+        if btn:IsA("GuiButton") and btn.Visible then
+            for _, l in ipairs(btn:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Text == "Repeat Stage" then
+                    return btn
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function fireRestart()
+    local sig = game:GetService("ReplicatedStorage")
+        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+    replayFiring = true
+    for _, op in ipairs(RESTART_OPCODES) do
+        pcall(function() sig:FireServer(op, "Restart") end)
+        task.wait(0.05)
+    end
+    replayFiring = false
+end
+
+-- ============================================================
+-- โหมดแบก (Playback)
+-- ============================================================
+local carryOn = false
+local playedThisMatch = false
+local lastUnitsSeen = 0
+
+local function playRecord(data)
+    print(("[Carry ▶] วางตาม record: %s - Act %s (%d ตัว)")
+        :format(data.stage, data.act, #data.steps))
+    for i, step in ipairs(data.steps) do
+        if not carryOn then return end
+        task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
+        -- หา slot จากชื่อยูนิต (กันกรณีสลับตำแหน่ง hotbar) — fallback slot ที่อัดไว้
+        local slot = findSlotByUnitName(step.unit) or step.slot
+        local cf = CFrame.new(unpack(step.cf))
+        local before = unitCount()
+        firePlace(slot, cf)
+        task.wait(0.8)
+        if unitCount() > before then
+            print(("[Carry ▶] ✅ #%d %s (slot %d)"):format(i, step.unit, slot))
+        else
+            -- วางไม่ติด (เงิน/ลิมิต/จุดโดนทับ) — ลองซ้ำอีกครั้งเดียวแล้วไปต่อ
+            task.wait(2)
+            firePlace(slot, cf)
+            task.wait(0.8)
+            if unitCount() > before then
+                print(("[Carry ▶] ✅ #%d %s (รอบ 2)"):format(i, step.unit))
+            else
+                warn(("[Carry ▶] ⚠️ #%d %s วางไม่ติด — ข้าม"):format(i, step.unit))
+            end
+        end
+    end
+    print("[Carry ▶] ✅ วางครบตาม record แล้ว")
+end
+
+-- ⭐ ลูปกดรีเพลตอนจบด่าน (แยกจากลูปวาง)
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if carryOn and not recording then
+            local btn = findRepeatBtn()
+            if btn then
+                print("[Carry] 🔄 จบด่าน → กดรีเพล")
+                fireRestart()
+                task.wait(3)
+                -- ยังค้าง → กดปุ่ม Repeat Stage ตรงๆ (getconnections)
+                local b2 = findRepeatBtn()
+                if b2 then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(b2.MouseButton1Click)) do c:Fire() end
+                        for _, c in ipairs(getconnections(b2.Activated)) do c:Fire() end
+                    end)
+                    task.wait(3)
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if carryOn and not recording then
+            local info = getCurrentStageKey()
+            if not info then
+                playedThisMatch = false   -- ออกจากด่าน/ล็อบบี้ → พร้อมวางรอบใหม่
+            else
+                local units = unitCount()
+                -- จับ restart: เคยวางแล้ว แต่ตัวในสนามหายเกลี้ยง → วางใหม่
+                if playedThisMatch and units == 0 and lastUnitsSeen > 0 then
+                    print("[Carry] 🔄 ตัวในสนามหาย (restart?) → วางรอบใหม่")
+                    playedThisMatch = false
+                end
+                lastUnitsSeen = units
+                if not playedThisMatch and not findRepeatBtn() then  -- ห้ามวางตอนหน้าจบเกมค้าง
+                    local data = loadRecord(info)
+                    if data then
+                        playedThisMatch = true
+                        task.wait(2)   -- รอด่านโหลดนิ่ง
+                        playRecord(data)
+                    else
+                        print(("[Carry] ⚠️ ยังไม่เคยอัดด่าน %s - Act %s (อัดก่อนถึงใช้ได้)")
+                            :format(info.stage, info.act))
+                        playedThisMatch = true   -- กันสแปมเตือน (reset ตอนออกด่าน)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- UI เล็กๆ: ⏺ อัด / ▶ โหมดแบก / สถานะ
+-- ============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AE_Carry_UI"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999999
+screenGui.Parent = player.PlayerGui
+
+local frame = Instance.new("Frame", screenGui)
+frame.Size = UDim2.new(0, 190, 0, 118)
+frame.Position = UDim2.new(0, 210, 0.5, -60)
+frame.BackgroundColor3 = Color3.fromRGB(10, 20, 12)
+frame.BorderSizePixel = 0
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+local ms = Instance.new("UIStroke", frame)
+ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
+
+local dragBar = Instance.new("TextButton", frame)
+dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
+dragBar.Text = "💪 AE Carry"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
+
+local status = Instance.new("TextLabel", frame)
+status.Size = UDim2.new(1, -12, 0, 16); status.Position = UDim2.new(0, 6, 0, 22)
+status.BackgroundTransparency = 1
+status.TextColor3 = Color3.fromRGB(180, 180, 180)
+status.Text = "..."; status.TextSize = 9
+status.Font = Enum.Font.Gotham
+status.TextXAlignment = Enum.TextXAlignment.Left
+
+local function mkBtn(text, posY, color)
+    local b = Instance.new("TextButton", frame)
+    b.Size = UDim2.new(1, -16, 0, 30)
+    b.Position = UDim2.new(0, 8, 0, posY)
+    b.BackgroundColor3 = color
+    b.TextColor3 = Color3.fromRGB(230, 230, 230)
+    b.Text = text; b.TextSize = 11
+    b.Font = Enum.Font.GothamBold; b.BorderSizePixel = 0
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    return b
+end
+
+local btnRec   = mkBtn("⏺ อัดการวาง (ด่านนี้)", 42, Color3.fromRGB(45, 35, 35))
+local btnCarry = mkBtn("▶ โหมดแบก: OFF", 80, Color3.fromRGB(30, 45, 35))
+
+btnRec.MouseButton1Click:Connect(function()
+    if recording then
+        stopRecord()
+        btnRec.Text = "⏺ อัดการวาง (ด่านนี้)"
+        btnRec.BackgroundColor3 = Color3.fromRGB(45, 35, 35)
+    else
+        if startRecord() then
+            btnRec.Text = "⏹ หยุดอัด + บันทึก"
+            btnRec.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+        end
+    end
+end)
+
+btnCarry.MouseButton1Click:Connect(function()
+    carryOn = not carryOn
+    playedThisMatch = false
+    if carryOn then
+        btnCarry.Text = "⏹ โหมดแบก: ON"
+        btnCarry.BackgroundColor3 = Color3.fromRGB(30, 140, 70)
+        print("[Carry] ▶ เปิดโหมดแบก — เจอด่านที่เคยอัดจะวางเอง")
+    else
+        btnCarry.Text = "▶ โหมดแบก: OFF"
+        btnCarry.BackgroundColor3 = Color3.fromRGB(30, 45, 35)
+        print("[Carry] ⏹ ปิดโหมดแบก")
+    end
+end)
+
+-- อัปเดตสถานะบน UI
+task.spawn(function()
+    while true do
+        task.wait(2)
+        local info = getCurrentStageKey()
+        if info then
+            local has = loadRecord(info) ~= nil
+            status.Text = ("📍 %s - Act %s %s"):format(
+                info.stage, info.act, has and "(มี record ✅)" or "(ยังไม่อัด)")
+        else
+            status.Text = "📍 อยู่ Lobby / ไม่รู้ด่าน"
+        end
+    end
+end)
+
+-- Drag
+local UIS = game:GetService("UserInputService")
+local dragging, dragStart, frameStart
+dragBar.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = UIS:GetMouseLocation()
+        frameStart = frame.AbsolutePosition
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+        local m = UIS:GetMouseLocation()
+        frame.Position = UDim2.new(0, frameStart.X + m.X - dragStart.X, 0, frameStart.Y + m.Y - dragStart.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+end)
+
+_G.AECARRY_STOP = function()
+    carryOn = false
+    recording = false
+    print("[Carry] ⏹ หยุดทั้งหมด")
+end
+
+print("[Carry] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
