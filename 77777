@@ -111,49 +111,38 @@ local recording = false
 local recSteps = {}
 local recLastT = 0
 local recKey = nil
-local recPending = {}   -- ⭐ hook จดใส่คิวอย่างเดียว (เบาสุด) — ประมวลผลนอก hook
+local recConn = nil
 
-pcall(function()
-    local replicaSig = game:GetService("ReplicatedStorage")
-        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-    local oldNC
-    oldNC = hookmetamethod(game, "__namecall", function(self, ...)
-        -- ⚠️ ห้ามทำงานหนักในนี้เด็ดขาด — แค่จดแล้วปล่อยผ่านทันที
-        if recording and not replayFiring and self == replicaSig
-           and getnamecallmethod() == "FireServer" then
-            local _, a2, a3, a4 = ...
-            if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
-                recPending[#recPending + 1] = { slot = a3, cf = a4, t = tick() }
-            end
-        end
-        return oldNC(self, ...)
-    end)
-end)
-
--- ⭐ ตัวประมวลผลคิว (นอก hook): หา ชื่อยูนิต + คำนวณ dt + print
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        while #recPending > 0 do
-            local item = table.remove(recPending, 1)
-            local dt = math.min(item.t - recLastT, MAX_STEP_WAIT)
-            if dt < 0 then dt = 0 end
-            recLastT = item.t
-            local uname = "slot_" .. tostring(item.slot)
-            pcall(function()
-                uname = slotUnitName(item.slot) or uname
+-- ⭐ วิธีอัดแบบ passive (ไม่ hook อะไรทั้งนั้น — เกมตรวจไม่ได้ ไม่กระทบ connection):
+--    ฟัง workspace.Units.ChildAdded — ตัวที่เราวางจะโผล่ในนั้นพร้อม "ชื่อยูนิต"
+--    เก็บ ชื่อ + ตำแหน่งจริง + จังหวะเวลา
+local function startRecordListener()
+    local uf = workspace:FindFirstChild("Units")
+    if not uf then return false end
+    if recConn then recConn:Disconnect() end
+    recConn = uf.ChildAdded:Connect(function(m)
+        if not recording or replayFiring then return end
+        task.defer(function()
+            task.wait(0.3)   -- รอโมเดลโหลดตำแหน่งเสร็จ
+            local ok, pos = pcall(function()
+                return m:GetPivot().Position
             end)
+            if not ok or not pos then return end
+            local now = tick()
+            local dt = math.clamp(now - recLastT, 0, MAX_STEP_WAIT)
+            recLastT = now
+            local cf = CFrame.new(pos.X, pos.Y, pos.Z)
             table.insert(recSteps, {
-                unit = uname,
-                slot = item.slot,
+                unit = m.Name,
                 dt = math.floor(dt * 10) / 10,
-                cf = { item.cf:GetComponents() },
+                cf = { cf:GetComponents() },
             })
-            print(("[Carry ⏺] #%d %s (slot %s) | หน่วง %.1fs")
-                :format(#recSteps, uname, tostring(item.slot), dt))
-        end
-    end
-end)
+            print(("[Carry ⏺] #%d %s | หน่วง %.1fs")
+                :format(#recSteps, m.Name, dt))
+        end)
+    end)
+    return true
+end
 
 local function startRecord()
     local info = getCurrentStageKey()
@@ -161,9 +150,12 @@ local function startRecord()
         warn("[Carry] ❌ ไม่รู้ว่าอยู่ด่านไหน — ต้องอัดตอนอยู่ในด่าน")
         return false
     end
+    if not startRecordListener() then
+        warn("[Carry] ❌ ไม่เจอ workspace.Units — อัดไม่ได้")
+        return false
+    end
     recKey = info
     recSteps = {}
-    recPending = {}
     recLastT = tick()
     recording = true
     print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย ทุกการวางจะถูกจำ")
@@ -173,12 +165,11 @@ end
 
 local function stopRecord()
     recording = false
-    -- รอคิวประมวลผลเก็บตกให้หมดก่อนบันทึก
-    local t0 = tick()
-    while #recPending > 0 and tick() - t0 < 3 do
-        task.wait(0.2)
+    task.wait(0.8)   -- รอตัวสุดท้ายเก็บเข้าลิสต์
+    if recConn then
+        recConn:Disconnect()
+        recConn = nil
     end
-    task.wait(0.5)
     if not recKey or #recSteps == 0 then
         warn("[Carry] ⚠️ ไม่มีข้อมูลอัด — ไม่บันทึก")
         return false
@@ -253,8 +244,12 @@ local function playRecord(data)
     for i, step in ipairs(data.steps) do
         if not carryOn then return end
         task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
-        -- หา slot จากชื่อยูนิต (กันกรณีสลับตำแหน่ง hotbar) — fallback slot ที่อัดไว้
+        -- หา slot จากชื่อยูนิตใน hotbar
         local slot = findSlotByUnitName(step.unit) or step.slot
+        if not slot then
+            warn(("[Carry ▶] ⚠️ #%d ไม่เจอ %s ใน hotbar — ข้าม"):format(i, step.unit))
+            continue
+        end
         local cf = CFrame.new(unpack(step.cf))
         local before = unitCount()
         firePlace(slot, cf)
