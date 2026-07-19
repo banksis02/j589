@@ -1,32 +1,27 @@
 -- ============================================================
--- AE Carry — ตัวแบก (สคริปต์แยกเทส ยังไม่รวมสคริปต์หลัก)
+-- AE Carry v2 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ)
 --
--- คอนเซ็ปต์: "อัดครั้งเดียว เล่นซ้ำได้ตลอด"
---   1. เข้าด่านที่จะแบก → กด ⏺ อัด → วางตัวเองแบบละเอียดจนพอใจ → กดหยุดอัด
---      สคริปต์จำ: ชื่อยูนิต + ตำแหน่ง + จังหวะเวลาระหว่างวาง ผูกกับชื่อด่าน
---   2. เปิด ▶ โหมดแบก → เจอด่านที่เคยอัดไว้ → วางตามที่อัดอัตโนมัติทุกตา
---      (จับ restart ด้วย: ตัวในสนามหาย → วางใหม่)
---
--- บันทึกไฟล์: ae_carry_<ด่าน>_act_<แอค>.txt (JSON) — อัดทับได้ตลอด
+-- ⏺ อัด: ดักคำสั่ง PlaceGameUnit ของตัวเอง (ได้ "เลขช่องจริง + พิกัดเป๊ะ")
+--    - hook ติดตั้งครั้งแรกที่กดอัดเท่านั้น และในนั้นทำแค่ "จดใส่คิว" (เบาสุด)
+--    - อัดเฉพาะของเรา (คำสั่งจาก client เราเอง — ของเพื่อนไม่ปน)
+-- ▶ โหมดแบก: เจอด่านที่อัดไว้ → วางตามลำดับ+จังหวะเดิม → จบด่านกดรีเพล → วนไป
+--    - รีเพลมี cooldown 10 วิ กันสแปมยิงจนโดนเตะ
 -- ============================================================
 local player = game:GetService("Players").LocalPlayer
 local HttpService = game:GetService("HttpService")
 
--- ================== CONFIG ==================
-local PLACE_OPCODES = { 66, 64, 65, 67, 68, 69, 70 }
-local MAX_STEP_WAIT = 20     -- จังหวะรอระหว่างวางสูงสุด (วิ) — กันอัดตอนเผลอทิ้งช่วงนาน
--- ============================================
+local PLACE_OPCODES   = { 66, 64, 65, 67, 68, 69, 70 }
+local RESTART_OPCODES = { 61, 58, 59, 60, 62, 63, 64 }
+local MAX_STEP_WAIT   = 20
 
--- ---------- สถานะปัจจุบัน: ด่าน + Act ----------
--- ⭐ ไม่ฟิคลิสต์ด่าน — จับ label "<ชื่อด่านอะไรก็ได้> - Act <X>" จาก HUD
---    รองรับทุกโหมด: Story (School Grounds - Act 1), Raid (Spirit City - Act 1) ฯลฯ
+-- ---------- ด่านปัจจุบัน (ทุกโหมด) ----------
 local function getCurrentStageKey()
     local found = nil
     pcall(function()
         for _, l in ipairs(player.PlayerGui:GetDescendants()) do
             if l:IsA("TextLabel") and l.Visible and #l.Text < 60 then
                 local stage, act = l.Text:match("^%s*(.-)%s*%-%s*Act%s+(%S+)%s*$")
-                if stage and stage ~= "" and #stage >= 3 then
+                if stage and #stage >= 3 then
                     found = { stage = stage, act = act }
                     return
                 end
@@ -36,52 +31,11 @@ local function getCurrentStageKey()
     return found
 end
 
+-- ⭐ ใส่ชื่อบัญชีในชื่อไฟล์ — รัน 2 จอ (2 บัญชี) บนเครื่องเดียวกัน ไฟล์จะไม่ทับกัน
 local function keyToFile(info)
-    return ("ae_carry_%s_act_%s.txt")
-        :format(info.stage:gsub("[^%w]", "_"), tostring(info.act):gsub("[^%w]", "_"))
-end
-
--- ---------- hotbar: slot <-> ชื่อยูนิต ----------
-local GENERIC = { Model = true, AnimSaves = true, WorldModel = true, Folder = true }
-local function getSlotButtons()
-    local bh = player.PlayerGui:FindFirstChild("BottomHUD")
-    if not bh then return {} end
-    local slots = {}
-    for _, tb in ipairs(bh:GetDescendants()) do
-        if tb:IsA("TextButton") then
-            for _, d in ipairs(tb:GetDescendants()) do
-                if d:IsA("ViewportFrame") then
-                    table.insert(slots, tb)
-                    break
-                end
-            end
-        end
-    end
-    return slots
-end
-
-local function slotUnitName(slotIndex)
-    local slots = getSlotButtons()
-    local tb = slots[slotIndex]
-    if not tb then return nil end
-    for _, d in ipairs(tb:GetDescendants()) do
-        if d:IsA("Model") and not GENERIC[d.Name] then
-            return d.Name
-        end
-    end
-    return nil
-end
-
-local function findSlotByUnitName(name)
-    local lower = name:lower()
-    for i, tb in ipairs(getSlotButtons()) do
-        for _, d in ipairs(tb:GetDescendants()) do
-            if d.Name:lower():find(lower, 1, true) then
-                return i
-            end
-        end
-    end
-    return nil
+    return ("ae_carry_%s_%s_act_%s.txt")
+        :format(player.Name:gsub("[^%w]", "_"),
+                info.stage:gsub("[^%w]", "_"), tostring(info.act):gsub("[^%w]", "_"))
 end
 
 local function unitCount()
@@ -89,60 +43,137 @@ local function unitCount()
     return u and #u:GetChildren() or 0
 end
 
+-- ⭐ นับยูนิตใกล้จุดเป้าหมาย (รัศมี 5) — เช็ค "วางติดไหม" แบบไม่โดนตัวของเพื่อน
+--    ที่วางที่อื่นพร้อมกันหลอก (สำคัญตอนแบก 2 จอ/มีเพื่อนวางด้วย)
+local function unitCountNear(pos, radius)
+    local u = workspace:FindFirstChild("Units")
+    if not u then return 0 end
+    local n = 0
+    for _, m in ipairs(u:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p and (p - pos).Magnitude <= radius then
+            n = n + 1
+        end
+    end
+    return n
+end
+
 -- ---------- ยิงวาง ----------
 local replayFiring = false
-local function firePlace(slot, cf)
+local function fireOne(op, slot, cf)
     local sig = game:GetService("ReplicatedStorage")
         :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
     replayFiring = true
-    for _, op in ipairs(PLACE_OPCODES) do
-        pcall(function()
-            sig:FireServer(op, "PlaceGameUnit", slot, cf)
-        end)
-        task.wait(0.05)
-    end
+    pcall(function()
+        sig:FireServer(op, "PlaceGameUnit", slot, cf)
+    end)
     replayFiring = false
 end
 
+-- ⭐ opcode ในห้องหลายคนพุ่งสูง (เจอถึง 75) และเปลี่ยนต่อเซสชัน
+--    ระบบ: ลองยิงทีละเลข → เช็คว่าตัวโผล่ใกล้จุดจริง → เจอแล้ว "ล็อก" ใช้ยาว
+local lockedOp = nil
+
+local function unitCountNearFwd(pos, radius)  -- forward declare ใช้ใน tryPlace
+    local u = workspace:FindFirstChild("Units")
+    if not u then return 0 end
+    local n = 0
+    for _, m in ipairs(u:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p and (p - pos).Magnitude <= radius then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- พยายามวางด้วยการไล่ opcode — คืน true ถ้าตัวโผล่ใกล้จุด
+local function tryPlace(slot, cf, hintOp)
+    local target = cf.Position
+    local before = unitCountNearFwd(target, 5)
+    local function attempt(op)
+        fireOne(op, slot, cf)
+        task.wait(0.7)
+        if unitCountNearFwd(target, 5) > before then
+            if lockedOp ~= op then
+                lockedOp = op
+                print("[Carry] 🔒 ล็อก opcode วาง = " .. op)
+            end
+            return true
+        end
+        return false
+    end
+    -- 1) เลขที่ล็อกไว้ก่อน
+    if lockedOp then
+        if attempt(lockedOp) then return true end
+        if attempt(lockedOp + 1) then return true end
+    end
+    -- 2) เลขที่อัดไว้ (hint) และรอบๆ
+    if hintOp then
+        for _, op in ipairs({ hintOp, hintOp + 1, hintOp + 2, hintOp - 1 }) do
+            if op ~= lockedOp and attempt(op) then return true end
+        end
+    end
+    -- 3) ไล่ช่วงกว้าง 58-90 (ทีละเลข มี delay — ไม่ใช่ spray รัว)
+    for op = 58, 90 do
+        if op ~= lockedOp and op ~= hintOp then
+            if attempt(op) then return true end
+        end
+    end
+    return false
+end
+
 -- ============================================================
--- โหมดอัด (Recorder)
+-- ⏺ Recorder (hook เบา — ติดตั้งครั้งแรกที่กดอัด)
 -- ============================================================
 local recording = false
 local recSteps = {}
 local recLastT = 0
 local recKey = nil
-local recConn = nil
+local recPending = {}
+local hookInstalled = false
 
--- ⭐ วิธีอัดแบบ passive (ไม่ hook อะไรทั้งนั้น — เกมตรวจไม่ได้ ไม่กระทบ connection):
---    ฟัง workspace.Units.ChildAdded — ตัวที่เราวางจะโผล่ในนั้นพร้อม "ชื่อยูนิต"
---    เก็บ ชื่อ + ตำแหน่งจริง + จังหวะเวลา
-local function startRecordListener()
-    local uf = workspace:FindFirstChild("Units")
-    if not uf then return false end
-    if recConn then recConn:Disconnect() end
-    recConn = uf.ChildAdded:Connect(function(m)
-        if not recording or replayFiring then return end
-        task.defer(function()
-            task.wait(0.3)   -- รอโมเดลโหลดตำแหน่งเสร็จ
-            local ok, pos = pcall(function()
-                return m:GetPivot().Position
-            end)
-            if not ok or not pos then return end
-            local now = tick()
-            local dt = math.clamp(now - recLastT, 0, MAX_STEP_WAIT)
-            recLastT = now
-            local cf = CFrame.new(pos.X, pos.Y, pos.Z)
-            table.insert(recSteps, {
-                unit = m.Name,
-                dt = math.floor(dt * 10) / 10,
-                cf = { cf:GetComponents() },
-            })
-            print(("[Carry ⏺] #%d %s | หน่วง %.1fs")
-                :format(#recSteps, m.Name, dt))
+local function installHook()
+    if hookInstalled then return true end
+    local ok = pcall(function()
+        local replicaSig = game:GetService("ReplicatedStorage")
+            :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        local oldNC
+        oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+            -- ⚠️ เบาที่สุด: จดใส่คิวแล้วปล่อยผ่านทันที ห้ามทำอย่างอื่นในนี้
+            if recording and not replayFiring and self == replicaSig
+               and getnamecallmethod() == "FireServer" then
+                local a1, a2, a3, a4 = ...
+                if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
+                    recPending[#recPending + 1] = { op = a1, slot = a3, cf = a4, t = tick() }
+                end
+            end
+            return oldNC(self, ...)
         end)
     end)
-    return true
+    hookInstalled = ok
+    return ok
 end
+
+-- ตัวประมวลผลคิว (นอก hook)
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        while #recPending > 0 do
+            local item = table.remove(recPending, 1)
+            local dt = math.clamp(item.t - recLastT, 0, MAX_STEP_WAIT)
+            recLastT = item.t
+            table.insert(recSteps, {
+                op = item.op,
+                slot = item.slot,
+                dt = math.floor(dt * 10) / 10,
+                cf = { item.cf:GetComponents() },
+            })
+            print(("[Carry ⏺] #%d ช่อง %s (op %s) | หน่วง %.1fs")
+                :format(#recSteps, tostring(item.slot), tostring(item.op), dt))
+        end
+    end
+end)
 
 local function startRecord()
     local info = getCurrentStageKey()
@@ -150,26 +181,26 @@ local function startRecord()
         warn("[Carry] ❌ ไม่รู้ว่าอยู่ด่านไหน — ต้องอัดตอนอยู่ในด่าน")
         return false
     end
-    if not startRecordListener() then
-        warn("[Carry] ❌ ไม่เจอ workspace.Units — อัดไม่ได้")
+    if not installHook() then
+        warn("[Carry] ❌ ติดตั้งตัวดักไม่ได้ (executor ไม่รองรับ hookmetamethod)")
         return false
     end
     recKey = info
     recSteps = {}
+    recPending = {}
     recLastT = tick()
     recording = true
-    print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย ทุกการวางจะถูกจำ")
-        :format(info.stage, info.act))
+    print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย"):format(info.stage, info.act))
     return true
 end
 
 local function stopRecord()
     recording = false
-    task.wait(0.8)   -- รอตัวสุดท้ายเก็บเข้าลิสต์
-    if recConn then
-        recConn:Disconnect()
-        recConn = nil
+    local t0 = tick()
+    while #recPending > 0 and tick() - t0 < 3 do
+        task.wait(0.2)
     end
+    task.wait(0.5)
     if not recKey or #recSteps == 0 then
         warn("[Carry] ⚠️ ไม่มีข้อมูลอัด — ไม่บันทึก")
         return false
@@ -201,9 +232,11 @@ local function loadRecord(info)
 end
 
 -- ============================================================
--- ⭐ Auto-Replay: จบด่านแล้วกดรีเพลเอง (เฉพาะตอนโหมดแบก ON)
+-- ▶ Playback + Auto-Replay
 -- ============================================================
-local RESTART_OPCODES = { 61, 58, 59, 60, 62, 63, 64 }
+local carryOn = false
+local playedThisMatch = false
+local lastUnitsSeen = 0
 
 local function findRepeatBtn()
     local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -220,23 +253,25 @@ local function findRepeatBtn()
     return nil
 end
 
+-- ⭐ Restart: opcode ก็เลื่อนสูงได้ในห้องหลายคน — กวาดทีละหน้าต่าง 8 เลขต่อการกด
+--    (กดครั้งแรก 58-65, ยังไม่ติดรออีก 10 วิ กด 66-73, ...) + เริ่มใกล้ lockedOp ถ้ารู้
+local restartWinStart = nil
 local function fireRestart()
     local sig = game:GetService("ReplicatedStorage")
         :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+    if not restartWinStart then
+        restartWinStart = lockedOp and math.max(58, lockedOp - 6) or 58
+    end
     replayFiring = true
-    for _, op in ipairs(RESTART_OPCODES) do
+    for op = restartWinStart, restartWinStart + 7 do
         pcall(function() sig:FireServer(op, "Restart") end)
         task.wait(0.05)
     end
     replayFiring = false
+    print(("[Carry] 🔄 Restart opcodes %d-%d"):format(restartWinStart, restartWinStart + 7))
+    restartWinStart = restartWinStart + 8
+    if restartWinStart > 88 then restartWinStart = 58 end
 end
-
--- ============================================================
--- โหมดแบก (Playback)
--- ============================================================
-local carryOn = false
-local playedThisMatch = false
-local lastUnitsSeen = 0
 
 local function playRecord(data)
     print(("[Carry ▶] วางตาม record: %s - Act %s (%d ตัว)")
@@ -244,82 +279,73 @@ local function playRecord(data)
     for i, step in ipairs(data.steps) do
         if not carryOn then return end
         task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
-        -- หา slot จากชื่อยูนิตใน hotbar
-        local slot = findSlotByUnitName(step.unit) or step.slot
-        if not slot then
-            warn(("[Carry ▶] ⚠️ #%d ไม่เจอ %s ใน hotbar — ข้าม"):format(i, step.unit))
-            continue
-        end
         local cf = CFrame.new(unpack(step.cf))
-        local before = unitCount()
-        firePlace(slot, cf)
-        task.wait(0.8)
-        if unitCount() > before then
-            print(("[Carry ▶] ✅ #%d %s (slot %d)"):format(i, step.unit, slot))
+        -- ⭐ tryPlace: ไล่หา opcode ที่ใช้ได้จริง (ล็อกไว้ → ตัวถัดไปเร็ว)
+        if tryPlace(step.slot, cf, step.op) then
+            print(("[Carry ▶] ✅ #%d ช่อง %d"):format(i, step.slot))
         else
-            -- วางไม่ติด (เงิน/ลิมิต/จุดโดนทับ) — ลองซ้ำอีกครั้งเดียวแล้วไปต่อ
-            task.wait(2)
-            firePlace(slot, cf)
-            task.wait(0.8)
-            if unitCount() > before then
-                print(("[Carry ▶] ✅ #%d %s (รอบ 2)"):format(i, step.unit))
+            -- ยังไม่ติด (เงินไม่ทัน?) → รอ 3 วิ ลองอีกรอบ
+            task.wait(3)
+            if not carryOn then return end
+            if tryPlace(step.slot, cf, step.op) then
+                print(("[Carry ▶] ✅ #%d ช่อง %d (รอบ 2)"):format(i, step.slot))
             else
-                warn(("[Carry ▶] ⚠️ #%d %s วางไม่ติด — ข้าม"):format(i, step.unit))
+                warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด — ข้าม"):format(i, step.slot))
             end
         end
     end
     print("[Carry ▶] ✅ วางครบตาม record แล้ว")
 end
 
--- ⭐ ลูปกดรีเพลตอนจบด่าน (แยกจากลูปวาง)
+-- ลูปรีเพล — ⭐ cooldown 10 วิ/ครั้ง กันสแปมยิงจนโดนเตะ
+local lastRestartTry = 0
 task.spawn(function()
     while true do
         task.wait(2)
         if carryOn and not recording then
             local btn = findRepeatBtn()
-            if btn then
+            if btn and tick() - lastRestartTry > 10 then
+                lastRestartTry = tick()
                 print("[Carry] 🔄 จบด่าน → กดรีเพล")
                 fireRestart()
                 task.wait(3)
-                -- ยังค้าง → กดปุ่ม Repeat Stage ตรงๆ (getconnections)
                 local b2 = findRepeatBtn()
                 if b2 then
                     pcall(function()
                         for _, c in ipairs(getconnections(b2.MouseButton1Click)) do c:Fire() end
                         for _, c in ipairs(getconnections(b2.Activated)) do c:Fire() end
                     end)
-                    task.wait(3)
                 end
             end
         end
     end
 end)
 
+-- ลูปวาง
 task.spawn(function()
     while true do
         task.wait(2)
         if carryOn and not recording then
             local info = getCurrentStageKey()
             if not info then
-                playedThisMatch = false   -- ออกจากด่าน/ล็อบบี้ → พร้อมวางรอบใหม่
+                playedThisMatch = false
             else
                 local units = unitCount()
-                -- จับ restart: เคยวางแล้ว แต่ตัวในสนามหายเกลี้ยง → วางใหม่
                 if playedThisMatch and units == 0 and lastUnitsSeen > 0 then
-                    print("[Carry] 🔄 ตัวในสนามหาย (restart?) → วางรอบใหม่")
+                    print("[Carry] 🔄 ตัวในสนามหาย (ตาใหม่) → วางรอบใหม่")
                     playedThisMatch = false
                 end
                 lastUnitsSeen = units
-                if not playedThisMatch and not findRepeatBtn() then  -- ห้ามวางตอนหน้าจบเกมค้าง
+                if not playedThisMatch and not findRepeatBtn() then
                     local data = loadRecord(info)
                     if data then
                         playedThisMatch = true
-                        task.wait(2)   -- รอด่านโหลดนิ่ง
+                        task.wait(2)
                         playRecord(data)
                     else
-                        print(("[Carry] ⚠️ ยังไม่เคยอัดด่าน %s - Act %s (อัดก่อนถึงใช้ได้)")
+                        print(("[Carry] ⚠️ ยังไม่เคยอัดด่าน %s - Act %s")
                             :format(info.stage, info.act))
-                        playedThisMatch = true   -- กันสแปมเตือน (reset ตอนออกด่าน)
+                        playedThisMatch = true
                     end
                 end
             end
@@ -328,7 +354,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- UI เล็กๆ: ⏺ อัด / ▶ โหมดแบก / สถานะ
+-- UI
 -- ============================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AE_Carry_UI"
@@ -347,7 +373,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v2"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -392,7 +418,7 @@ btnCarry.MouseButton1Click:Connect(function()
     if carryOn then
         btnCarry.Text = "⏹ โหมดแบก: ON"
         btnCarry.BackgroundColor3 = Color3.fromRGB(30, 140, 70)
-        print("[Carry] ▶ เปิดโหมดแบก — เจอด่านที่เคยอัดจะวางเอง")
+        print("[Carry] ▶ เปิดโหมดแบก")
     else
         btnCarry.Text = "▶ โหมดแบก: OFF"
         btnCarry.BackgroundColor3 = Color3.fromRGB(30, 45, 35)
@@ -400,7 +426,6 @@ btnCarry.MouseButton1Click:Connect(function()
     end
 end)
 
--- อัปเดตสถานะบน UI
 task.spawn(function()
     while true do
         task.wait(2)
@@ -441,4 +466,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v2] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
