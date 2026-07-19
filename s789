@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v6.3"
+local SCRIPT_VERSION = "v6.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -772,6 +772,78 @@ end
 -- [Anime Expeditions] Placement Macro + Stage Detection
 -- ============================================================
 if GAME_ID == "anime_expeditions" then
+    -- ============================================================
+    -- [AE] Replica system — อ่านข้อมูลจริงจาก replica.Data
+    --   Level = PlayerData.Level | BP = PlayerData.BattlepassData.<season>.Level
+    --   Wave = GameState.Wave
+    -- ============================================================
+    local aeReplicaRegistry = nil
+    pcall(function()
+        local RC = require(game:GetService("ReplicatedStorage").Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up) == "table" then
+                for kk in pairs(up) do
+                    if type(kk) == "number" then aeReplicaRegistry = up; break end
+                end
+                if aeReplicaRegistry then break end
+            end
+        end
+    end)
+
+    local function aeGetReplica(token)
+        if not aeReplicaRegistry then return nil end
+        for _, rep in pairs(aeReplicaRegistry) do
+            local ok, t = pcall(function() return rep.Token end)
+            if ok and t == token then return rep end
+        end
+        return nil
+    end
+
+    -- คืน level, bp, wave (0 ถ้าอ่านไม่ได้)
+    local function aeGetStats()
+        local level, bp, wave = 0, 0, 0
+        pcall(function()
+            local pd = aeGetReplica("PlayerData")
+            if pd and pd.Data then
+                level = tonumber(pd.Data.Level) or 0
+                local bpData = pd.Data.BattlepassData
+                if type(bpData) == "table" then
+                    -- วนหา season (key แรกที่มี .Level) — กันชื่อ season เปลี่ยน
+                    for _, d in pairs(bpData) do
+                        if type(d) == "table" and d.Level then
+                            bp = tonumber(d.Level) or 0
+                            break
+                        end
+                    end
+                end
+            end
+            local gs = aeGetReplica("GameState")
+            if gs and gs.Data then
+                wave = tonumber(gs.Data.Wave) or 0
+            end
+        end)
+        return level, bp, wave
+    end
+    _G.AE_GET_STATS = aeGetStats
+
+    -- ⭐ track wave สูงสุดต่อ match (ตอน Victory GameState อาจ reset — เก็บไว้ก่อน)
+    local aeMaxWave = 0
+    task.spawn(function()
+        while true do
+            task.wait(3)
+            pcall(function()
+                local gs = aeGetReplica("GameState")
+                if gs and gs.Data and gs.Data.CurrentGameState == "InProgress" then
+                    local w = tonumber(gs.Data.Wave) or 0
+                    if w > aeMaxWave then aeMaxWave = w end
+                elseif not gs or not gs.Data then
+                    aeMaxWave = 0  -- ออกจากด่าน → reset
+                end
+            end)
+        end
+    end)
+    local function aeGetMaxWave() return aeMaxWave end
+
     -- ⭐ Helper: เช็คว่าอยู่ล็อบบี้หรือในเกม + ชื่อด่าน
     -- return: stageName (string หรือ nil), mode (string หรือ nil), difficulty (string หรือ nil)
     local function getStageInfo()
@@ -1760,6 +1832,10 @@ if GAME_ID == "anime_expeditions" then
         if stats.mode ~= "N/A" then actFull = actFull .. " - " .. stats.mode end
         if stats.difficulty ~= "N/A" then actFull = actFull .. " " .. stats.difficulty end
         local rewardsStr = (#stats.rewards > 0) and table.concat(stats.rewards, ", ") or "N/A"
+        -- ⭐ ดึง level / battlepass / wave จริงจาก replica
+        local level, bp, wave = aeGetStats()
+        local maxWave = aeGetMaxWave()
+        if maxWave > wave then wave = maxWave end  -- ใช้ค่า track ถ้าสูงกว่า (Victory reset)
         -- ⭐ payload format เดียวกับ UTDX/Anime Squadron
         local payload = {
             username     = player.Name,
@@ -1767,8 +1843,8 @@ if GAME_ID == "anime_expeditions" then
             serviceName  = GAME_NAME,
             gameId       = GAME_ID,
             progress     = 0,
-            currentStats = { level = 0, bp = 0 },
-            matchInfo    = { map = stats.stage, wave = 0 },
+            currentStats = { level = level, bp = bp },
+            matchInfo    = { map = stats.stage, wave = wave },
             endScreen    = {
                 act      = actFull,
                 file     = stats.stage,
