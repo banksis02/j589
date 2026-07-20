@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v6.4"
+local SCRIPT_VERSION = "v6.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -827,7 +827,30 @@ if GAME_ID == "anime_expeditions" then
     _G.AE_GET_STATS = aeGetStats
 
     -- ⭐ track wave สูงสุดต่อ match (ตอน Victory GameState อาจ reset — เก็บไว้ก่อน)
+    --    + ส่ง live update ขึ้นเว็บทันทีที่เวฟเปลี่ยน (ไม่ส่ง endScreen — กันทับ Last Round)
     local aeMaxWave = 0
+    local aeLastSentWave = -1
+    local function sendLiveWave(wave, mapName)
+        local level, bp = aeGetStats()
+        local payload = {
+            username     = player.Name,
+            userId       = player.UserId,
+            serviceName  = GAME_NAME,
+            gameId       = GAME_ID,
+            currentStats = { level = level, bp = bp },
+            matchInfo    = { map = mapName or "Unknown", wave = wave },
+            -- ⭐ ไม่ส่ง endScreen / recentLog — backend จะเก็บของเดิมไว้
+        }
+        pcall(function()
+            HttpService:RequestAsync({
+                Url = BACKEND_URL .. "/api/overload/update",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+    end
+
     task.spawn(function()
         while true do
             task.wait(3)
@@ -836,8 +859,23 @@ if GAME_ID == "anime_expeditions" then
                 if gs and gs.Data and gs.Data.CurrentGameState == "InProgress" then
                     local w = tonumber(gs.Data.Wave) or 0
                     if w > aeMaxWave then aeMaxWave = w end
+                    -- ⭐ เวฟขยับ → ส่งขึ้นเว็บทันที
+                    if w > 0 and w ~= aeLastSentWave then
+                        aeLastSentWave = w
+                        local mapName = "Unknown"
+                        pcall(function()
+                            local p = gs.Data.Parameters
+                            if p and p.MapName then
+                                mapName = tostring(p.MapName)
+                                if p.ActName then mapName = mapName .. " - " .. tostring(p.ActName) end
+                            end
+                        end)
+                        print(("[AE] 🌊 Wave %d → ส่งขึ้นเว็บ"):format(w))
+                        sendLiveWave(w, mapName)
+                    end
                 elseif not gs or not gs.Data then
                     aeMaxWave = 0  -- ออกจากด่าน → reset
+                    aeLastSentWave = -1
                 end
             end)
         end
