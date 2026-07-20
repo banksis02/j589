@@ -7,12 +7,97 @@
 -- ▶ โหมดแบก: เจอด่านที่อัดไว้ → วางตามลำดับ+จังหวะเดิม → จบด่านกดรีเพล → วนไป
 --    - รีเพลมี cooldown 10 วิ กันสแปมยิงจนโดนเตะ
 -- ============================================================
+print("[Carry] ⏳ เริ่มโหลดสคริปต์...")
+
 local player = game:GetService("Players").LocalPlayer
 local HttpService = game:GetService("HttpService")
+local RS = game:GetService("ReplicatedStorage")
 
-local PLACE_OPCODES   = { 66, 64, 65, 67, 68, 69, 70 }
-local RESTART_OPCODES = { 61, 58, 59, 60, 62, 63, 64 }
-local MAX_STEP_WAIT   = 20
+local MAX_STEP_WAIT = 20
+
+-- ============================================================
+-- ⭐ ระบบ Replica — วาง/รีสตาร์ท ผ่าน replica:FireServer โดยตรง
+--    (ไม่ต้องเดา opcode/id อีก — เกมจัดการ id เอง เลขพุ่งเท่าไหร่ก็ไม่มีผล)
+--    replica ข้อมูลเกมของเรา = Token "GamePlayerData"
+-- ============================================================
+-- ⚠️ ทุกอย่างต้องมี pcall — ถ้า require พังสคริปต์จะตายเงียบทั้งตัว (ไม่มี UI)
+local replicaRegistry = nil
+local replicaReady = false
+local function setupReplica()
+    if replicaReady then return true end
+    local ok = pcall(function()
+        local shared = RS:FindFirstChild("Shared")
+        local mod = shared and shared:FindFirstChild("ReplicaClient")
+        if not mod then error("ไม่เจอ ReplicatedStorage.Shared.ReplicaClient") end
+        local RC = require(mod)
+        if not RC or not RC.FromId then error("ReplicaClient ไม่มี FromId") end
+        if not debug or not debug.getupvalues then error("executor ไม่มี debug.getupvalues") end
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up) == "table" then
+                for kk in pairs(up) do
+                    if type(kk) == "number" then replicaRegistry = up; break end
+                end
+                if replicaRegistry then break end
+            end
+        end
+        if not replicaRegistry then error("หา replica registry ไม่เจอ") end
+    end)
+    if ok and replicaRegistry then
+        replicaReady = true
+        print("[Carry] ✅ Replica พร้อม (วางแบบไม่ต้องเดา opcode)")
+    end
+    return replicaReady
+end
+-- ลองตั้งแต่โหลด (ถ้ายังไม่ได้ จะลองใหม่ตอนใช้งานจริง)
+pcall(setupReplica)
+
+local function getGameReplica()
+    if not replicaRegistry then
+        pcall(setupReplica)
+        if not replicaRegistry then return nil end
+    end
+    local cand = {}
+    for _, rep in pairs(replicaRegistry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "GamePlayerData" then table.insert(cand, rep) end
+    end
+    if #cand <= 1 then return cand[1] end
+    for _, rep in ipairs(cand) do
+        if rawget(rep, "write_lib") then return rep end
+    end
+    return cand[1]
+end
+
+-- fallback: ยิง ReplicaSignal ตรงๆ ถ้าใช้ replica ไม่ได้ (ไล่ id กว้าง)
+-- ⚠️ ห้ามใช้ ... ใน closure ซ้อน (Lua compile error) — ต้อง table.pack ก่อน
+local FALLBACK_OPS = { 66, 65, 64, 67, 68, 69, 70, 61, 62, 63 }
+local function fallbackFire(...)
+    local args = table.pack(...)
+    local ok = pcall(function()
+        local sig = RS:WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+        for _, op in ipairs(FALLBACK_OPS) do
+            pcall(function()
+                sig:FireServer(op, table.unpack(args, 1, args.n))
+            end)
+            task.wait(0.05)
+        end
+    end)
+    return ok
+end
+
+-- ยิง action ใดๆ ผ่าน replica เกม (PlaceGameUnit / Restart / SelectSlot / ...)
+local function replicaFire(...)
+    local args = table.pack(...)
+    local rep = getGameReplica()
+    if rep then
+        local ok = pcall(function()
+            rep:FireServer(table.unpack(args, 1, args.n))
+        end)
+        if ok then return true end
+    end
+    warn("[Carry] ⚠️ replica ใช้ไม่ได้ → fallback ยิงตรง")
+    return fallbackFire(table.unpack(args, 1, args.n))
+end
 
 -- ---------- ด่านปัจจุบัน (ทุกโหมด) ----------
 local function getCurrentStageKey()
@@ -58,69 +143,12 @@ local function unitCountNear(pos, radius)
     return n
 end
 
--- ---------- ยิงวาง ----------
+-- ---------- ยิงวาง (ผ่าน replica) ----------
 local replayFiring = false
-local function fireOne(op, slot, cf)
-    local sig = game:GetService("ReplicatedStorage")
-        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
+local function firePlace(slot, cf)
     replayFiring = true
-    pcall(function()
-        sig:FireServer(op, "PlaceGameUnit", slot, cf)
-    end)
+    replicaFire("PlaceGameUnit", slot, cf)
     replayFiring = false
-end
-
--- ⭐ opcode ในห้องหลายคนพุ่งสูง (เจอถึง 75) และเปลี่ยนต่อเซสชัน
---    ระบบ: ลองยิงทีละเลข → เช็คว่าตัวโผล่ใกล้จุดจริง → เจอแล้ว "ล็อก" ใช้ยาว
-local lockedOp = nil
-
-local function unitCountNearFwd(pos, radius)  -- forward declare ใช้ใน tryPlace
-    local u = workspace:FindFirstChild("Units")
-    if not u then return 0 end
-    local n = 0
-    for _, m in ipairs(u:GetChildren()) do
-        local ok, p = pcall(function() return m:GetPivot().Position end)
-        if ok and p and (p - pos).Magnitude <= radius then
-            n = n + 1
-        end
-    end
-    return n
-end
-
--- พยายามวางด้วยการไล่ opcode — คืน true ถ้าตัวโผล่ใกล้จุด
-local function tryPlace(slot, cf, hintOp)
-    local target = cf.Position
-    local before = unitCountNearFwd(target, 5)
-    local function attempt(op)
-        fireOne(op, slot, cf)
-        task.wait(0.7)
-        if unitCountNearFwd(target, 5) > before then
-            if lockedOp ~= op then
-                lockedOp = op
-                print("[Carry] 🔒 ล็อก opcode วาง = " .. op)
-            end
-            return true
-        end
-        return false
-    end
-    -- 1) เลขที่ล็อกไว้ก่อน
-    if lockedOp then
-        if attempt(lockedOp) then return true end
-        if attempt(lockedOp + 1) then return true end
-    end
-    -- 2) เลขที่อัดไว้ (hint) และรอบๆ
-    if hintOp then
-        for _, op in ipairs({ hintOp, hintOp + 1, hintOp + 2, hintOp - 1 }) do
-            if op ~= lockedOp and attempt(op) then return true end
-        end
-    end
-    -- 3) ไล่ช่วงกว้าง 58-90 (ทีละเลข มี delay — ไม่ใช่ spray รัว)
-    for op = 58, 90 do
-        if op ~= lockedOp and op ~= hintOp then
-            if attempt(op) then return true end
-        end
-    end
-    return false
 end
 
 -- ============================================================
@@ -145,7 +173,7 @@ local function installHook()
                and getnamecallmethod() == "FireServer" then
                 local a1, a2, a3, a4 = ...
                 if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
-                    recPending[#recPending + 1] = { op = a1, slot = a3, cf = a4, t = tick() }
+                    recPending[#recPending + 1] = { slot = a3, cf = a4, t = tick() }
                 end
             end
             return oldNC(self, ...)
@@ -164,13 +192,12 @@ task.spawn(function()
             local dt = math.clamp(item.t - recLastT, 0, MAX_STEP_WAIT)
             recLastT = item.t
             table.insert(recSteps, {
-                op = item.op,
                 slot = item.slot,
                 dt = math.floor(dt * 10) / 10,
                 cf = { item.cf:GetComponents() },
             })
-            print(("[Carry ⏺] #%d ช่อง %s (op %s) | หน่วง %.1fs")
-                :format(#recSteps, tostring(item.slot), tostring(item.op), dt))
+            print(("[Carry ⏺] #%d ช่อง %s | หน่วง %.1fs")
+                :format(#recSteps, tostring(item.slot), dt))
         end
     end
 end)
@@ -253,24 +280,12 @@ local function findRepeatBtn()
     return nil
 end
 
--- ⭐ Restart: opcode ก็เลื่อนสูงได้ในห้องหลายคน — กวาดทีละหน้าต่าง 8 เลขต่อการกด
---    (กดครั้งแรก 58-65, ยังไม่ติดรออีก 10 วิ กด 66-73, ...) + เริ่มใกล้ lockedOp ถ้ารู้
-local restartWinStart = nil
+-- ⭐ Restart ผ่าน replica — ไม่ต้องเดา opcode
 local function fireRestart()
-    local sig = game:GetService("ReplicatedStorage")
-        :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
-    if not restartWinStart then
-        restartWinStart = lockedOp and math.max(58, lockedOp - 6) or 58
-    end
     replayFiring = true
-    for op = restartWinStart, restartWinStart + 7 do
-        pcall(function() sig:FireServer(op, "Restart") end)
-        task.wait(0.05)
-    end
+    replicaFire("Restart")
     replayFiring = false
-    print(("[Carry] 🔄 Restart opcodes %d-%d"):format(restartWinStart, restartWinStart + 7))
-    restartWinStart = restartWinStart + 8
-    if restartWinStart > 88 then restartWinStart = 58 end
+    print("[Carry] 🔄 Restart (ผ่าน replica)")
 end
 
 local function playRecord(data)
@@ -280,16 +295,27 @@ local function playRecord(data)
         if not carryOn then return end
         task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
         local cf = CFrame.new(unpack(step.cf))
-        -- ⭐ tryPlace: ไล่หา opcode ที่ใช้ได้จริง (ล็อกไว้ → ตัวถัดไปเร็ว)
-        if tryPlace(step.slot, cf, step.op) then
+        local target = cf.Position
+        local before = unitCountNear(target, 5)
+        firePlace(step.slot, cf)
+        task.wait(0.8)
+        if unitCountNear(target, 5) > before then
             print(("[Carry ▶] ✅ #%d ช่อง %d"):format(i, step.slot))
         else
-            -- ยังไม่ติด (เงินไม่ทัน?) → รอ 3 วิ ลองอีกรอบ
-            task.wait(3)
-            if not carryOn then return end
-            if tryPlace(step.slot, cf, step.op) then
-                print(("[Carry ▶] ✅ #%d ช่อง %d (รอบ 2)"):format(i, step.slot))
-            else
+            -- วางไม่ติด (เงินไม่ทัน?) → ลองซ้ำสูงสุด 3 รอบ รอบละ 3 วิ
+            local placed = false
+            for r = 1, 3 do
+                task.wait(3)
+                if not carryOn then return end
+                firePlace(step.slot, cf)
+                task.wait(0.8)
+                if unitCountNear(target, 5) > before then
+                    print(("[Carry ▶] ✅ #%d ช่อง %d (รอบ %d)"):format(i, step.slot, r + 1))
+                    placed = true
+                    break
+                end
+            end
+            if not placed then
                 warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด — ข้าม"):format(i, step.slot))
             end
         end
@@ -356,6 +382,13 @@ end)
 -- ============================================================
 -- UI
 -- ============================================================
+print("[Carry] 🖼️ สร้าง UI...")
+-- ลบ UI เก่าถ้ารันซ้ำ
+pcall(function()
+    local old = player.PlayerGui:FindFirstChild("AE_Carry_UI")
+    if old then old:Destroy() end
+end)
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AE_Carry_UI"
 screenGui.ResetOnSpawn = false
