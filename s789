@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.2"
+local SCRIPT_VERSION = "v8.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1716,11 +1716,21 @@ if GAME_ID == "anime_expeditions" then
         return getGreyCount()
     end
 
-    local function craftOne(colorName, expectedCost)
+    -- ⭐ v8.3: แหล่งความจริงเดียว = กระเป๋า Items (ตัวเดียวกับที่ใช้ตัดสินใจออกจากด่าน)
+    --    หน้าคราฟมีตัวเลขปนกันหลายชุด → ใช้เป็นตัวสำรองเท่านั้น
+    local function greyTrue()
+        if _G.AE_READ_ITEM then
+            local n = _G.AE_READ_ITEM("Sprite (Grey)")
+            if n and n > 0 then return n, "กระเป๋า" end
+        end
+        return getGreyCount(), "หน้าคราฟ"
+    end
+
+    local function craftOne(colorName, expectedCost, knownGrey)
         if not ensureCraftOpen() then return false end
         if not clickCraftButton(colorName) then return false end
         task.wait(1)
-        local before = readGreyRetry(colorName)
+        local before = knownGrey or readGreyRetry(colorName)
         if before < expectedCost then
             print("[AE Craft] ⛔ " .. colorName .. " — Grey ไม่พอ (" .. before .. "/" .. expectedCost .. ")")
             return false
@@ -1743,6 +1753,12 @@ if GAME_ID == "anime_expeditions" then
                 if after < before then
                     print("[AE Craft] ✅ " .. colorName .. " | Grey: " .. before .. " → " .. after)
                     greyKnown = after
+                    return true
+                end
+                -- ⭐ v8.3: หน้าคราฟอ่านไม่ได้ (0) → ไม่ถือว่าล้มเหลว ให้ตัวนับข้างนอกคุมแทน
+                if after <= 0 then
+                    print("[AE Craft] ✅ " .. colorName .. " (หน้าคราฟอ่านค่าไม่ได้ — นับจากตัวนับแทน)")
+                    greyKnown = math.max(before - expectedCost, 0)
                     return true
                 end
                 print("[AE Craft] ⚠️ " .. colorName .. " Grey ไม่ลด (" .. before .. "→" .. after .. ") ครั้ง " .. attempt)
@@ -1797,8 +1813,9 @@ if GAME_ID == "anime_expeditions" then
                 print("[AE Craft] 🌈 Rainbow 1 ลูก...")
                 craftOne("Sprite (Rainbow)", CRAFT_RAINBOW_COST)
             end
-            -- ⭐ สุ่มสีคราฟจนหมด — robust: retry อ่าน Grey + double-check ก่อนจบ
+            -- ⭐ สุ่มสีคราฟจนหมด — ใช้ตัวนับจากกระเป๋า (แหล่งเดียวกับตอนตัดสินใจออกจากด่าน)
             local fullColors = {}
+            local greyLeft, crafted = greyKnown, 0
             while true do
                 if not ensureCraftOpen() then
                     warn("[AE Craft] ❌ เปิดหน้าคราฟกลับไม่ได้ — หยุดคราฟ")
@@ -1813,39 +1830,43 @@ if GAME_ID == "anime_expeditions" then
                     break
                 end
                 local color = avail[math.random(#avail)]
-                clickCraftButton(color)
-                task.wait(1)
-                local g = readGreyRetry(color)
-                print("[AE Craft] 🔍 " .. color .. " | Grey อ่านได้: " .. g)
-                if g < CRAFT_NORMAL_COST then
-                    -- ⭐ double-check: reopen UI + อ่านซ้ำอีกรอบก่อนตัดสินใจจบ
-                    print("[AE Craft] 🔁 Grey < 5 — เช็คซ้ำอีกรอบ...")
-                    closeCraftUI()
-                    task.wait(1)
-                    if openCraftUI() then
-                        clickCraftButton(color)
-                        task.wait(1)
-                        g = readGreyRetry(color)
-                        print("[AE Craft] 🔍 เช็คซ้ำ | Grey: " .. g)
+                -- ⭐ v8.3: ใช้ตัวนับที่ sync มาจากกระเป๋า แล้วหักทีละ 5 ต่อการคราฟ
+                --    (ทุก 5 ครั้ง sync ค่าจริงจากกระเป๋าอีกที กัน counter เพี้ยน)
+                if crafted > 0 and crafted % 5 == 0 then
+                    local real = greyTrue()
+                    if real > 0 then
+                        print("[AE Craft] 🔄 sync Grey จากกระเป๋า: " .. greyLeft .. " → " .. real)
+                        greyLeft = real
+                        ensureCraftOpen()
                     end
-                    if g < CRAFT_NORMAL_COST then
-                        print("[AE Craft] ⛔ Grey เหลือ " .. g .. " จริง — จบ")
+                end
+                if greyLeft < CRAFT_NORMAL_COST then
+                    local real = greyTrue()
+                    if real >= CRAFT_NORMAL_COST then
+                        greyLeft = real
+                        ensureCraftOpen()
+                    else
+                        print("[AE Craft] ⛔ Grey เหลือ " .. real .. " — จบ")
                         break
                     end
                 end
-                if not craftOne(color, CRAFT_NORMAL_COST) then
+                if craftOne(color, CRAFT_NORMAL_COST, greyLeft) then
+                    crafted = crafted + 1
+                    greyLeft = math.max(greyLeft - CRAFT_NORMAL_COST, 0)
+                    print(("[AE Craft] 🧪 คราฟ %s สำเร็จ (#%d) | Grey เหลือ ~%d")
+                        :format(color, crafted, greyLeft))
+                else
                     fullColors[color] = true
                     print("[AE Craft] 🚫 ข้าม " .. color .. " ถาวร (เต็ม/คราฟไม่ได้)")
                 end
                 task.wait(1)
             end
-            -- อ่าน Grey สุดท้าย (ensure + เลือกสีก่อนอ่าน)
-            if ensureCraftOpen() then
-                clickCraftButton(CRAFT_COLORS[1])
-                task.wait(0.8)
-                greyKnown = getGreyCount()
-            end
-            print("[AE Craft] จบคราฟ | Grey เหลือ: " .. greyKnown)
+            -- อ่าน Grey สุดท้ายจากกระเป๋า (แหล่งจริง)
+            closeCraftUI()
+            task.wait(0.5)
+            local finalGrey = greyTrue()
+            greyKnown = (finalGrey > 0) and finalGrey or greyLeft
+            print(("[AE Craft] จบคราฟ | คราฟไป %d ลูก | Grey เหลือ: %d"):format(crafted, greyKnown))
         end
         closeCraftUI()
     end
