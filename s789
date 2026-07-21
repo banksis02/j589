@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.5"
+local SCRIPT_VERSION = "v7.6"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1278,12 +1278,17 @@ if GAME_ID == "anime_expeditions" then
 
         -- ⭐ รอปุ่ม Act โผล่ (เครื่องช้า/emulator ใช้เวลานานกว่า 2 วิ)
         --    ถ้าไม่โผล่ → คลิกการ์ดด่านซ้ำด้วย VIM (getconnections บางเครื่องไม่ทำงาน)
+        -- ⭐ ปุ่ม Act มีข้อความอยู่ใน label ลูก (PrimaryButton → TextLabel "M")
+        --    ต้องเช็คทั้ง btn.Text และ label ลูก ไม่งั้นหาไม่เจอ
         local function findActBtn()
             local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
             for _, b in ipairs(root:GetDescendants()) do
-                if b:IsA("TextButton") and b.Visible and b.Text == actButton
-                   and b.AbsoluteSize.X <= 60 then
-                    return b
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible
+                   and b.AbsoluteSize.X <= 70 then
+                    if b:IsA("TextButton") and b.Text == actButton then return b end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and l.Text == actButton then return b end
+                    end
                 end
             end
             return nil
