@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.4"
+local SCRIPT_VERSION = "v7.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1275,19 +1275,111 @@ if GAME_ID == "anime_expeditions" then
             task.wait(1)
             return false
         end
-        task.wait(2)
-        if not clickExact(actButton) then
-            warn("[AE Enter] ล้มเหลวที่: ปุ่ม Act '" .. actButton .. "' (ด่านนี้อาจไม่มี Act นี้)")
+
+        -- ⭐ รอปุ่ม Act โผล่ (เครื่องช้า/emulator ใช้เวลานานกว่า 2 วิ)
+        --    ถ้าไม่โผล่ → คลิกการ์ดด่านซ้ำด้วย VIM (getconnections บางเครื่องไม่ทำงาน)
+        local function findActBtn()
+            local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("TextButton") and b.Visible and b.Text == actButton
+                   and b.AbsoluteSize.X <= 60 then
+                    return b
+                end
+            end
+            return nil
+        end
+        local actBtn
+        for i = 1, 10 do
+            actBtn = findActBtn()
+            if actBtn then break end
+            task.wait(1)
+            if i == 4 then
+                -- ยังไม่โผล่ → คลิกการ์ดด่านซ้ำ (VIM คลิกพิกัดจริง)
+                print("[AE Enter] 🔁 ปุ่ม Act ยังไม่โผล่ → คลิกการ์ดด่านซ้ำ (VIM)")
+                local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
+                local target = normName(stageName)
+                for _, lbl in ipairs(root:GetDescendants()) do
+                    if lbl:IsA("TextLabel") and lbl.Visible and normName(lbl.Text) == target then
+                        local p = lbl.Parent
+                        while p and p ~= root do
+                            if p:IsA("TextButton") or p:IsA("ImageButton") then
+                                pcall(function()
+                                    local inset = game:GetService("GuiService"):GetGuiInset()
+                                    local cx = p.AbsolutePosition.X + p.AbsoluteSize.X/2
+                                    local cy = p.AbsolutePosition.Y + p.AbsoluteSize.Y/2 + inset.Y
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                                    task.wait(0.06)
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                                end)
+                                break
+                            end
+                            p = p.Parent
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if not actBtn then
+            warn("[AE Enter] ล้มเหลวที่: ปุ่ม Act '" .. actButton .. "' ไม่โผล่ (ด่านไม่เปิด/ไม่มี Act นี้)")
+            clickExact("Back")
+            task.wait(1)
             return false
         end
+        if fireButtonConns(actBtn) == 0 then
+            -- ยิง connection ไม่ติด → VIM คลิกพิกัด
+            pcall(function()
+                local inset = game:GetService("GuiService"):GetGuiInset()
+                local cx = actBtn.AbsolutePosition.X + actBtn.AbsoluteSize.X/2
+                local cy = actBtn.AbsolutePosition.Y + actBtn.AbsoluteSize.Y/2 + inset.Y
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                task.wait(0.06)
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end)
+        end
+        print("[AE Enter] ✅ กด Act '" .. actButton .. "' แล้ว")
         task.wait(1.5)
+
+        -- ⭐ คลิกปุ่มแบบทน: รอปุ่มโผล่ (poll) + VIM คลิกพิกัดถ้า connection ไม่ติด
+        local function clickWait(text, waitSec)
+            local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
+            local btn
+            local t0 = tick()
+            while tick() - t0 < (waitSec or 6) do
+                for _, b in ipairs(root:GetDescendants()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible then
+                        if b:IsA("TextButton") and b.Text == text then btn = b; break end
+                        for _, l in ipairs(b:GetDescendants()) do
+                            if l:IsA("TextLabel") and l.Visible and l.Text == text then btn = b; break end
+                        end
+                    end
+                    if btn then break end
+                end
+                if btn then break end
+                task.wait(0.5)
+            end
+            if not btn then return false end
+            if fireButtonConns(btn) == 0 then
+                pcall(function()
+                    local inset = game:GetService("GuiService"):GetGuiInset()
+                    local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X/2
+                    local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y/2 + inset.Y
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                    task.wait(0.06)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                end)
+            end
+            print("[AE Enter] ✅ กด '" .. text .. "'")
+            return true
+        end
+
         if needHard then
-            if not clickExact("Hard") then warn("[AE Enter] ล้มเหลวที่: Hard"); return false end
+            if not clickWait("Hard", 6) then warn("[AE Enter] ล้มเหลวที่: Hard"); return false end
             task.wait(1)
         end
-        if not clickExact("Select Stage") then warn("[AE Enter] ล้มเหลวที่: Select Stage"); return false end
+        if not clickWait("Select Stage", 8) then warn("[AE Enter] ล้มเหลวที่: Select Stage"); return false end
         task.wait(3)                                        -- รอหน้า Private Party
-        if not clickExact("Start") then warn("[AE Enter] ล้มเหลวที่: Start"); return false end
+        if not clickWait("Start", 10) then warn("[AE Enter] ล้มเหลวที่: Start"); return false end
         print("[AE Enter] ✅ กด Start แล้ว — กำลังเข้าด่าน")
         return true
     end
