@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.1"
+local SCRIPT_VERSION = "v8.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1593,42 +1593,33 @@ if GAME_ID == "anime_expeditions" then
         local root = craftGuiRoot()
         if not root then return 0 end
 
-        local greyLabel, cands = nil, {}
+        local exact, loose = {}, {}
         for _, l in ipairs(root:GetDescendants()) do
             if l:IsA("TextLabel") and l.Visible then
-                local t = tostring(l.Text):gsub("<[^>]->", "")
-                if t:lower():find("grey", 1, true) then
-                    greyLabel = greyLabel or l
-                end
-                local have, max = t:match("([%d,]+)%s*[xX]?%s*/%s*([%d,]+)")
-                if have then
-                    table.insert(cands, {
-                        have = tonumber((have:gsub(",", ""))) or 0,
-                        max  = tonumber((max:gsub(",", ""))) or 0,
-                        x = l.AbsolutePosition.X, y = l.AbsolutePosition.Y, text = t,
-                    })
+                local t = tostring(l.Text):gsub("<[^>]->", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                local h, m = t:match("^([%d,]+)/([%d,]+)$")            -- แบบเป๊ะ "125/125"
+                if h then
+                    table.insert(exact, { have = tonumber((h:gsub(",", ""))) or 0,
+                                          max  = tonumber((m:gsub(",", ""))) or 0 })
+                else
+                    h, m = t:match("([%d,]+)%s*[xX]?%s*/%s*([%d,]+)")  -- "125x / 125x Owned"
+                    if h then
+                        table.insert(loose, { have = tonumber((h:gsub(",", ""))) or 0,
+                                              max  = tonumber((m:gsub(",", ""))) or 0 })
+                    end
                 end
             end
         end
-        if #cands == 0 then return 0 end
 
-        -- เลือกตัวที่อยู่ใกล้ป้าย "Sprite (Grey)" ที่สุด
-        if greyLabel then
-            local gx, gy = greyLabel.AbsolutePosition.X, greyLabel.AbsolutePosition.Y
-            local best, bestD
-            for _, c in ipairs(cands) do
-                local d = math.abs(c.x - gx) + math.abs(c.y - gy)
-                if not bestD or d < bestD then best, bestD = c, d end
+        -- ⭐ ตัวหารต้องเป็น 125 (ช่องเก็บ Grey) — กันไปหยิบเลขของไอเทมอื่น
+        for _, list in ipairs({ exact, loose }) do
+            for _, c in ipairs(list) do
+                if c.max == CRAFT_GREY_FULL then return c.have end
             end
-            if best then return best.have end
         end
-        -- ไม่เจอป้าย Grey → เอาตัวที่ max ใกล้ 125 ที่สุด
-        local best
-        for _, c in ipairs(cands) do
-            if c.max == CRAFT_GREY_FULL then best = c; break end
-            if not best or c.have > best.have then best = c end
-        end
-        return best and best.have or 0
+        -- ไม่เจอที่หาร 125 → ใช้แบบเป๊ะตัวแรก (พฤติกรรมเดิมที่เคยใช้ได้)
+        if exact[1] then return exact[1].have end
+        return 0
     end
 
     -- debug: ดูว่าหน้าคราฟมีตัวเลขอะไรบ้าง (ตอนอ่าน Grey เพี้ยน)
@@ -1772,6 +1763,17 @@ if GAME_ID == "anime_expeditions" then
     end
 
     autoCraftInner = function()
+        -- ⭐ v8.2: อ่าน Grey จาก "กระเป๋า Items" เป็นหลัก (ป้าย Owned 125x — ชัวร์ที่สุด)
+        --    หน้าคราฟมีตัวเลขหลายชุดปนกัน เดาแล้วหยิบผิด (เคยได้ 25 ทั้งที่มี 125)
+        local grey = 0
+        if _G.AE_READ_ITEM then
+            local real = _G.AE_READ_ITEM("Sprite (Grey)")
+            if real and real > 0 then
+                grey = real
+                print("[AE Craft] 📦 Grey จากกระเป๋า: " .. grey)
+            end
+        end
+
         print("[AE Craft] 🚪 เปิดหน้าคราฟเช็ค Grey...")
         if not openCraftUI() then
             warn("[AE Craft] ❌ เปิดหน้าคราฟไม่ได้")
@@ -1779,20 +1781,11 @@ if GAME_ID == "anime_expeditions" then
         end
         clickCraftButton(CRAFT_COLORS[1])
         task.wait(1)
-        local grey = readGreyRetry(CRAFT_COLORS[1])
 
-        -- ⭐ v8.1: อ่านจากหน้าคราฟไม่ได้ (0) → เช็คซ้ำจากกระเป๋า Items (J) ก่อนยอมแพ้
-        if grey <= 0 and _G.AE_READ_ITEM then
-            local real = _G.AE_READ_ITEM("Sprite (Grey)")
-            if real and real > 0 then
-                print("[AE Craft] 📦 หน้าคราฟอ่านไม่ได้ → ใช้ค่าจากกระเป๋า: " .. real)
-                grey = real
-                openCraftUI()                       -- กระเป๋าอาจปิดหน้าคราฟไป
-                clickCraftButton(CRAFT_COLORS[1])
-                task.wait(0.8)
-            else
-                print("[AE Craft] ⚠️ อ่าน Grey ไม่ได้เลย — ดูรายละเอียด: _G.AE_CRAFT_DEBUG()")
-            end
+        if grey <= 0 then                       -- กระเป๋าอ่านไม่ได้ → ค่อยใช้หน้าคราฟ
+            grey = readGreyRetry(CRAFT_COLORS[1])
+            print("[AE Craft] 🔍 Grey จากหน้าคราฟ: " .. grey
+                  .. " (ถ้าเลขผิด ใช้ _G.AE_CRAFT_DEBUG() ดูรายละเอียด)")
         end
 
         greyKnown = grey
