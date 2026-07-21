@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.6"
+local SCRIPT_VERSION = "v7.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1346,20 +1346,34 @@ if GAME_ID == "anime_expeditions" then
         task.wait(1.5)
 
         -- ⭐ คลิกปุ่มแบบทน: รอปุ่มโผล่ (poll) + VIM คลิกพิกัดถ้า connection ไม่ติด
+        -- ⭐ v7.7: ต้องหาทั่วทุก ScreenGui ไม่ใช่แค่ "Play"
+        --    หน้า Private Party (ปุ่ม Start) อยู่คนละ ScreenGui → เดิมหาไม่เจอ = เข้าด่านไม่ได้
+        local function findBtnAnywhere(text)
+            local roots = {}
+            local playGui = player.PlayerGui:FindFirstChild("Play")
+            if playGui then table.insert(roots, playGui) end          -- ให้ Play มาก่อน
+            for _, g in ipairs(player.PlayerGui:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled and g ~= playGui then table.insert(roots, g) end
+            end
+            for _, root in ipairs(roots) do
+                for _, b in ipairs(root:GetDescendants()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible
+                       and b.AbsoluteSize.X > 3 then
+                        if b:IsA("TextButton") and b.Text == text then return b end
+                        for _, l in ipairs(b:GetDescendants()) do
+                            if l:IsA("TextLabel") and l.Visible and l.Text == text then return b end
+                        end
+                    end
+                end
+            end
+            return nil
+        end
+
         local function clickWait(text, waitSec)
-            local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
             local btn
             local t0 = tick()
             while tick() - t0 < (waitSec or 6) do
-                for _, b in ipairs(root:GetDescendants()) do
-                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible then
-                        if b:IsA("TextButton") and b.Text == text then btn = b; break end
-                        for _, l in ipairs(b:GetDescendants()) do
-                            if l:IsA("TextLabel") and l.Visible and l.Text == text then btn = b; break end
-                        end
-                    end
-                    if btn then break end
-                end
+                btn = findBtnAnywhere(text)
                 if btn then break end
                 task.wait(0.5)
             end
@@ -1384,7 +1398,16 @@ if GAME_ID == "anime_expeditions" then
         end
         if not clickWait("Select Stage", 8) then warn("[AE Enter] ล้มเหลวที่: Select Stage"); return false end
         task.wait(3)                                        -- รอหน้า Private Party
-        if not clickWait("Start", 10) then warn("[AE Enter] ล้มเหลวที่: Start"); return false end
+        -- ⭐ v7.7: ลอง Start ให้นานขึ้น + ถ้าไม่โผล่ กด Select Stage ซ้ำแล้วลองใหม่
+        if not clickWait("Start", 12) then
+            print("[AE Enter] 🔁 ไม่เจอ Start → กด Select Stage ซ้ำ")
+            clickWait("Select Stage", 5)
+            task.wait(3)
+            if not clickWait("Start", 12) then
+                warn("[AE Enter] ล้มเหลวที่: Start")
+                return false
+            end
+        end
         print("[AE Enter] ✅ กด Start แล้ว — กำลังเข้าด่าน")
         return true
     end
