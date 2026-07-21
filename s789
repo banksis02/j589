@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.7"
+local SCRIPT_VERSION = "v7.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1348,25 +1348,46 @@ if GAME_ID == "anime_expeditions" then
         -- ⭐ คลิกปุ่มแบบทน: รอปุ่มโผล่ (poll) + VIM คลิกพิกัดถ้า connection ไม่ติด
         -- ⭐ v7.7: ต้องหาทั่วทุก ScreenGui ไม่ใช่แค่ "Play"
         --    หน้า Private Party (ปุ่ม Start) อยู่คนละ ScreenGui → เดิมหาไม่เจอ = เข้าด่านไม่ได้
-        local function findBtnAnywhere(text)
-            local roots = {}
-            local playGui = player.PlayerGui:FindFirstChild("Play")
-            if playGui then table.insert(roots, playGui) end          -- ให้ Play มาก่อน
-            for _, g in ipairs(player.PlayerGui:GetChildren()) do
-                if g:IsA("ScreenGui") and g.Enabled and g ~= playGui then table.insert(roots, g) end
+        -- ⭐ v7.8: ต้องเป็นปุ่มที่ "เห็นบนจอจริง" เท่านั้น
+        --    เดิมเจอปุ่มซ่อน/ปุ่มค้างใน gui อื่นก่อน แล้วยิงใส่มัน → กดแล้วไม่มีอะไรเกิดขึ้น
+        local function reallyVisible(o)
+            local n = o
+            while n and n:IsA("GuiObject") do
+                if not n.Visible then return false end
+                n = n.Parent
             end
-            for _, root in ipairs(roots) do
-                for _, b in ipairs(root:GetDescendants()) do
-                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible
-                       and b.AbsoluteSize.X > 3 then
-                        if b:IsA("TextButton") and b.Text == text then return b end
-                        for _, l in ipairs(b:GetDescendants()) do
-                            if l:IsA("TextLabel") and l.Visible and l.Text == text then return b end
+            if n and n:IsA("ScreenGui") and not n.Enabled then return false end
+            local cam = workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize
+            if vp then
+                local p, s = o.AbsolutePosition, o.AbsoluteSize
+                if s.X < 5 or s.Y < 5 then return false end
+                if p.X + s.X < 0 or p.Y + s.Y < 0 or p.X > vp.X or p.Y > vp.Y then return false end
+            end
+            return true
+        end
+
+        local function findBtnAnywhere(text)
+            local best, bestArea = nil, -1
+            for _, g in ipairs(player.PlayerGui:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    for _, b in ipairs(g:GetDescendants()) do
+                        if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
+                            local hit = (b:IsA("TextButton") and b.Text == text)
+                            if not hit then
+                                for _, l in ipairs(b:GetDescendants()) do
+                                    if l:IsA("TextLabel") and l.Visible and l.Text == text then hit = true; break end
+                                end
+                            end
+                            if hit then
+                                local area = b.AbsoluteSize.X * b.AbsoluteSize.Y
+                                if area > bestArea then best, bestArea = b, area end
+                            end
                         end
                     end
                 end
             end
-            return nil
+            return best
         end
 
         local function clickWait(text, waitSec)
@@ -1405,6 +1426,25 @@ if GAME_ID == "anime_expeditions" then
             task.wait(3)
             if not clickWait("Start", 12) then
                 warn("[AE Enter] ล้มเหลวที่: Start")
+                -- ⭐ v7.8: ลิสต์ปุ่มที่เห็นจริงตอนนั้น จะได้รู้ว่าปุ่มจริงชื่ออะไร
+                local seen = {}
+                for _, g in ipairs(player.PlayerGui:GetChildren()) do
+                    if g:IsA("ScreenGui") and g.Enabled then
+                        for _, b in ipairs(g:GetDescendants()) do
+                            if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
+                                local t = (b:IsA("TextButton") and b.Text ~= "" and b.Text) or ""
+                                for _, l in ipairs(b:GetDescendants()) do
+                                    if l:IsA("TextLabel") and l.Visible and l.Text ~= "" then
+                                        t = t .. (t ~= "" and " | " or "") .. l.Text
+                                    end
+                                end
+                                if t ~= "" then table.insert(seen, g.Name .. " → " .. t) end
+                            end
+                        end
+                    end
+                end
+                warn("[AE Enter] 🔍 ปุ่มที่เห็นตอนนี้ (" .. #seen .. "):")
+                for i = 1, math.min(#seen, 25) do warn("   " .. seen[i]) end
                 return false
             end
         end
@@ -1469,14 +1509,34 @@ if GAME_ID == "anime_expeditions" then
         return 0
     end
 
+    -- ⭐ v7.8: เปิดหน้าคราฟแบบทน — ลองซ้ำ + วาปไปยืนที่โซนคราฟถ้ายังไม่ติด
+    --    (หลัง ANTI-AFK reset ตัวละครเพิ่งเกิดใหม่/อยู่ไกล → fireproximityprompt ไม่ติด)
     local function openCraftUI()
         if craftUIOpen() then return true end
-        local ok, prompt = pcall(function()
-            return workspace.InteractZones.Crafting.ProximityPrompt
-        end)
-        if not ok or not prompt then return false end
-        pcall(fireproximityprompt, prompt)
-        task.wait(2)
+        local zone
+        pcall(function() zone = workspace.InteractZones.Crafting end)
+        if not zone then return false end
+        local prompt = zone:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if not prompt then return false end
+
+        for attempt = 1, 3 do
+            pcall(fireproximityprompt, prompt)
+            task.wait(1.5)
+            if craftUIOpen() then return true end
+
+            -- ยังไม่ติด → วาปไปยืนที่โซนคราฟแล้วลองใหม่
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            local part = zone:IsA("BasePart") and zone or zone:FindFirstChildWhichIsA("BasePart")
+            if hrp and part then
+                print("[AE Craft] 🚀 วาปไปโซนคราฟแล้วลองใหม่ (รอบ " .. attempt .. ")")
+                pcall(function() hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0) end)
+                task.wait(1)
+                pcall(fireproximityprompt, prompt)
+                task.wait(1.5)
+                if craftUIOpen() then return true end
+            end
+            task.wait(1)
+        end
         return craftUIOpen()
     end
 
