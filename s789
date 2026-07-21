@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.3"
+local SCRIPT_VERSION = "v7.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1199,11 +1199,10 @@ if GAME_ID == "anime_expeditions" then
     local function normName(s)
         return (tostring(s):lower():gsub("[^%w]", ""))
     end
-    local function clickStageName(stageName)
-        if clickExact(stageName) then return true end   -- ลอง exact ก่อน
+    -- หา label ด่าน (normalize) แล้วคลิกปุ่มแม่ — คืน true ถ้าคลิกได้
+    local function tryClickStageLabel(stageName)
         local target = normName(stageName)
         local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
-        -- หา label ที่ normalize แล้วตรงกัน (หรือขึ้นต้นด้วยชื่อด่าน)
         for _, lbl in ipairs(root:GetDescendants()) do
             if lbl:IsA("TextLabel") and lbl.Visible and lbl.Text ~= "" then
                 local t = normName(lbl.Text)
@@ -1212,7 +1211,7 @@ if GAME_ID == "anime_expeditions" then
                     while p and p ~= root do
                         if p:IsA("TextButton") or p:IsA("ImageButton") then
                             local n = fireButtonConns(p)
-                            print("[AE Enter] '" .. stageName .. "' (normalize: '" .. lbl.Text .. "') → fired=" .. n)
+                            print("[AE Enter] '" .. stageName .. "' (เจอ: '" .. lbl.Text .. "') → fired=" .. n)
                             return n > 0
                         end
                         p = p.Parent
@@ -1220,7 +1219,43 @@ if GAME_ID == "anime_expeditions" then
                 end
             end
         end
-        warn("[AE Enter] ❌ ไม่เจอด่าน '" .. stageName .. "' (ลอง normalize แล้ว)")
+        return false
+    end
+
+    -- ⭐ ด่านท้ายๆ (King's Tomb) อยู่นอกจอ — การ์ดยังไม่ถูกสร้างจนกว่าจะเลื่อน scroll
+    --    วิธี: เลื่อน ScrollingFrame แนวนอนทีละขั้น แล้วหาซ้ำทุกขั้น
+    local function clickStageName(stageName)
+        if clickExact(stageName) then return true end
+        if tryClickStageLabel(stageName) then return true end
+
+        -- หา ScrollingFrame แนวนอนที่กว้างกว่าจอ (แถบเลือกด่าน)
+        local root = player.PlayerGui:FindFirstChild("Play")
+        local sf
+        if root then
+            for _, f in ipairs(root:GetDescendants()) do
+                if f:IsA("ScrollingFrame") and f.Visible
+                   and f.AbsoluteCanvasSize.X > f.AbsoluteSize.X + 50 then
+                    if not sf or f.AbsoluteSize.X > sf.AbsoluteSize.X then sf = f end
+                end
+            end
+        end
+        if not sf then
+            warn("[AE Enter] ❌ ไม่เจอด่าน '" .. stageName .. "' และไม่เจอแถบเลื่อน")
+            return false
+        end
+
+        print("[AE Enter] 🔄 เลื่อนหาด่าน '" .. stageName .. "'...")
+        local maxX = math.max(0, sf.AbsoluteCanvasSize.X - sf.AbsoluteSize.X)
+        local step = math.max(200, sf.AbsoluteSize.X * 0.6)
+        local x = 0
+        while x <= maxX + step do
+            pcall(function() sf.CanvasPosition = Vector2.new(math.min(x, maxX), sf.CanvasPosition.Y) end)
+            task.wait(0.35)
+            if tryClickStageLabel(stageName) then return true end
+            if x >= maxX then break end
+            x = x + step
+        end
+        warn("[AE Enter] ❌ เลื่อนจนสุดแล้วยังไม่เจอด่าน '" .. stageName .. "'")
         return false
     end
 
@@ -1229,11 +1264,17 @@ if GAME_ID == "anime_expeditions" then
         stageName = stageName or "School Grounds"
         actButton = actButton or "1"
         print("[AE Enter] ▶ เริ่มเข้าด่าน " .. stageName .. " (Act " .. actButton .. ")...")
-        if not clickExact("Play") then warn("[AE Enter] ล้มเหลวที่: Play"); return false end
+        -- ⭐ Play/Story ไม่บังคับสำเร็จ (อาจเปิดหน้านั้นค้างอยู่แล้วจากรอบก่อน)
+        clickExact("Play")
         task.wait(2)
-        if not clickExact("Story") then warn("[AE Enter] ล้มเหลวที่: Story"); return false end
+        clickExact("Story")
         task.wait(2)
-        if not clickStageName(stageName) then warn("[AE Enter] ล้มเหลวที่: ชื่อด่าน"); return false end
+        if not clickStageName(stageName) then
+            warn("[AE Enter] ล้มเหลวที่: ชื่อด่าน — กด Back รีเซ็ต UI")
+            clickExact("Back")   -- กลับ lobby เพื่อเริ่มใหม่สะอาดๆ
+            task.wait(1)
+            return false
+        end
         task.wait(2)
         if not clickExact(actButton) then
             warn("[AE Enter] ล้มเหลวที่: ปุ่ม Act '" .. actButton .. "' (ด่านนี้อาจไม่มี Act นี้)")
