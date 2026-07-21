@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.9"
+local SCRIPT_VERSION = "v8.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1278,18 +1278,31 @@ if GAME_ID == "anime_expeditions" then
     end
     local function uiRelease() uiBusy, uiBusyWho = false, "" end
 
-    local function pressEscape()
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
-            task.wait(0.1)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
-        end)
-        task.wait(0.5)
+    -- ⚠️ ห้ามกด Escape เด็ดขาด — ใน Roblox มันเปิด "เมนูเกม" (People/Settings/Leave)
+    --    v7.9 เคยใช้ปิดหน้าคราฟ → เมนูเกมเด้ง แล้วคลิกถัดไปไปโดน Invite Friends
+    --    ถ้าเมนูเกมเผลอเปิด ให้ปิดด้วยฟังก์ชันนี้เท่านั้น
+    local function closeRobloxMenu()
+        local gs = game:GetService("GuiService")
+        if not gs.MenuIsOpen then return true end
+        print("[AE UI] ✖️ เมนูเกม Roblox เปิดค้าง → ปิด")
+        local ok = pcall(function() gs:SetMenuIsOpen(false) end)
+        task.wait(0.6)
+        if not gs.MenuIsOpen then return true end
+        if not ok then
+            -- ปิดไม่ได้ด้วย API → กด Escape 1 ครั้งเพื่อ toggle ปิด (เมนูเปิดอยู่แล้วเท่านั้น)
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+            end)
+            task.wait(0.8)
+        end
+        return not gs.MenuIsOpen
     end
 
     -- ปิดกล่องที่เผลอเปิดค้าง (เช่น Filter Settings) — ไม่งั้นบังจอ กดอะไรไม่ได้เลย
     local function closeStrayDialogs()
-        local closed = false
+        local closed = closeRobloxMenu()   -- เมนูเกมเปิดค้าง = คลิกอะไรไม่โดนเลย
         for _, g in ipairs(player.PlayerGui:GetChildren()) do
             if g:IsA("ScreenGui") and g.Enabled then
                 local hasDialog = false
@@ -1621,15 +1634,8 @@ if GAME_ID == "anime_expeditions" then
     local function closeCraftUI()
         local root = craftGuiRoot()
         if not root or not craftUIOpen() then return true end
-        -- 1) Escape ก่อน (ปลอดภัยสุด)
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
-            task.wait(0.1)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
-        end)
-        task.wait(1)
-        if not craftUIOpen() then return true end
-        -- 2) กดเฉพาะปุ่มปิดมุมขวาบนของกรอบ (ปุ่มเล็ก + อยู่ขวาสุด/บนสุด)
+        -- ⭐ กดเฉพาะปุ่มปิดมุมขวาบนของกรอบ (ปุ่มเล็ก + อยู่ขวาสุด/บนสุด)
+        --    ห้ามใช้ Escape (เปิดเมนูเกม) และห้ามไล่กดทุกปุ่ม (ไปโดน filter)
         local best, bestScore
         for _, btn in ipairs(root:GetDescendants()) do
             if btn:IsA("TextButton") and btn.Visible
@@ -2110,9 +2116,6 @@ if GAME_ID == "anime_expeditions" then
             end
             closeSettings()
             task.wait(0.5)
-            if settingsOpen() then          -- ปิดไม่ลง → กด Escape ช่วย
-                pressEscape()
-            end
             print("[AE Settings] ✅ ตั้งค่าเสร็จ")
         end)
         closeStrayDialogs()
