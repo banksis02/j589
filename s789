@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v7.8"
+local SCRIPT_VERSION = "v7.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1259,8 +1259,84 @@ if GAME_ID == "anime_expeditions" then
         return false
     end
 
+    -- ============================================================
+    -- ⭐ v7.8: ล็อกคิวหน้าจอล็อบบี้ — ตั้งค่า / คราฟ / เข้าด่าน ห้ามทำพร้อมกัน
+    --    (เดิมตั้งค่าเปิดค้าง แล้วคราฟเปิดทับ → กดโดนกันมั่ว → เข้าด่านไม่ได้)
+    -- ============================================================
+    local uiBusy, uiBusyWho = false, ""
+    local function uiAcquire(who, timeout)
+        local t0 = tick()
+        while uiBusy and tick() - t0 < (timeout or 60) do
+            task.wait(0.5)
+        end
+        if uiBusy then
+            warn(("[AE UI] ⏳ %s รอ %s นานเกินไป — ข้ามรอบนี้"):format(who, uiBusyWho))
+            return false
+        end
+        uiBusy, uiBusyWho = true, who
+        return true
+    end
+    local function uiRelease() uiBusy, uiBusyWho = false, "" end
+
+    local function pressEscape()
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+        end)
+        task.wait(0.5)
+    end
+
+    -- ปิดกล่องที่เผลอเปิดค้าง (เช่น Filter Settings) — ไม่งั้นบังจอ กดอะไรไม่ได้เลย
+    local function closeStrayDialogs()
+        local closed = false
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                local hasDialog = false
+                for _, l in ipairs(g:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible then
+                        local t = tostring(l.Text)
+                        if t == "Filter Settings" or t == "Apply Filter" then hasDialog = true; break end
+                    end
+                end
+                if hasDialog then
+                    for _, b in ipairs(g:GetDescendants()) do
+                        if b:IsA("TextButton") and b.Visible then
+                            local t = tostring(b.Text)
+                            local hit = (t == "Cancel")
+                            if not hit then
+                                for _, l in ipairs(b:GetDescendants()) do
+                                    if l:IsA("TextLabel") and l.Visible and l.Text == "Cancel" then hit = true; break end
+                                end
+                            end
+                            if hit then
+                                print("[AE UI] ✖️ ปิดกล่อง Filter Settings ที่ค้างอยู่")
+                                fireButtonConns(b)
+                                closed = true
+                                task.wait(0.6)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if closed then task.wait(0.5) end
+        return closed
+    end
+
     -- ⭐ Parametrized: actButton = "1" หรือ "M" | needHard = เลือกความยาก Hard ไหม
+    local enterStageInner
     local function enterStageSequence(stageName, actButton, needHard)
+        if not uiAcquire("เข้าด่าน", 90) then return false end
+        closeStrayDialogs()
+        local ok, res = pcall(enterStageInner, stageName, actButton, needHard)
+        uiRelease()
+        if not ok then warn("[AE Enter] ❌ error: " .. tostring(res)); return false end
+        return res
+    end
+
+    enterStageInner = function(stageName, actButton, needHard)
         stageName = stageName or "School Grounds"
         actButton = actButton or "1"
         print("[AE Enter] ▶ เริ่มเข้าด่าน " .. stageName .. " (Act " .. actButton .. ")...")
@@ -1540,16 +1616,31 @@ if GAME_ID == "anime_expeditions" then
         return craftUIOpen()
     end
 
+    -- ⭐ v7.8: ปิดหน้าคราฟแบบไม่กดมั่ว
+    --    เดิมไล่กดปุ่มเล็กทุกปุ่ม → ไปโดนปุ่ม filter เปิดกล่อง "Filter Settings" ค้างบังจอ
     local function closeCraftUI()
         local root = craftGuiRoot()
         if not root or not craftUIOpen() then return true end
+        -- 1) Escape ก่อน (ปลอดภัยสุด)
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+        end)
+        task.wait(1)
+        if not craftUIOpen() then return true end
+        -- 2) กดเฉพาะปุ่มปิดมุมขวาบนของกรอบ (ปุ่มเล็ก + อยู่ขวาสุด/บนสุด)
+        local best, bestScore
         for _, btn in ipairs(root:GetDescendants()) do
             if btn:IsA("TextButton") and btn.Visible
-               and btn.AbsoluteSize.X <= 35 and btn.AbsoluteSize.Y <= 35 then
-                fireButtonConns(btn)
-                task.wait(1)
-                if not craftUIOpen() then return true end
+               and btn.AbsoluteSize.X <= 40 and btn.AbsoluteSize.Y <= 40 then
+                local score = btn.AbsolutePosition.X - btn.AbsolutePosition.Y
+                if not bestScore or score > bestScore then best, bestScore = btn, score end
             end
+        end
+        if best then
+            fireButtonConns(best)
+            task.wait(1)
         end
         return not craftUIOpen()
     end
@@ -1615,7 +1706,17 @@ if GAME_ID == "anime_expeditions" then
     end
 
     -- ⭐ เปิดหน้าคราฟ เช็ค Grey → ถ้าเต็ม 125 คราฟ (Rainbow 1 + สุ่มสี) → ปิด
+    local autoCraftInner
     local function autoCraftIfFull()
+        if not uiAcquire("คราฟ", 90) then return end
+        closeStrayDialogs()
+        local ok, err = pcall(autoCraftInner)
+        closeStrayDialogs()          -- กันกล่อง filter ค้างไปรบกวนการเข้าด่าน
+        uiRelease()
+        if not ok then warn("[AE Craft] ❌ error: " .. tostring(err)) end
+    end
+
+    autoCraftInner = function()
         print("[AE Craft] 🚪 เปิดหน้าคราฟเช็ค Grey...")
         if not openCraftUI() then
             warn("[AE Craft] ❌ เปิดหน้าคราฟไม่ได้")
@@ -1995,18 +2096,29 @@ if GAME_ID == "anime_expeditions" then
     end
 
     local function applyRecommendedSettings()
-        print("[AE Settings] ⚙️ เช็ค + ตั้งค่าอัตโนมัติ...")
-        if not openSettings() then
-            warn("[AE Settings] ❌ เปิด Settings ไม่ได้")
-            return
-        end
-        task.wait(1.5)
-        for _, pref in ipairs(SETTING_PREFS) do
-            setSettingState(pref.name, pref.want)
-            task.wait(0.4)
-        end
-        closeSettings()
-        print("[AE Settings] ✅ ตั้งค่าเสร็จ")
+        if not uiAcquire("ตั้งค่า", 90) then return end
+        local ok, err = pcall(function()
+            print("[AE Settings] ⚙️ เช็ค + ตั้งค่าอัตโนมัติ...")
+            if not openSettings() then
+                warn("[AE Settings] ❌ เปิด Settings ไม่ได้")
+                return
+            end
+            task.wait(1.5)
+            for _, pref in ipairs(SETTING_PREFS) do
+                setSettingState(pref.name, pref.want)
+                task.wait(0.4)
+            end
+            closeSettings()
+            task.wait(0.5)
+            if settingsOpen() then          -- ปิดไม่ลง → กด Escape ช่วย
+                pressEscape()
+            end
+            print("[AE Settings] ✅ ตั้งค่าเสร็จ")
+        end)
+        closeStrayDialogs()
+        uiRelease()
+        _G.AE_SETTINGS_DONE = true
+        if not ok then warn("[AE Settings] ❌ error: " .. tostring(err)) end
     end
     _G.AE_APPLY_SETTINGS = applyRecommendedSettings
 
@@ -2624,6 +2736,12 @@ if GAME_ID == "anime_expeditions" then
                     victoryStuck = 0
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม (lobby)")
                     local entered
+                    -- ⭐ v7.8: รอให้ตั้งค่าเสร็จก่อน แล้วค่อยคราฟ แล้วค่อยเข้าด่าน
+                    if not _G.AE_SETTINGS_DONE then
+                        print("[AE Farm] ⏳ รอตั้งค่าให้เสร็จก่อน...")
+                        local t0 = tick()
+                        while not _G.AE_SETTINGS_DONE and tick() - t0 < 45 do task.wait(1) end
+                    end
                     if farmMode == "actM" then
                         -- ⭐ โหมด M: คราฟเฉพาะตอน Grey เต็ม/ยังไม่เคย sync (ไม่เปิดหน้าคราฟทุกรอบ)
                         if greyKnown >= CRAFT_GREY_FULL or not greyKnownSynced then
