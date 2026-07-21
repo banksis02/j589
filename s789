@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.3"
+local SCRIPT_VERSION = "v8.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1338,6 +1338,50 @@ if GAME_ID == "anime_expeditions" then
         return closed
     end
 
+    -- ⭐ v7.7: ต้องหาทั่วทุก ScreenGui ไม่ใช่แค่ "Play"
+    --    หน้า Private Party (ปุ่ม Start) อยู่คนละ ScreenGui → เดิมหาไม่เจอ = เข้าด่านไม่ได้
+    -- ⭐ v7.8: ต้องเป็นปุ่มที่ "เห็นบนจอจริง" เท่านั้น
+    --    เดิมเจอปุ่มซ่อน/ปุ่มค้างใน gui อื่นก่อน แล้วยิงใส่มัน → กดแล้วไม่มีอะไรเกิดขึ้น
+    local function reallyVisible(o)
+        local n = o
+        while n and n:IsA("GuiObject") do
+            if not n.Visible then return false end
+            n = n.Parent
+        end
+        if n and n:IsA("ScreenGui") and not n.Enabled then return false end
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize
+        if vp then
+            local p, s = o.AbsolutePosition, o.AbsoluteSize
+            if s.X < 5 or s.Y < 5 then return false end
+            if p.X + s.X < 0 or p.Y + s.Y < 0 or p.X > vp.X or p.Y > vp.Y then return false end
+        end
+        return true
+    end
+
+    local function findBtnAnywhere(text)
+        local best, bestArea = nil, -1
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, b in ipairs(g:GetDescendants()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
+                        local hit = (b:IsA("TextButton") and b.Text == text)
+                        if not hit then
+                            for _, l in ipairs(b:GetDescendants()) do
+                                if l:IsA("TextLabel") and l.Visible and l.Text == text then hit = true; break end
+                            end
+                        end
+                        if hit then
+                            local area = b.AbsoluteSize.X * b.AbsoluteSize.Y
+                            if area > bestArea then best, bestArea = b, area end
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
     -- ⭐ Parametrized: actButton = "1" หรือ "M" | needHard = เลือกความยาก Hard ไหม
     local enterStageInner
     local function enterStageSequence(stageName, actButton, needHard)
@@ -1351,6 +1395,46 @@ if GAME_ID == "anime_expeditions" then
 
     enterStageInner = function(stageName, actButton, needHard)
         stageName = stageName or "School Grounds"
+
+        -- ⭐ v8.4: ถ้าค้างอยู่หน้า Private Party (มีปุ่ม Start) → กด Start ต่อได้เลย
+        --    เดิมไล่ทำใหม่ตั้งแต่ Play/Story → หาด่านไม่เจอ (คนละหน้า) → กด Back วนไม่จบ
+        do
+            local hasParty = false
+            for _, g in ipairs(player.PlayerGui:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    for _, l in ipairs(g:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible then
+                            local t = tostring(l.Text)
+                            if t == "Disband" or t == "Change Map" or t == "Private Party" then
+                                hasParty = true; break
+                            end
+                        end
+                    end
+                end
+                if hasParty then break end
+            end
+            if hasParty then
+                print("[AE Enter] ⏩ อยู่หน้า Private Party อยู่แล้ว → กด Start เลย")
+                local startBtn = findBtnAnywhere("Start")
+                if startBtn then
+                    if fireButtonConns(startBtn) == 0 then
+                        pcall(function()
+                            local inset = game:GetService("GuiService"):GetGuiInset()
+                            local cx = startBtn.AbsolutePosition.X + startBtn.AbsoluteSize.X/2
+                            local cy = startBtn.AbsolutePosition.Y + startBtn.AbsoluteSize.Y/2 + inset.Y
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                            task.wait(0.06)
+                            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                        end)
+                    end
+                    print("[AE Enter] ✅ กด Start แล้ว — กำลังเข้าด่าน")
+                    return true
+                end
+                print("[AE Enter] ⚠️ อยู่หน้าปาร์ตี้แต่ไม่เจอปุ่ม Start → ออกด้วย Back แล้วเริ่มใหม่")
+                clickExact("Back")
+                task.wait(2)
+            end
+        end
         actButton = actButton or "1"
         print("[AE Enter] ▶ เริ่มเข้าด่าน " .. stageName .. " (Act " .. actButton .. ")...")
         -- ⭐ Play/Story ไม่บังคับสำเร็จ (อาจเปิดหน้านั้นค้างอยู่แล้วจากรอบก่อน)
@@ -1435,50 +1519,6 @@ if GAME_ID == "anime_expeditions" then
         task.wait(1.5)
 
         -- ⭐ คลิกปุ่มแบบทน: รอปุ่มโผล่ (poll) + VIM คลิกพิกัดถ้า connection ไม่ติด
-        -- ⭐ v7.7: ต้องหาทั่วทุก ScreenGui ไม่ใช่แค่ "Play"
-        --    หน้า Private Party (ปุ่ม Start) อยู่คนละ ScreenGui → เดิมหาไม่เจอ = เข้าด่านไม่ได้
-        -- ⭐ v7.8: ต้องเป็นปุ่มที่ "เห็นบนจอจริง" เท่านั้น
-        --    เดิมเจอปุ่มซ่อน/ปุ่มค้างใน gui อื่นก่อน แล้วยิงใส่มัน → กดแล้วไม่มีอะไรเกิดขึ้น
-        local function reallyVisible(o)
-            local n = o
-            while n and n:IsA("GuiObject") do
-                if not n.Visible then return false end
-                n = n.Parent
-            end
-            if n and n:IsA("ScreenGui") and not n.Enabled then return false end
-            local cam = workspace.CurrentCamera
-            local vp = cam and cam.ViewportSize
-            if vp then
-                local p, s = o.AbsolutePosition, o.AbsoluteSize
-                if s.X < 5 or s.Y < 5 then return false end
-                if p.X + s.X < 0 or p.Y + s.Y < 0 or p.X > vp.X or p.Y > vp.Y then return false end
-            end
-            return true
-        end
-
-        local function findBtnAnywhere(text)
-            local best, bestArea = nil, -1
-            for _, g in ipairs(player.PlayerGui:GetChildren()) do
-                if g:IsA("ScreenGui") and g.Enabled then
-                    for _, b in ipairs(g:GetDescendants()) do
-                        if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
-                            local hit = (b:IsA("TextButton") and b.Text == text)
-                            if not hit then
-                                for _, l in ipairs(b:GetDescendants()) do
-                                    if l:IsA("TextLabel") and l.Visible and l.Text == text then hit = true; break end
-                                end
-                            end
-                            if hit then
-                                local area = b.AbsoluteSize.X * b.AbsoluteSize.Y
-                                if area > bestArea then best, bestArea = b, area end
-                            end
-                        end
-                    end
-                end
-            end
-            return best
-        end
-
         local function clickWait(text, waitSec)
             local btn
             local t0 = tick()
