@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.0"
+local SCRIPT_VERSION = "v8.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1586,16 +1586,65 @@ if GAME_ID == "anime_expeditions" then
         return false
     end
 
+    -- ⭐ v8.1: อ่านจำนวน Grey แบบทนรูปแบบข้อความ
+    --    ของจริงมีได้หลายแบบ: "125/125", "125x / 125x", "125x / 125x Owned", มี rich text ปนด้วย
+    --    เดิมบังคับ "^125/125$" เป๊ะๆ → อ่านไม่ได้ = 0 → คิดว่าไม่เต็ม → ไม่คราฟ
     local function getGreyCount()
         local root = craftGuiRoot()
         if not root then return 0 end
+
+        local greyLabel, cands = nil, {}
         for _, l in ipairs(root:GetDescendants()) do
             if l:IsA("TextLabel") and l.Visible then
-                local have = l.Text:match("^([%d,]+)/%d+$")
-                if have then return tonumber((have:gsub(",", ""))) or 0 end
+                local t = tostring(l.Text):gsub("<[^>]->", "")
+                if t:lower():find("grey", 1, true) then
+                    greyLabel = greyLabel or l
+                end
+                local have, max = t:match("([%d,]+)%s*[xX]?%s*/%s*([%d,]+)")
+                if have then
+                    table.insert(cands, {
+                        have = tonumber((have:gsub(",", ""))) or 0,
+                        max  = tonumber((max:gsub(",", ""))) or 0,
+                        x = l.AbsolutePosition.X, y = l.AbsolutePosition.Y, text = t,
+                    })
+                end
             end
         end
-        return 0
+        if #cands == 0 then return 0 end
+
+        -- เลือกตัวที่อยู่ใกล้ป้าย "Sprite (Grey)" ที่สุด
+        if greyLabel then
+            local gx, gy = greyLabel.AbsolutePosition.X, greyLabel.AbsolutePosition.Y
+            local best, bestD
+            for _, c in ipairs(cands) do
+                local d = math.abs(c.x - gx) + math.abs(c.y - gy)
+                if not bestD or d < bestD then best, bestD = c, d end
+            end
+            if best then return best.have end
+        end
+        -- ไม่เจอป้าย Grey → เอาตัวที่ max ใกล้ 125 ที่สุด
+        local best
+        for _, c in ipairs(cands) do
+            if c.max == CRAFT_GREY_FULL then best = c; break end
+            if not best or c.have > best.have then best = c end
+        end
+        return best and best.have or 0
+    end
+
+    -- debug: ดูว่าหน้าคราฟมีตัวเลขอะไรบ้าง (ตอนอ่าน Grey เพี้ยน)
+    _G.AE_CRAFT_DEBUG = function()
+        local root = craftGuiRoot()
+        if not root then print("[AE Craft] ❌ หน้าคราฟไม่ได้เปิดอยู่"); return end
+        print("[AE Craft] 🔍 ข้อความในหน้าคราฟ:")
+        for _, l in ipairs(root:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible then
+                local t = tostring(l.Text):gsub("<[^>]->", "")
+                if t:gsub("%s", "") ~= "" then
+                    print(("   [%4d,%4d] %s"):format(l.AbsolutePosition.X, l.AbsolutePosition.Y, t))
+                end
+            end
+        end
+        print("[AE Craft] → getGreyCount() = " .. getGreyCount())
     end
 
     -- ⭐ v7.8: เปิดหน้าคราฟแบบทน — ลองซ้ำ + วาปไปยืนที่โซนคราฟถ้ายังไม่ติด
@@ -1731,6 +1780,21 @@ if GAME_ID == "anime_expeditions" then
         clickCraftButton(CRAFT_COLORS[1])
         task.wait(1)
         local grey = readGreyRetry(CRAFT_COLORS[1])
+
+        -- ⭐ v8.1: อ่านจากหน้าคราฟไม่ได้ (0) → เช็คซ้ำจากกระเป๋า Items (J) ก่อนยอมแพ้
+        if grey <= 0 and _G.AE_READ_ITEM then
+            local real = _G.AE_READ_ITEM("Sprite (Grey)")
+            if real and real > 0 then
+                print("[AE Craft] 📦 หน้าคราฟอ่านไม่ได้ → ใช้ค่าจากกระเป๋า: " .. real)
+                grey = real
+                openCraftUI()                       -- กระเป๋าอาจปิดหน้าคราฟไป
+                clickCraftButton(CRAFT_COLORS[1])
+                task.wait(0.8)
+            else
+                print("[AE Craft] ⚠️ อ่าน Grey ไม่ได้เลย — ดูรายละเอียด: _G.AE_CRAFT_DEBUG()")
+            end
+        end
+
         greyKnown = grey
         greyKnownSynced = true   -- ⭐ sync ค่าจริงแล้ว
         print("[AE Craft] Grey: " .. grey .. "/" .. CRAFT_GREY_FULL .. " (synced)")
