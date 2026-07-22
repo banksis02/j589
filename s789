@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.5"
+local SCRIPT_VERSION = "v8.6"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5198,8 +5198,7 @@ task.spawn(function()
 end)
 
 -- ===== [EXPEDITION MODULE] =====
--- ระบบ Expedition ทั้งชุด (ฝังอัตโนมัติ — อย่าแก้ตรงนี้ แก้ที่ไฟล์ต้นทางแล้ว build ใหม่)
--- สั่งงาน: _G.AE_EXP_RUN() / _G.AE_EXP_RUN_STOP() | ตั้งค่า: _G.AE_EXP_MAP, _G.AE_EXP_DIFF
+-- ระบบ Expedition ทั้งชุด (ฝังอัตโนมัติ — แก้ที่ไฟล์ต้นทางแล้ว build ใหม่)
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
 _G.AE_EXP_NO_UI = true
 
@@ -5717,11 +5716,20 @@ end
 
 local function restartGame()
     print("[Exp] 🔄 Restart หาแมพใหม่ (Back → Restart → Expedition Map)...")
-    -- 1) กด Back ออกจากหน้า node select → หน้าแรก Expedition
-    if inNodeSelect() then
-        if clickByText("Back", 3) then print("[Exp]   ← กด Back") end
-        task.wait(1.5)
+    -- 1) ⭐ ต้องปิดหน้าแผนที่ให้สนิทก่อน ไม่งั้น Restart ไม่ทำงาน
+    --    (เครื่องแลค/UI ช้า → กด Back ครั้งเดียวอาจไม่ปิด) → ยืนยันจนปิดจริง
+    for attempt = 1, 4 do
+        if not inNodeSelect() then break end
+        if clickByText("Back", 3) then print(("[Exp]   ← กด Back (รอบ %d)"):format(attempt)) end
+        local t0 = tick()
+        while inNodeSelect() and tick() - t0 < 3 do task.wait(0.3) end
     end
+    if inNodeSelect() then
+        warn("[Exp] ⚠️ ปิดหน้าแผนที่ไม่ได้ — Restart อาจไม่ทำงาน")
+    else
+        print("[Exp]   ✅ ปิดหน้าแผนที่แล้ว")
+    end
+    task.wait(1)
 
     -- 2) ⭐ ยิง Restart remote ตรงๆ (วิธีหลัก — เร็วและชัวร์กว่าคลิก UI)
     fireRestartRemote()
@@ -6890,8 +6898,31 @@ _G.AE_EXP_MYUNITS = function() return #getMyGameUnits() end
 -- "other" = ล็อบบี้ / หน้าจอ Expedition หน้าแรก / กำลังโหลด
 _G.AE_EXP_STATE = function()
     if inNodeSelect() then return "map" end
+
+    -- ⭐ อยู่ในแมตช์ไหม — เช็คจาก GameState replica (มีเฉพาะตอนอยู่ในด่าน)
+    --    สำคัญ: ตอน wave 0 ยังไม่มี PayloadHealth/ยังไม่มีตัววาง → เดิมตอบ "other"
+    --    แล้วระบบไปวาปเข้าด่านซ้ำ = พัง
+    local gs = getReplica("GameState")
+    local d  = gs and gs.Data
+    if type(d) == "table" then
+        local inMatch = (d.Active == true)
+            or (tostring(d.CurrentGameState) == "InProgress")
+            or (type(d.Parameters) == "table" and d.Parameters.MapName ~= nil)
+        if inMatch then return "stage" end
+    end
+
     if guiVisible("PayloadHealth") then return "stage" end
     if #getMyGameUnits() > 0 then return "stage" end
+    -- ปุ่ม "Expedition Map" โผล่ = อยู่ในด่าน expedition แน่นอน
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text == "Expedition Map" then
+                    return "stage"
+                end
+            end
+        end
+    end
     return "other"
 end
 -- 🔍 debug: dump GameUnit ทุกตัว (ทุก field) — หา ID จริง + field ราคาอัพ
@@ -8764,7 +8795,9 @@ _G.AE_EXP_RUN = function()
 
                 -- ===== 🏠 ล็อบบี้ → เข้าด่านใหม่ =====
                 else
-                    if tick() - otherSince > 12 then
+                    -- ⭐ ต้องนิ่งจริงว่าอยู่ล็อบบี้ (เช็คซ้ำอีกครั้ง) ก่อนจะวาปเข้าด่าน
+                    --    กันเคส wave 0 ที่สถานะยังอ่านไม่ออกแล้ววาปซ้ำจนพัง
+                    if tick() - otherSince > 20 and call("AE_EXP_STATE") == "other" then
                         if has("AE_ENTER_RUN") then
                             L(("[0] อยู่ล็อบบี้ → เข้าด่าน %s ความยาก %d"):format(expMap(), expDiff()))
                             uiHide(true)
