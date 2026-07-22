@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.4"
+local SCRIPT_VERSION = "v8.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2767,6 +2767,20 @@ if GAME_ID == "anime_expeditions" then
         farmMode = mode or "act1"
         if stage then farmStage = stage end
         print("[AE Farm] ▶ เริ่มฟาร์ม (mode: " .. farmMode .. " | ด่าน: " .. farmStage .. ")")
+
+        -- ⭐ v8.5: โหมด Expedition → ใช้ระบบ Expedition ทั้งชุด (ไม่ใช้ลูปฟาร์มปกติ)
+        --    ความยาก/แมพ สั่งมาจากเว็บผ่าน _G.AE_EXP_DIFF / _G.AE_EXP_MAP
+        if farmMode == "expedition" then
+            if _G.AE_EXP_RUN then
+                print(("[AE Farm] 🧭 Expedition: %s | ความยาก %s")
+                    :format(tostring(_G.AE_EXP_MAP or "School Grounds"),
+                            tostring(_G.AE_EXP_DIFF or 3)))
+                pcall(_G.AE_EXP_RUN)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Expedition (_G.AE_EXP_RUN)")
+            end
+            return
+        end
         -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
         local function isVictoryOpen()
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -2974,6 +2988,10 @@ if GAME_ID == "anime_expeditions" then
 
     local function stopFarm()
         farmingActive = false
+        -- ⭐ v8.5: หยุดระบบ Expedition ด้วย (ถ้ากำลังใช้อยู่)
+        if farmMode == "expedition" and _G.AE_EXP_RUN_STOP then
+            pcall(_G.AE_EXP_RUN_STOP)
+        end
     end
 
     _G.AE_FARM_START = startFarm
@@ -3063,6 +3081,16 @@ if GAME_ID == "anime_expeditions" then
                     -- ⭐ มีงาน → ฟาร์มตามที่สั่ง (ถ้ายังไม่ได้ฟาร์ม หรือโหมด/ด่านเปลี่ยน)
                     local wantMode  = job.mode or "act1"
                     local wantStage = job.stage or "School Grounds"
+                    -- ⭐ v8.5: งาน Expedition — รับความยาก 1/2/3 + แมพ จากเว็บ
+                    if wantMode == "expedition" then
+                        local newDiff = tonumber(job.difficulty) or 3
+                        local newMap  = job.stage or "School Grounds"
+                        if _G.AE_EXP_DIFF ~= newDiff or _G.AE_EXP_MAP ~= newMap then
+                            print(("[AE Remote] 🧭 Expedition: %s ความยาก %d"):format(newMap, newDiff))
+                        end
+                        _G.AE_EXP_DIFF = newDiff
+                        _G.AE_EXP_MAP  = newMap
+                    end
                     if changed then
                         print(("[AE Remote] 📋 งานใหม่: %s | %s | %s (%s/%s)")
                             :format(tostring(job.label), wantMode, wantStage,
@@ -5168,3 +5196,3756 @@ task.spawn(function()
 
     print("Merciless God Fight watcher ready!")
 end)
+
+-- ===== [EXPEDITION MODULE] =====
+-- ระบบ Expedition ทั้งชุด (ฝังอัตโนมัติ — อย่าแก้ตรงนี้ แก้ที่ไฟล์ต้นทางแล้ว build ใหม่)
+-- สั่งงาน: _G.AE_EXP_RUN() / _G.AE_EXP_RUN_STOP() | ตั้งค่า: _G.AE_EXP_MAP, _G.AE_EXP_DIFF
+_G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
+_G.AE_EXP_NO_UI = true
+
+do -- [EXP 0] SETTINGS
+-- ============================================================
+-- AE Expedition — Step 1: ปิด Auto-Upgrade Placed Units (สคริปต์แยกเทส)
+--   งาน Expedition ต้องอัพเกรดเอง → ปิด auto-upgrade
+--   ใช้เทคนิคเดิม: หา toggle by label + อ่านสีจาก UIGradient
+-- รัน: _G.AE_EXP_SETTINGS()  (หรือรันไฟล์นี้ทำเลย)
+-- ============================================================
+local player = game:GetService("Players").LocalPlayer
+
+-- toggle เปิด = UIGradient เขียว (136,255,0) | ปิด = แดง (255,51,51)
+-- ⭐ Expedition: ปิด auto-upgrade (want=false)  |  เพิ่มตัวอื่นได้ทีหลัง
+local EXP_SETTING_PREFS = {
+    { name = "Auto-Upgrade Placed Units",   want = false, tab = "Units"    },
+    { name = "Auto Retry",                  want = false, tab = "Gameplay" },  -- ห้ามรีเกมเอง
+    { name = "Auto Next",                   want = false, tab = "Gameplay" },  -- ห้ามข้ามไปด่านต่อไปเอง
+}
+
+local function fireBtn(btn)
+    local fired = 0
+    pcall(function()
+        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire(); fired = fired + 1 end
+    end)
+    if fired == 0 then
+        pcall(function()
+            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire(); fired = fired + 1 end
+        end)
+    end
+    return fired
+end
+
+local function settingsOpen()
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    return s and s:FindFirstChild("Frame") ~= nil and #s.Frame:GetChildren() > 1
+end
+
+-- เปิด Settings — กด TopBar ปุ่มขวาสุด (เกียร์) แบบสคริปต์หลัก
+local cachedSettingsBtn = nil
+local function openSettings()
+    if settingsOpen() then return true end
+    if cachedSettingsBtn and cachedSettingsBtn.Parent then
+        fireBtn(cachedSettingsBtn); task.wait(1.5)
+        if settingsOpen() then return true end
+    end
+    local topbar = player.PlayerGui:FindFirstChild("TopBar")
+    if not topbar then return false end
+    local btns = {}
+    for _, btn in ipairs(topbar:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible then table.insert(btns, btn) end
+    end
+    table.sort(btns, function(a, b) return a.AbsolutePosition.X > b.AbsolutePosition.X end)
+    for _, btn in ipairs(btns) do
+        fireBtn(btn); task.wait(1.5)
+        if settingsOpen() then cachedSettingsBtn = btn; return true end
+        fireBtn(btn); task.wait(0.5)   -- กดผิด → ปิด
+    end
+    return settingsOpen()
+end
+
+-- คลิกแท็บ (All / Units / ...) เผื่อ toggle อยู่คนละแท็บ
+local function clickTab(tabName)
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s then return false end
+    for _, btn in ipairs(s:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible then
+            if btn.Text == tabName then fireBtn(btn); task.wait(0.6); return true end
+            for _, l in ipairs(btn:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Text == tabName then fireBtn(btn); task.wait(0.6); return true end
+            end
+        end
+    end
+    return false
+end
+
+local function findLabel(name)
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s then return nil end
+    for _, l in ipairs(s:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text == name then return l end
+    end
+    return nil
+end
+
+-- รายการยาว → ต้องเลื่อนหา (ของที่อยู่นอกจอไม่ถูกสร้าง/มองไม่เห็น)
+local function scrollToLabel(name)
+    if findLabel(name) then return true end
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s then return false end
+    local sf
+    for _, f in ipairs(s:GetDescendants()) do
+        if f:IsA("ScrollingFrame") and f.Visible and f.AbsoluteSize.Y > 150 then
+            if not sf or f.AbsoluteSize.Y > sf.AbsoluteSize.Y then sf = f end
+        end
+    end
+    if not sf then return false end
+    for step = 0, 14 do
+        sf.CanvasPosition = Vector2.new(0, step * 150)
+        task.wait(0.15)
+        if findLabel(name) then return true end
+    end
+    sf.CanvasPosition = Vector2.new(0, 0)
+    return false
+end
+
+local function findToggleButton(name)
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s then return nil end
+    local label = findLabel(name)
+    if not label then return nil end
+    local lx, ly = label.AbsolutePosition.X, label.AbsolutePosition.Y
+    local best, bestDx
+    for _, btn in ipairs(s:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40
+           and math.abs(btn.AbsolutePosition.Y - ly) < 15 then
+            local dx = btn.AbsolutePosition.X - lx
+            if dx > 0 and (not bestDx or dx < bestDx) then best, bestDx = btn, dx end
+        end
+    end
+    return best
+end
+
+local function getSettingState(name)
+    local btn = findToggleButton(name)
+    if not btn then return nil end
+    for _, g in ipairs(btn:GetDescendants()) do
+        if g:IsA("UIGradient") then
+            local c = g.Color.Keypoints[1].Value
+            local r, gr = c.R * 255, c.G * 255
+            if gr > 200 and r < 200 then return "on" end
+            if r > 200 and gr < 100 then return "off" end
+        end
+    end
+    return nil
+end
+
+local function setSettingState(name, wantOn)
+    local state = getSettingState(name)
+    if state == nil then
+        warn("[Exp Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. name)
+        return false
+    end
+    local wantState = wantOn and "on" or "off"
+    if state == wantState then
+        print("[Exp Settings] ✓ " .. name .. " = " .. state .. " (ตรงแล้ว)")
+        return true
+    end
+    fireBtn(findToggleButton(name))
+    task.wait(0.6)
+    local newState = getSettingState(name)
+    print("[Exp Settings] 🔄 " .. name .. ": " .. state .. " → " .. tostring(newState))
+    return newState == wantState
+end
+
+local function closeSettings()
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s or not settingsOpen() then return true end
+    for _, btn in ipairs(s:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible
+           and btn.AbsoluteSize.X <= 35 and btn.AbsoluteSize.Y <= 35 then
+            fireBtn(btn); task.wait(1)
+            if not settingsOpen() then return true end
+        end
+    end
+    return not settingsOpen()
+end
+
+local function run()
+    print("[Exp Settings] ⚙️ เปิด Settings...")
+    if not openSettings() then warn("[Exp Settings] ❌ เปิด Settings ไม่ได้"); return end
+    task.wait(1.2)
+
+    local okCount = 0
+    for _, pref in ipairs(EXP_SETTING_PREFS) do
+        -- ไปแท็บของมันก่อน (ไม่เจอแท็บก็ใช้ All)
+        if pref.tab then
+            if not clickTab(pref.tab) then clickTab("All") end
+            task.wait(0.5)
+        end
+        if not scrollToLabel(pref.name) then
+            clickTab("All"); task.wait(0.5); scrollToLabel(pref.name)
+        end
+        if setSettingState(pref.name, pref.want) then okCount = okCount + 1 end
+        task.wait(0.4)
+    end
+
+    closeSettings()
+    print(("[Exp Settings] ✅ เสร็จ (%d/%d ตั้งค่าเรียบร้อย)"):format(okCount, #EXP_SETTING_PREFS))
+end
+
+_G.AE_EXP_SETTINGS = run
+-- run()
+
+end
+do -- [EXP 1] MAP + COMBAT
+-- ============================================================
+-- AE Expedition Auto — หาแมพที่มีเส้นทาง Defense≥3 + Yen แล้วเลือกเส้นทาง
+--   เปิดหน้า Expedition Map ค้างไว้ แล้วรัน
+--   เทสทีละส่วน:
+--     _G.AE_EXP_CHECK()    → เช็คแมพ (print เส้นทางที่เจอ)
+--     _G.AE_EXP_SETROUTE() → ยิง SetNodeQueue เลือกเส้นที่เจอล่าสุด
+--     _G.AE_EXP_RESTART()  → Restart Game (หาแมพใหม่)
+--     _G.AE_EXP_AUTO()     → วนอัตโนมัติ: เช็ค → ไม่ผ่าน restart → ผ่าน setRoute
+-- ============================================================
+local MYGEN = _G.AE_SCRIPT_GEN   -- รุ่นสคริปต์ (โหลดใหม่ = ลูปเก่าตาย)
+local player = game:GetService("Players").LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+local VIM = game:GetService("VirtualInputManager")
+local GuiService = game:GetService("GuiService")
+
+local NEED_DEFENSE = 3
+local NEED_YEN     = 1
+-- ⭐ ถ้าเจอ Yen ตั้งแต่กี่อันขึ้นไป → เอาเลย ไม่ต้องครบโล่ 3
+--    (นับเฉพาะ Yen ที่ไม่ได้อยู่โหนดบอส/โหนดสุดท้าย)
+local YEN_ONLY_MIN = 2
+
+-- ---------- replica (ยิง SetNodeQueue โดยไม่ต้องเดา opcode) ----------
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up)=="table" then
+            for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end
+            if registry then break end
+        end
+    end
+end)
+local function getReplica(token)
+    if not registry then return nil end
+    local cand
+    for _, rep in pairs(registry) do
+        local ok,t = pcall(function() return rep.Token end)
+        if ok and t==token then
+            if rawget(rep,"write_lib") then return rep end
+            cand = cand or rep
+        end
+    end
+    return cand
+end
+
+-- ---------- เช็คแมพ (scan + graph + pathfind) ----------
+local lastPath = nil
+local lastNodesById = {}   -- id -> node object (มี .btn) ของ scan ล่าสุด
+
+local function checkMap()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil, "ไม่เจอ Prompt (เปิดหน้า Expedition Map?)" end
+
+    -- node buttons → id (column→row)
+    local raw = {}
+    for _, btn in ipairs(prompt:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible
+           and btn.AbsoluteSize.X >= 24 and btn.AbsoluteSize.X <= 36 then
+            local p = btn.AbsolutePosition
+            table.insert(raw, { btn=btn, x=p.X, y=p.Y,
+                cx=p.X+btn.AbsoluteSize.X/2, cy=p.Y+btn.AbsoluteSize.Y/2 })
+        end
+    end
+    if #raw < 3 then return nil, "หา node ไม่เจอ (" .. #raw .. ")" end
+    table.sort(raw, function(a,b)
+        if math.abs(a.x-b.x)>40 then return a.x<b.x end
+        return a.y<b.y
+    end)
+    local colX = {}
+    for _, n in ipairs(raw) do
+        local ci
+        for k,xv in ipairs(colX) do if math.abs(n.x-xv)<40 then ci=k; break end end
+        if not ci then colX[#colX+1]=n.x; ci=#colX end
+        n.col = ci
+    end
+    for i,n in ipairs(raw) do n.id=i end
+    local lastCol = #colX
+    lastNodesById = {}
+    for _, n in ipairs(raw) do lastNodesById[n.id] = n end
+
+    -- hover scan type + yen (อ่านใน tooltip container เท่านั้น)
+    local inset = GuiService:GetGuiInset()
+    local function readTip()
+        local root
+        for _, d in ipairs(player.PlayerGui:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible and d.Text=="Expedition Node" then
+                root=d
+                for _=1,6 do if root.Parent and root.Parent~=prompt then root=root.Parent else break end end
+                break
+            end
+        end
+        if not root then return nil,false end
+        local typ, yen
+        for _, l in ipairs(root:GetDescendants()) do
+            if l:IsA("TextLabel") and l.Visible then
+                local t=l.Text
+                if t=="Checkpoint" or t=="Assault" or t=="Elite" or t=="Defense" or t=="Boss" or t=="Miniboss" then typ=t
+                elseif t=="Yen" then yen=true end
+            end
+        end
+        return typ, yen
+    end
+    for _, n in ipairs(raw) do
+        pcall(function() VIM:SendMouseMoveEvent(n.cx, 5, game) end)
+        task.wait(0.05)
+        pcall(function() VIM:SendMouseMoveEvent(n.cx, n.cy+inset.Y, game) end)
+        task.wait(0.3)
+        n.type, n.yen = readTip()
+        n.type = n.type or "?"
+    end
+
+    -- edges จากเส้นเชื่อม
+    local function nearestNode(px,py)
+        local best,bd
+        for _, n in ipairs(raw) do
+            local d=(n.cx-px)^2+(n.cy+inset.Y-py)^2
+            if not bd or d<bd then bd=d; best=n end
+        end
+        if bd and bd<60^2 then return best end
+    end
+    local adj={}; for _,n in ipairs(raw) do adj[n.id]={} end
+    for _, d in ipairs(prompt:GetDescendants()) do
+        if (d:IsA("Frame") or d:IsA("ImageLabel")) and d.Visible then
+            local sz=d.AbsoluteSize
+            if sz.X>40 and sz.Y<12 then
+                local cx=d.AbsolutePosition.X+sz.X/2
+                local cy=d.AbsolutePosition.Y+sz.Y/2+inset.Y
+                local rad=math.rad(d.Rotation)
+                local ex,ey=math.cos(rad)*sz.X/2, math.sin(rad)*sz.X/2
+                local a=nearestNode(cx-ex,cy-ey)
+                local b=nearestNode(cx+ex,cy+ey)
+                if a and b and a.id~=b.id then
+                    local from=(a.col<b.col) and a or b
+                    local to  =(a.col<b.col) and b or a
+                    if to.col==from.col+1 then adj[from.id][to.id]=true end
+                end
+            end
+        end
+    end
+
+    -- pathfind
+    --  เงื่อนไขผ่าน (อย่างใดอย่างหนึ่ง):
+    --    A) Defense >= 3 และ Yen >= 1
+    --    B) Yen >= 2       (โล่ไม่ครบก็เอา — เงินสำคัญกว่า)
+    --  ⭐ Yen ที่อยู่ "โหนดบอส/โหนดสุดท้าย" ไม่นับ (ได้ตอนจบรันอยู่แล้ว)
+    local byId={}; for _,n in ipairs(raw) do byId[n.id]=n end
+    local best=nil
+    local function countsYen(node)
+        if not node.yen then return false end
+        if node.type == "Boss" then return false end        -- Yen ที่บอส ไม่นับ
+        if node.col == lastCol then return false end        -- โหนดสุดท้าย (โหนด 10) ไม่นับ
+        return true
+    end
+    local function passes(def, yen)
+        if def >= NEED_DEFENSE and yen >= NEED_YEN then return true end
+        if yen >= YEN_ONLY_MIN then return true end          -- Yen เยอะ = เอาเลย
+        return false
+    end
+    local function scoreOf(def, yen, len)
+        return def * 10 + yen * 12 - len                     -- Yen มีค่ามากกว่าโล่นิดหน่อย
+    end
+    local function dfs(node, path, def, yen)
+        local np={}; for _,v in ipairs(path) do np[#np+1]=v end
+        np[#np+1]=node.id
+        local nd=def+(node.type=="Defense" and 1 or 0)
+        local ny=yen+(countsYen(node) and 1 or 0)
+        if node.col==lastCol then
+            if passes(nd, ny) then
+                local sc = scoreOf(nd, ny, #np)
+                if not best or sc > best.score then
+                    best={path=np, def=nd, yen=ny, score=sc}
+                end
+            end
+            return
+        end
+        for tid in pairs(adj[node.id]) do
+            if byId[tid] then dfs(byId[tid], np, nd, ny) end
+        end
+    end
+    for _, n in ipairs(raw) do if n.col==1 then dfs(n,{},0,0) end end
+
+    -- สรุป type ทั้งแมพ (debug)
+    local summary={}
+    for _, n in ipairs(raw) do summary[n.type]=(summary[n.type] or 0)+1 end
+    local sumStr={}; for t,c in pairs(summary) do sumStr[#sumStr+1]=t.."="..c end
+
+    return best, table.concat(sumStr, " ")
+end
+
+-- ---------- ยิง SetNodeQueue เลือกเส้นทาง ----------
+-- ⭐ SetNodeQueue เป็นของ replica ตัวไหนยังไม่ชัด (ไม่ใช่ GamePlayerData!)
+--    วิธีชัวร์: hook ดักตอนเกม/ผู้ใช้ยิง SetNodeQueue → จับ replica id → หา token
+--    ถ้ายังไม่เรียนรู้ → ลองยิงทุก token ที่น่าจะใช่ (ตัวผิด server ignore)
+local learnedNodeToken = "MapData"   -- ⭐ ยืนยันแล้ว: SetNodeQueue = replica MapData
+local scriptFiring = false           -- กัน hook เรียนรู้จากการยิงของเราเอง
+local sig = RS.RemoteEvents.ReplicaSignal
+pcall(function()
+    local oldNC
+    oldNC = hookmetamethod(game, "__namecall", function(self, ...)
+        if not scriptFiring and self == sig and getnamecallmethod() == "FireServer" then
+            local a1, a2 = ...
+            if a2 == "SetNodeQueue" and type(a1) == "number" then
+                if registry and registry[a1] then
+                    local ok, tok = pcall(function() return registry[a1].Token end)
+                    if ok and tok and tok ~= learnedNodeToken then
+                        learnedNodeToken = tok
+                        print("[Exp] 🎣 เรียนรู้ SetNodeQueue = replica '" .. tok .. "' (id " .. a1 .. ")")
+                    end
+                end
+            end
+        end
+        return oldNC(self, ...)
+    end)
+end)
+
+local function fireBtn(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+
+-- ⭐ เลือกเส้นทางด้วยการ "คลิก node ทีละอัน" ตามเส้นทาง (เกมแปลง click → server id เอง)
+--    เลี่ยงปัญหา node id: client ไม่มี server node graph จึงส่ง id เองไม่ได้
+local VIM_EXP = game:GetService("VirtualInputManager")
+local inset_exp = game:GetService("GuiService"):GetGuiInset()
+local function clickNode(node)
+    -- ลอง getconnections ก่อน
+    if fireBtn(node.btn) > 0 then return true end
+    -- fallback: VIM คลิกที่พิกัดกลางปุ่ม
+    pcall(function()
+        local cx, cy = node.cx, node.cy + inset_exp.Y
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.05)
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+    return true
+end
+
+local function setRoute(path)
+    if not path then return false end
+    print("[Exp] 🖱️ เลือกเส้นทางด้วยการคลิก node: {" .. table.concat(path,",") .. "}")
+    -- คลิกทีละ node ตามเส้นทาง (ข้าม node แรก = จุด start อาจไม่ต้องคลิก)
+    for i, id in ipairs(path) do
+        local node = lastNodesById[id]
+        if node then
+            clickNode(node)
+            print(("[Exp]   คลิก node id %d (col%s %s)"):format(id, tostring(node.col), tostring(node.type)))
+            task.wait(0.4)
+        end
+    end
+    print("[Exp] ✅ คลิกครบ — ดูว่าเส้นเขียวเปลี่ยนตามไหม")
+    return true
+end
+-- คลิกปุ่มตามข้อความ (หาทุก ScreenGui ที่ enabled)
+-- ⭐ คลิกปุ่มตามข้อความ + VIM คลิกพิกัดจริงเป็น fallback (บางปุ่ม connection ไม่ทำงาน)
+local function clickBtnSmart(b)
+    if fireBtn(b) > 0 then return true end
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset_exp.Y
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+    return true
+end
+
+local function clickByText(text, timeout)
+    local t0 = tick()
+    while tick()-t0 < (timeout or 3) do
+        for _, root in ipairs(player.PlayerGui:GetChildren()) do
+            if root:IsA("ScreenGui") and root.Enabled then
+                for _, b in ipairs(root:GetDescendants()) do
+                    if b:IsA("GuiButton") and b.Visible then
+                        local hit = (b:IsA("TextButton") and b.Text == text)
+                        if not hit then
+                            for _, l in ipairs(b:GetDescendants()) do
+                                if l:IsA("TextLabel") and l.Visible and l.Text == text then hit = true; break end
+                            end
+                        end
+                        if hit then clickBtnSmart(b); return true end
+                    end
+                end
+            end
+        end
+        task.wait(0.3)
+    end
+    return false
+end
+
+-- เช็คว่าอยู่หน้า Expedition Map (node select) ไหม
+local function inNodeSelect()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return false end
+    for _, l in ipairs(prompt:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text == "Map Progress" then return true end
+    end
+    return false
+end
+
+-- ⭐ ยิง Restart ผ่าน replica ตรงๆ — ดักจากการกดจริง: ReplicaSignal(60, "Restart")
+--    (คลิก UI ปิดกล่องได้แต่เกมไม่ restart — เหมือนเคส Return to Lobby)
+local function fireRestartRemote()
+    local ok = false
+    -- ลอง replica ที่น่าจะใช่ก่อน (GameState = ตัวที่ handle SetNodeQueue/Restart)
+    for _, token in ipairs({ "GameState", "MapData", "GamePlayerData" }) do
+        local rep = getReplica(token)
+        if rep then
+            local fired = pcall(function() rep:FireServer("Restart") end)
+            if fired then
+                print("[Exp] 📤 ยิง Restart ผ่าน replica " .. token)
+                ok = true
+            end
+        end
+    end
+    return ok
+end
+
+local function restartGame()
+    print("[Exp] 🔄 Restart หาแมพใหม่ (Back → Restart → Expedition Map)...")
+    -- 1) กด Back ออกจากหน้า node select → หน้าแรก Expedition
+    if inNodeSelect() then
+        if clickByText("Back", 3) then print("[Exp]   ← กด Back") end
+        task.wait(1.5)
+    end
+
+    -- 2) ⭐ ยิง Restart remote ตรงๆ (วิธีหลัก — เร็วและชัวร์กว่าคลิก UI)
+    fireRestartRemote()
+    task.wait(4)
+    -- ถ้ารีสำเร็จ ให้ข้ามขั้นตอนคลิก UI ไปเลย
+    if not inNodeSelect() then
+        print("[Exp]   → กด Expedition Map เข้าหน้าเลือก node ใหม่")
+        for _=1,8 do
+            if inNodeSelect() then break end
+            clickByText("Expedition Map", 3)
+            task.wait(2)
+        end
+        if inNodeSelect() then
+            print("[Exp] ✅ Restart สำเร็จ (remote) — เข้าหน้า node select แล้ว")
+            return true
+        end
+    end
+
+    print("[Exp]   ⚠️ remote ไม่ได้ผล → ลองคลิก UI แทน")
+    -- 2) เปิด Settings
+    local topbar = player.PlayerGui:FindFirstChild("TopBar")
+    if topbar then
+        local btns={}
+        for _,b in ipairs(topbar:GetDescendants()) do if b:IsA("TextButton") and b.Visible then table.insert(btns,b) end end
+        table.sort(btns, function(a,b) return a.AbsolutePosition.X>b.AbsolutePosition.X end)
+        for _,b in ipairs(btns) do
+            fireBtn(b); task.wait(1)
+            if player.PlayerGui:FindFirstChild("Settings") and player.PlayerGui.Settings:FindFirstChild("Frame") then break end
+            fireBtn(b); task.wait(0.3)
+        end
+    end
+    task.wait(1)
+    local s = player.PlayerGui:FindFirstChild("Settings")
+    if not s then warn("[Exp] เปิด Settings ไม่ได้"); return false end
+    -- แท็บ Gameplay
+    for _,b in ipairs(s:GetDescendants()) do
+        if b:IsA("TextButton") and b.Visible then
+            local hit = (b.Text=="Gameplay")
+            if not hit then for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Text=="Gameplay" then hit=true break end end end
+            if hit then fireBtn(b); task.wait(0.6); break end
+        end
+    end
+    -- กด Restart Game (label-anchored เหมือน Back To Lobby)
+    local label
+    for _,l in ipairs(s:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text=="Restart Game" then label=l; break end
+    end
+    if label then
+        local lx,ly=label.AbsolutePosition.X, label.AbsolutePosition.Y
+        local best,bd
+        for _,b in ipairs(s:GetDescendants()) do
+            if b:IsA("TextButton") and b.Visible and b.AbsoluteSize.X<=40
+               and math.abs(b.AbsolutePosition.Y-ly)<20 then
+                local dx=b.AbsolutePosition.X-lx
+                if dx>0 and (not bd or dx<bd) then best,bd=b,dx end
+            end
+        end
+        if best then fireBtn(best); task.wait(1.5) end
+    end
+    -- confirm "Restart" — ⚠️ ปุ่มพวกนี้ Activated:Fire() ปิดกล่องได้แต่ "ไม่ทำงานจริง"
+    --    ต้องยิงทั้ง MouseButton1Click + Activated แล้วตามด้วย VIM คลิกพิกัดจริง
+    local function findRestartBtn()
+        local prompt = player.PlayerGui:FindFirstChild("Prompt")
+        if not prompt then return nil end
+        for _,b in ipairs(prompt:GetDescendants()) do
+            if b:IsA("GuiButton") and b.Visible then
+                for _,l in ipairs(b:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible and l.Text=="Restart" then return b end
+                end
+            end
+        end
+        return nil
+    end
+
+    local confirmed = false
+    for attempt=1,4 do
+        -- รอกล่องเด้ง
+        local btn
+        local t0 = tick()
+        while tick()-t0 < 4 do
+            btn = findRestartBtn()
+            if btn then break end
+            task.wait(0.4)
+        end
+        if not btn then
+            if attempt == 1 then warn("[Exp] ⚠️ กล่องยืนยันยังไม่เด้ง") end
+            break
+        end
+
+        task.wait(0.4)   -- รอกล่องเด้งเต็มก่อนกด
+        -- 1) ยิงทั้งสอง event
+        pcall(function() for _,c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end end)
+        pcall(function() for _,c in ipairs(getconnections(btn.Activated)) do c:Fire() end end)
+        task.wait(1)
+        -- 2) VIM คลิกพิกัดกลางปุ่ม (วิธีที่ทำงานจริงกับ Return to Lobby)
+        local b2 = findRestartBtn() or btn
+        pcall(function()
+            local cx = b2.AbsolutePosition.X + b2.AbsoluteSize.X/2
+            local cy = b2.AbsolutePosition.Y + b2.AbsoluteSize.Y/2 + inset_exp.Y
+            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+            task.wait(0.06)
+            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end)
+        task.wait(2.5)
+
+        -- เช็คว่ารีจริง: กล่องหาย + กลับหน้าแรก Expedition (มีปุ่ม Expedition Map)
+        if not findRestartBtn() then
+            confirmed = true
+            print("[Exp] ✅ กด Restart แล้ว (รอบ " .. attempt .. ")")
+            break
+        end
+        print("[Exp] ⚠️ กล่องยังค้าง → ลองใหม่ (รอบ " .. attempt .. ")")
+    end
+    if not confirmed then warn("[Exp] ❌ กดยืนยัน Restart ไม่สำเร็จ"); return false end
+
+    -- 3) รอเกม restart + สุ่ม map ใหม่ แล้วกด Expedition Map เข้าหน้าเลือก node ใหม่
+    task.wait(5)
+    print("[Exp]   → กด Expedition Map เข้าหน้าเลือก node ใหม่")
+    for attempt=1,8 do
+        if inNodeSelect() then break end
+        clickByText("Expedition Map", 3)
+        task.wait(2)
+    end
+    if inNodeSelect() then
+        print("[Exp] ✅ เข้าหน้า node select แล้ว (map ใหม่)")
+        return true
+    end
+    warn("[Exp] ⚠️ กด Expedition Map แล้วยังไม่เข้าหน้า node select")
+    return false
+end
+
+-- ---------- ▶️ เริ่มเดิน expedition (Back → Continue → ยืนยัน Continue) ----------
+-- กดแบบ "ทุกวิธี" สำหรับปุ่มในกล่องยืนยัน (connection อย่างเดียวมักไม่ทำงาน)
+local function clickHard(b)
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    task.wait(0.3)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset_exp.Y
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+-- หาปุ่มในกล่องยืนยันที่มีหัวข้อระบุ (เช่น "Continue Expedition")
+local function findDialogBtn(dialogText, btnText)
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil end
+    local hasDialog = false
+    for _, l in ipairs(prompt:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text:find(dialogText, 1, true) then
+            hasDialog = true; break
+        end
+    end
+    if not hasDialog then return nil end
+    for _, b in ipairs(prompt:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible then
+            for _, l in ipairs(b:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text == btnText then return b end
+            end
+        end
+    end
+    return nil
+end
+
+local function pressContinue()
+    -- ออกจากหน้า node select ก่อน (Continue อยู่หน้าแรก Expedition)
+    if inNodeSelect() then
+        if clickByText("Back", 3) then print("[Exp]   ← กด Back (ออกจากหน้าแผนที่)") end
+        task.wait(1.5)
+    end
+    -- 1) กด Continue หลัก (รอโผล่สูงสุด 8 วิ)
+    if not clickByText("Continue", 8) then
+        warn("[Exp] ❌ ไม่เจอปุ่ม Continue")
+        return false
+    end
+    print("[Exp] ▶️ กด Continue")
+    task.wait(1)
+
+    -- 2) ⭐ กล่องยืนยัน "Continue Expedition" → กด Continue ในกล่อง (ยิงทุกวิธี)
+    for attempt = 1, 5 do
+        local btn = findDialogBtn("Continue Expedition", "Continue")
+        if not btn then
+            if attempt > 1 then
+                print("[Exp] ✅ ไม่มีกล่องยืนยันแล้ว — เริ่มเดิน expedition!")
+                return true
+            end
+            task.wait(0.8)
+        else
+            clickHard(btn)
+            task.wait(1.5)
+            if not findDialogBtn("Continue Expedition", "Continue") then
+                print("[Exp] ✅ ยืนยัน Continue Expedition — เริ่มเดินแล้ว!")
+                return true
+            end
+            print("[Exp] ⚠️ กล่องยังค้าง → ลองใหม่ (รอบ " .. attempt .. ")")
+        end
+    end
+    warn("[Exp] ⚠️ กดยืนยัน Continue ไม่สำเร็จ")
+    return false
+end
+
+-- ============================================================
+-- 🎯 วางตัวละคร (ฟิคตำแหน่ง) — ยิงผ่าน replica GamePlayerData
+--    แก้ตำแหน่ง/ช่อง/ลำดับได้ที่ตารางนี้
+-- ============================================================
+--    ⭐ ผูกตำแหน่งกับ "ตัวละคร" ไม่ใช่ช่อง — ลูกค้าสลับช่องยังไงก็วางถูกตัว
+--       assets = ชื่อ asset จริงในเกม (จาก replica HotbarData) ใส่ได้หลายชื่อ (ร่าง EVO ฯลฯ)
+--    wait = 0 → วางตัวถัดไปต่อทันที (รถออกเดินทางทันทีที่เริ่ม ช้าไม่ได้)
+local EXP_PLACEMENTS = {
+    { name = "Cursed Student", assets = {"Yuta"},                    wait = 0,
+      cf = {2906.69921875,     1946.37548828125, 2489.845458984375, 1,0,0, 0,1,0, 0,0,1} },
+    { name = "Puppet",         assets = {"Gowther"},                 wait = 0,
+      cf = {2908.47900390625,  1946.37548828125, 2474.586669921875, 1,0,0, 0,1,0, 0,0,1} },
+    { name = "Ice Queen",      assets = {"Rukia"},                   wait = 0,
+      cf = {2904.904296875,    1946.37548828125, 2474.281982421875, 1,0,0, 0,1,0, 0,0,1} },
+    { name = "The Hero",       assets = {"HimmelTheHero", "Himmel"}, wait = 0,
+      cf = {2907.353759765625, 1946.37548828125, 2499.803466796875, 1,0,0, 0,1,0, 0,0,1} },
+    { name = "Ice Mage",       assets = {"Gray"},                    wait = 0,
+      cf = {2906.54833984375,  1946.37548828125, 2477.492431640625, 1,0,0, 0,1,0, 0,0,1} },
+    -- Toy Maker = ตัวซัมมอน (ไม่ใช่ตัวหาเงิน)
+    { name = "Toy Maker",      assets = {"Sugar"},                   wait = 0,
+      cf = {2911.087646484375, 1946.37548828125, 2474.586669921875, 1,0,0, 0,1,0, 0,0,1} },
+}
+
+-- ---------- หาช่องจากชื่อตัวละครใน hotbar ----------
+local GENERIC_MODEL = { Model=true, AnimSaves=true, WorldModel=true, Folder=true, Head=true, Torso=true }
+
+local function getHotbarSlots()
+    local bh = player.PlayerGui:FindFirstChild("BottomHUD")
+    if not bh then return {} end
+    local slots = {}
+    for _, tb in ipairs(bh:GetDescendants()) do
+        if tb:IsA("TextButton") then
+            for _, d in ipairs(tb:GetDescendants()) do
+                if d:IsA("ViewportFrame") then table.insert(slots, tb); break end
+            end
+        end
+    end
+    return slots
+end
+
+-- normalize: ตัดอักขระที่ไม่ใช่ตัวอักษร/ตัวเลข (กัน "Ice Queen" vs "IceQueen")
+local function normUnit(s) return (tostring(s):lower():gsub("[^%w]", "")) end
+
+-- ⭐ อ่านชื่อ asset จริงต่อช่องจาก replica PlayerData.HotbarData
+--    (ชื่อ Model ใน hotbar UI เป็นชื่อ rig เช่น "Stupid"/"Himel" ใช้ไม่ได้)
+--    รูปแบบ: { [1]="Yuta#uuid", [2]="Inumaki#uuid", ... }
+local function getHotbarAssets()
+    local out = {}
+    local pd = getReplica("PlayerData")
+    if not pd then return out end
+    local ok, data = pcall(function() return pd.Data end)
+    if not ok or type(data) ~= "table" then return out end
+    local hb = data.HotbarData
+    if type(hb) ~= "table" then return out end
+    for k, v in pairs(hb) do
+        local slot = tonumber(k)
+        if slot and type(v) == "string" then
+            local uid = v:match("^([^#]+)") or v          -- "Yuta#uuid" → "Yuta"
+            local asset = uid
+            -- ดูชื่อ Asset จริงจาก UnitData (เผื่อเป็นร่าง EVO: Yuta → YutaEVO)
+            pcall(function()
+                local ud = data.UnitData and data.UnitData[v]
+                if ud and ud.Asset then asset = tostring(ud.Asset) end
+            end)
+            out[slot] = { base = uid, asset = asset }
+        end
+    end
+    return out
+end
+
+-- ⭐ คืนเลขช่องของ entry — จับคู่ด้วย asset name จาก replica เท่านั้น
+--    (ชื่อ Model ใน UI เป็นชื่อ rig เช่น "Stupid"/"Rika" → match มั่ว ไม่ใช้)
+local function findSlotFor(entry)
+    local wants = {}
+    for _, a in ipairs(entry.assets or {}) do wants[#wants+1] = normUnit(a) end
+    if #wants == 0 then wants[1] = normUnit(entry.name) end
+
+    local best, bestScore
+    for slot, info in pairs(getHotbarAssets()) do
+        for _, cand in ipairs({ info.asset, info.base }) do
+            local n = normUnit(cand)
+            if n ~= "" then
+                for _, w in ipairs(wants) do
+                    local score
+                    if n == w then score = 1000
+                    -- substring ต้องยาวพอ (≥4) กัน match มั่วจากคำสั้น
+                    elseif #w >= 4 and (n:find(w, 1, true) or w:find(n, 1, true)) then
+                        score = math.min(#n, #w)
+                    end
+                    if score and (not bestScore or score > bestScore) then
+                        best, bestScore = slot, score
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function unitCountNearPos(pos, radius)
+    local u = workspace:FindFirstChild("Units")
+    if not u then return 0 end
+    local n = 0
+    for _, m in ipairs(u:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p and (p - pos).Magnitude <= radius then n = n + 1 end
+    end
+    return n
+end
+
+-- ============================================================
+-- ⭐ พิกัดวางตัว = "ตำแหน่งบนรถ" ไม่ใช่พิกัดโลกตายตัว
+--    รถเคลื่อนที่ตลอด → แปลงพิกัดที่ฟิคไว้ให้เป็น offset เทียบ PayloadOrigin
+--    เวลาวาง (หรือวางซ้ำระหว่างทาง) ค่อยคูณกลับด้วยตำแหน่งรถปัจจุบัน
+-- ============================================================
+local function payloadPart(name)
+    local map = workspace:FindFirstChild("Map")
+    local pm = map and map:FindFirstChild("PayloadModel")
+    if not pm then return nil end
+    return pm:FindFirstChild(name) or pm.PrimaryPart
+end
+
+-- ⭐ กติกา: ตำแหน่งที่ฟิคไว้ = ตำแหน่งจริงเท่านั้น ห้ามขยับ/ห้ามสุ่ม
+--    สิ่งเดียวที่บวกเพิ่มคือ "ระยะที่รถเคลื่อนที่ไป" (เลื่อนตามรถตรงๆ ไม่หมุน ไม่ขยับเข้าใน)
+--    รถอยู่จุดเริ่ม → ได้พิกัดเดิมเป๊ะๆ
+local function liveCF(entry)
+    local base = CFrame.new(unpack(entry.cf))
+    local map  = workspace:FindFirstChild("Map")
+    local org  = map and map:FindFirstChild("PayloadOrigin")
+    local ref  = payloadPart("Primary")
+    if not org or not ref then return base end       -- ไม่เจอรถ → พิกัดเดิม
+    local move = ref.Position - org.Position         -- รถเลื่อนไปเท่าไหร่
+    if move.Magnitude < 0.5 then return base end     -- รถยังอยู่จุดเริ่ม → พิกัดเดิมเป๊ะ
+    return base + move
+end
+
+-- ⭐ เกมจริงยิง SelectSlot (replica HotbarData) ก่อน PlaceGameUnit เสมอ
+local function selectSlot(slot)
+    if not registry then return end
+    for _, rep in pairs(registry) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == "HotbarData" then
+            pcall(function() rep:FireServer("SelectSlot", slot) end)
+        end
+    end
+end
+
+local function placeOne(entry)
+    local rep = getReplica("GamePlayerData")
+    if not rep then warn("[Exp Place] ❌ ไม่เจอ GamePlayerData"); return false end
+
+    -- ⭐ หาช่องจากตัวละคร (asset) — ไม่เจอ = ข้าม (ไม่เดาช่อง กันวางผิดตัว)
+    local slot = findSlotFor(entry)
+    if not slot then
+        warn(("[Exp Place] ⏭️ ข้าม '%s' — ลูกค้าไม่มีตัวนี้ในทีม"):format(entry.name))
+        return false
+    end
+
+    -- ⭐ ยิงวางเลย ไม่ต้องเช็ค/ลองซ้ำ — เงินไม่พอ เกมจะจองคิวไว้แล้ววางเองเมื่อเงินถึง
+    local cf = liveCF(entry)
+    selectSlot(slot)
+    task.wait(0.12)
+    pcall(function() rep:FireServer("PlaceGameUnit", slot, cf) end)
+    print(("[Exp Place] 📤 %s (ช่อง %d)"):format(entry.name, slot))
+    task.wait(0.2)      -- เว้นจังหวะเล็กน้อย กันยิง remote ถี่เกิน
+    return true
+end
+
+-- debug: ดูว่าสคริปต์เห็นตัวอะไรในช่องไหน (asset จริงจาก replica)
+_G.AE_EXP_SLOTS = function()
+    local lines = { "===== AE Hotbar =====" }
+    local function add(s) lines[#lines+1] = s; print(s) end
+
+    add("[Exp Place] 🔍 hotbar จาก replica (asset จริง):")
+    local assets = getHotbarAssets()
+    local any = false
+    for slot = 1, 8 do
+        local info = assets[slot]
+        if info then
+            any = true
+            add(("  ช่อง %d: asset='%s'  (base='%s')"):format(slot, tostring(info.asset), tostring(info.base)))
+        end
+    end
+    if not any then add("  ⚠️ อ่าน HotbarData ไม่ได้ (replica PlayerData ไม่พร้อม?)") end
+
+    add("[Exp Place] 🔍 ชื่อ Model ใน hotbar UI (ชื่อ rig — อาจไม่ตรงตัวละคร):")
+    for i, tb in ipairs(getHotbarSlots()) do
+        local names = {}
+        for _, d in ipairs(tb:GetDescendants()) do
+            if (d:IsA("Model") or d:IsA("Folder")) and not GENERIC_MODEL[d.Name] then
+                names[#names+1] = d.Name
+            end
+        end
+        add(("  ช่อง %d: %s"):format(i, #names > 0 and table.concat(names, ", ") or "(ไม่มีชื่อ)"))
+    end
+
+    add("[Exp Place] 🎯 จับคู่กับ config:")
+    for _, e in ipairs(EXP_PLACEMENTS) do
+        add(("  %-16s → ช่อง %s"):format(e.name, tostring(findSlotFor(e) or "❌ ไม่มีในทีม")))
+    end
+    pcall(setclipboard, table.concat(lines, "\n"))
+    print("📋 ก๊อปผลเข้าคลิปบอร์ดแล้ว")
+end
+
+-- ============================================================
+-- 🎲 สำรอง: ลูกค้าไม่มีตัวที่ฟิคไว้ → สุ่มวางบนรถเอง
+--    เน้นจุด 2 (ท้ายรถ/ฝั่งบอสเกิด) จุด 1 (หัวรถ) วางแค่ 1-2 ตัวพอ
+--    ห้ามวางกลางรถ (ที่รถจอด/ที่เดิน)
+-- ============================================================
+local FRONT_MAX   = 2      -- จุด 1 (หัวรถ) วางได้มากสุดกี่ตัว
+local MID_EXCLUDE = 0.58   -- ⭐ กันกลางรถ 58% ของครึ่งความยาว (พื้นที่แดง = ห้ามวาง)
+
+local function payloadPartSafe(name)
+    local map = workspace:FindFirstChild("Map")
+    local pm  = map and map:FindFirstChild("PayloadModel")
+    return pm and (pm:FindFirstChild(name) or pm.PrimaryPart)
+end
+
+-- ฝั่งที่มอนมาเยอะ (= ฝั่งบอสเกิด) จากตำแหน่งมอนจริง
+local function hotSideSign(area)
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return 1 end
+    local sum, n = 0, 0
+    for _, m in ipairs(enemies:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p then
+            local lp = area.CFrame:PointToObjectSpace(p)
+            if math.abs(lp.Z) < 400 then sum = sum + lp.Z; n = n + 1 end
+        end
+    end
+    if n == 0 then return 1 end
+    return (sum >= 0) and 1 or -1
+end
+
+-- สุ่มจุดบนรถในโซนที่ต้องการ: back = ฝั่งมอนเยอะ, front = อีกฝั่ง
+local function randomPayloadCF(zone)
+    local area = payloadPartSafe("UnitArea")
+    local bse  = payloadPartSafe("Base")
+    if not area then return nil end
+    local y = bse and (bse.Position.Y + bse.Size.Y / 2 + 0.015) or area.Position.Y + 1.5
+    local halfX = math.max(area.Size.X / 2 - 1.2, 0.4)
+    local halfZ = math.max(area.Size.Z / 2 - 1.5, 0.6)
+    local minZ  = halfZ * MID_EXCLUDE
+    local hot   = hotSideSign(area)
+    local dx = (math.random() * 2 - 1) * halfX
+    local dz
+    if zone == "mid" then
+        -- ⭐ กลางรถ — ปกติห้ามวาง ยกเว้นตัวระยะไกลมาก (Elf Mage) ที่ยิงครอบทั้งรถ
+        dz = (math.random() * 2 - 1) * (minZ * 0.8)
+    else
+        local sign = (zone == "front") and -hot or hot
+        dz = sign * (minZ + math.random() * (halfZ - minZ))
+    end
+    local p  = (area.CFrame * CFrame.new(dx, 0, dz)).Position
+    return CFrame.new(p.X, y, p.Z)
+end
+_G.AE_EXP_RANDCF = randomPayloadCF
+
+-- วางตัวที่มีในช่องแบบสุ่ม (ใช้ตอนไม่มีตัวตามที่ฟิคไว้)
+-- ⭐ ช่องตัวละคร "ในด่าน" (HotbarData ที่ PlacementAllowed / MaxSlots มากสุด)
+--    ต่างจาก PlayerData.HotbarData ซึ่งเป็นทีมในล็อบบี้ (6 ช่อง)
+local function gameHotbarSlots()
+    if not registry then return {} end
+    local bestData
+    for _, rep in pairs(registry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "HotbarData" then
+            local okd, d = pcall(function() return rep.Data end)
+            if okd and type(d) == "table" and type(d.Slots) == "table" then
+                if d.PlacementAllowed == true then bestData = d; break end
+                if not bestData or (tonumber(d.MaxSlots) or 0) > (tonumber(bestData.MaxSlots) or 0) then
+                    bestData = d
+                end
+            end
+        end
+    end
+    local out = {}
+    if not bestData then return out end
+    for k, v in pairs(bestData.Slots) do
+        local n = tonumber(k)
+        if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
+            local id = type(v.ID) == "string" and v.ID or ""
+            local asset = id:match('"Asset"%s*:%s*"([^"]+)"')      -- ตัวจ้าง (JSON)
+            if asset and asset:find("Equipment") then
+                for a in id:gmatch('"Asset"%s*:%s*"([^"]+)"') do
+                    if not a:find("Equipment") then asset = a; break end
+                end
+            end
+            asset = asset or id:gsub("#.*$", "")
+            out[n] = { cost = tonumber(v.PlacementCost) or 0, asset = asset }
+        end
+    end
+    return out
+end
+
+-- ============================================================
+-- 🏷️ ประเภทตัวละคร (ใช้ตัดสินว่าวางจุดไหนได้)
+--    farm  = ตัวหาเงิน ตีไม่ได้ (Ramen Guy) → ห้ามยืนเดี่ยวจุด 1 มอนทะลุ
+--    long  = ระยะไกลมาก (Elf Mage) → วางจุดไหนก็ครอบทั้งรถ วางที่เดียวกับยูตะได้
+-- ============================================================
+local FARM_ASSETS = { "ichiraku", "ramen", "farm", "money" }
+local LONG_ASSETS = { "frieren", "elfmage", "elf mage" }
+-- ⭐ ตัวซัพ (บัฟ/ดีบัฟ DPS 0) — วางได้ แต่ "ห้ามอัพเกรด" เปลืองเงินเปล่า
+local SUPPORT_ASSETS = {
+    "rukia",          -- Ice Queen
+    "utahime",        -- Forbidden Teacher
+    "himmel",         -- The Hero
+    "gray",           -- Ice Mage
+    "sugar",          -- Toy Maker (ซัมมอน)
+}
+
+local function assetIs(name, list)
+    local a = tostring(name):lower()
+    for _, k in ipairs(list) do
+        if a:find(k, 1, true) then return true end
+    end
+    return false
+end
+local function isFarmUnit(name) return assetIs(name, FARM_ASSETS) end
+local function isLongRange(name) return assetIs(name, LONG_ASSETS) end
+local function isSupportUnit(name) return assetIs(name, SUPPORT_ASSETS) or assetIs(name, FARM_ASSETS) end
+_G.AE_EXP_ISSUPPORT = isSupportUnit
+
+local function placeRandomFromHotbar(skipSlots)
+    local rep = getReplica("GamePlayerData")
+    if not rep then return 0 end
+    local hb = gameHotbarSlots()
+    local slots = {}
+    for slot = 1, 10 do
+        if hb[slot] and not (skipSlots and skipSlots[slot]) then table.insert(slots, slot) end
+    end
+    if #slots == 0 then
+        -- สำรอง: อ่านจากทีมล็อบบี้ (เผื่อ hotbar ในด่านยังไม่มา)
+        local assets = getHotbarAssets()
+        for slot = 1, 10 do
+            if assets[slot] and not (skipSlots and skipSlots[slot]) then table.insert(slots, slot) end
+        end
+    end
+    if #slots == 0 then return 0 end
+
+    -- ⭐ เรียงลำดับ: ตัวตีก่อน (ไปยืนจุด 1 ได้) → ตัวระยะไกล → ตัวหาเงินท้ายสุด
+    table.sort(slots, function(a, b)
+        local aa, ba = (hb[a] and hb[a].asset) or "", (hb[b] and hb[b].asset) or ""
+        local ra = isFarmUnit(aa) and 3 or (isLongRange(aa) and 2 or 1)
+        local rb = isFarmUnit(ba) and 3 or (isLongRange(ba) and 2 or 1)
+        if ra ~= rb then return ra < rb end
+        return a < b
+    end)
+    print(("[Exp Place] 🎲 โหมดสุ่ม: วาง %d ตัวจากช่องที่มี (เน้นจุด 2 ฝั่งบอส)"):format(#slots))
+
+    local placed, frontUsed = 0, 0
+    for _, slot in ipairs(slots) do
+        local asset = (hb[slot] and hb[slot].asset) or ""
+        -- จุด 1 (หัวรถ) วางแค่ 1-2 ตัว และต้องเป็น "ตัวตี" เท่านั้น
+        --   ตัวหาเงิน (Ramen Guy) ตีไม่ได้ → ยืนเดี่ยวจุด 1 = มอนทะลุ แพ้
+        --   ตัวระยะไกล (Elf Mage) ครอบทั้งรถอยู่แล้ว → ไว้จุด 2 พอ
+        local zone = "back"
+        if isLongRange(asset) then
+            zone = "mid"                      -- ระยะไกลมาก → กลางรถได้ (จุดเดียวกับยูตะ)
+        elseif not isFarmUnit(asset) and frontUsed < FRONT_MAX and placed >= 1 then
+            zone = "front"; frontUsed = frontUsed + 1
+        end
+        if asset ~= "" then
+            local zn = (zone == "back" and "จุด2") or (zone == "front" and "จุด1") or "กลางรถ"
+            print(("[Exp Place] 🎲 %s → %s%s"):format(asset, zn,
+                isFarmUnit(asset) and " (ตัวหาเงิน)" or (isLongRange(asset) and " (ระยะไกล)" or "")))
+        end
+        local cf = randomPayloadCF(zone)
+        if cf then
+            selectSlot(slot)
+            task.wait(0.12)
+            pcall(function() rep:FireServer("PlaceGameUnit", slot, cf) end)
+            print(("[Exp Place] 🎲 ช่อง %d → %s (%.1f, %.1f, %.1f)")
+                :format(slot, zone == "back" and "จุด2" or "จุด1", cf.Position.X, cf.Position.Y, cf.Position.Z))
+            placed = placed + 1
+            task.wait(0.25)
+        end
+    end
+    return placed
+end
+_G.AE_EXP_PLACE_RANDOM = placeRandomFromHotbar
+
+local function placeAll()
+    print("[Exp Place] 🎯 เริ่มวางตัว " .. #EXP_PLACEMENTS .. " ตัว...")
+    local ok, usedSlots = 0, {}
+    for _, e in ipairs(EXP_PLACEMENTS) do
+        local slot = findSlotFor(e)
+        if slot then usedSlots[slot] = true end
+        if placeOne(e) then ok = ok + 1 end
+        if (e.wait or 0) > 0 then task.wait(e.wait) end
+    end
+    print(("[Exp Place] 🏁 วางตามที่ฟิค %d/%d ตัว"):format(ok, #EXP_PLACEMENTS))
+
+    -- ⭐ ลูกค้าไม่มีตัวที่ฟิคไว้ (วางได้น้อยกว่าครึ่ง) → สุ่มวางตัวที่เขามีแทน
+    if ok < math.ceil(#EXP_PLACEMENTS / 2) then
+        print("[Exp Place] ⚠️ ไม่มีตัวตามที่ฟิคไว้ → สลับเป็นโหมดสุ่ม")
+        _G.AE_EXP_RANDOM_MODE = true
+        ok = ok + placeRandomFromHotbar(usedSlots)
+    else
+        _G.AE_EXP_RANDOM_MODE = false
+    end
+    return ok
+end
+
+-- ============================================================
+-- ⚔️ ในด่าน: ตั้ง Priority + อัพเกรด + กด Continue ตอนรถจอด
+-- ============================================================
+-- ตั้ง priority (Puppet = Weakest)
+local EXP_PRIORITY = {
+    { name = "Puppet", assets = {"Gowther"}, priority = "Weakest" },
+}
+-- ลำดับการอัพ: อัพตัวแรกจนถึง target แล้วค่อยไปตัวถัดไป
+local EXP_UPGRADES = {
+    { name = "Cursed Student", assets = {"Yuta"},    target = 6  },
+    { name = "Puppet",         assets = {"Gowther"}, target = 99 },  -- อัพเรื่อยๆ จนสุด
+}
+
+-- unit ที่เราวางในสนาม (GameUnit replica)
+-- ⭐ กรอง Owner = เรา ถ้าเจอ; ถ้าไม่เจอเลย (ชื่อไม่ตรง) → ใช้ทั้งหมด กันหาไม่เจอ
+local function getMyGameUnits()
+    local mine, all = {}, {}
+    if not registry then return mine end
+    for _, rep in pairs(registry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "GameUnit" then
+            local okd, d = pcall(function() return rep.Data end)
+            -- ⭐ ข้ามร่างซัมมอน/โคลน (YutaBatSpirit ฯลฯ) — อัพไม่ได้ + แย่งชื่อกับตัวจริง
+            local isClone = okd and type(d) == "table"
+                and (d.IsClone or d.Unupgradeable or d.HiddenUnitManager)
+            if okd and type(d) == "table" and not isClone then
+                local u = {
+                    id      = d.ID or d.Id,
+                    owner   = tostring(d.Owner or ""),
+                    asset   = (d.UnitData and d.UnitData.Asset) or d.Asset or "",
+                    upgrade = tonumber(d.Upgrade) or 0,
+                    maxUp   = tonumber(d.MaxUpgrade) or 9,
+                    cost    = (d.NextStats and tonumber(d.NextStats.Cost)) or nil,  -- ราคาอัพถัดไป
+                }
+                if u.id then
+                    all[#all+1] = u
+                    if u.owner == player.Name then mine[#mine+1] = u end
+                end
+            end
+        end
+    end
+    if #mine > 0 then return mine end
+    if #all > 0 then
+        warn("[Exp] ⚠️ ไม่เจอ unit ที่ Owner ตรงกับ '" .. player.Name .. "' → ใช้ทุกตัวในสนาม")
+    end
+    return all
+end
+
+-- ⭐ เลือกตัวที่ "ใกล้เคียงที่สุด" — YutaEVO ต้องชนะ YutaBatSpirit
+--    exact > ขึ้นต้นตรง (ชื่อสั้นกว่าดีกว่า) > มีคำนั้นอยู่ข้างใน
+local function findMyUnit(assets)
+    local best, bestScore
+    for _, u in ipairs(getMyGameUnits()) do
+        local n = normUnit(u.asset)
+        for _, a in ipairs(assets or {}) do
+            local w = normUnit(a)
+            local score
+            if n == w then
+                score = 10000
+            elseif #w >= 4 and n:sub(1, #w) == w then
+                score = 5000 - #n          -- ขึ้นต้นด้วยชื่อนั้น (yutaevo ชนะ yutabatspirit)
+            elseif #w >= 4 and (n:find(w, 1, true) or w:find(n, 1, true)) then
+                score = 1000 - #n
+            end
+            if score and (not bestScore or score > bestScore) then
+                best, bestScore = u, score
+            end
+        end
+    end
+    return best
+end
+
+local function getYen()
+    local rep = getReplica("GamePlayerData")
+    if not rep then return 0 end
+    local ok, d = pcall(function() return rep.Data end)
+    if ok and type(d) == "table" then return tonumber(d.Yen) or 0 end
+    return 0
+end
+
+-- ตั้ง priority ทุกตัวใน EXP_PRIORITY
+local function applyPriorities()
+    local rep = getReplica("GamePlayerData")
+    if not rep then return end
+    for _, e in ipairs(EXP_PRIORITY) do
+        local u = findMyUnit(e.assets)
+        if u then
+            pcall(function() rep:FireServer("ChangeGameUnitPriority", tostring(u.id), e.priority) end)
+            print(("[Exp] 🎚️ %s → priority %s (id %s)"):format(e.name, e.priority, tostring(u.id)))
+        else
+            warn("[Exp] ⚠️ ตั้ง priority ไม่ได้ — ไม่เจอ " .. e.name .. " ในสนาม")
+        end
+        task.wait(0.4)
+    end
+end
+
+-- ⭐ ลูปอัพเกรด: อัพตามลำดับ EXP_UPGRADES เช็คเงินก่อนทุกครั้ง
+local upgradeOn = false
+local function startUpgradeLoop()
+    if upgradeOn then return end
+    upgradeOn = true
+    task.spawn(function()
+        print("[Exp] ⬆️ เริ่มลูปอัพเกรด (เช็คเงินระหว่างทาง)")
+        -- ⭐ ไม่ต้องรู้ราคาอัพ: ยิง UpgradeGameUnit แล้วเช็คว่า Upgrade เพิ่มไหม
+        --    (เงินไม่พอ = server ปฏิเสธเงียบๆ → ขั้นไม่เพิ่ม → รอแล้วลองใหม่)
+        while upgradeOn and MYGEN == _G.AE_SCRIPT_GEN do
+            local rep = getReplica("GamePlayerData")
+            local acted = false
+            if rep then
+                -- ⭐ ตัวแรกในลิสต์ (Cursed Student) ถึง target แล้วหรือยัง
+                --    ยังไม่ถึง = ห้ามจ้างตัวที่ checkpoint (กันเงินหมดจนวาง/อัพไม่ได้)
+                local first = EXP_UPGRADES[1]
+                if first then
+                    local fu = findMyUnit(first.assets)
+                    if fu and fu.upgrade >= math.min(first.target, fu.maxUp) then
+                        if not _G.AE_EXP_UPG1_DONE then
+                            _G.AE_EXP_UPG1_DONE = true
+                            print(("[Exp] ✅ %s ถึงขั้น %d แล้ว → เปิดให้จ้างตัวที่ checkpoint ได้")
+                                :format(first.name, fu.upgrade))
+                        end
+                    end
+                end
+                -- 🎲 โหมดสุ่ม (ลูกค้าไม่มีตัวที่ฟิคไว้) → อัพตัวไหนก็ได้ที่วางอยู่
+                --    เลือกตัวที่ขั้นต่ำสุดก่อน (เกลี่ยให้ทุกตัวแข็งขึ้นพร้อมกัน)
+                if _G.AE_EXP_RANDOM_MODE then
+                    local yen = getYen()
+                    local pick
+                    for _, u in ipairs(getMyGameUnits()) do
+                        -- ⭐ ข้ามตัวซัพ/ตัวหาเงิน (DPS 0) — อัพไปก็ไม่เพิ่มดาเมจ เปลืองเงิน
+                        if not isSupportUnit(u.asset)
+                           and u.upgrade < u.maxUp and (u.cost or 0) > 0 and yen >= u.cost then
+                            if not pick or u.upgrade < pick.upgrade then pick = u end
+                        end
+                    end
+                    if pick then
+                        local before = pick.upgrade
+                        pcall(function() rep:FireServer("UpgradeGameUnit", tostring(pick.id)) end)
+                        task.wait(1)
+                        print(("[Exp] 🎲⬆️ อัพ %s: %d → ? (จ่าย ¥%d)")
+                            :format(tostring(pick.asset or pick.id), before, pick.cost or 0))
+                        acted = true
+                    end
+                else
+
+                for _, e in ipairs(EXP_UPGRADES) do
+                    if not upgradeOn then break end
+                    local u = findMyUnit(e.assets)
+                    if u and u.upgrade < math.min(e.target, u.maxUp) then
+                        local cost, yen = u.cost or 0, getYen()
+                        -- เช็คเงินก่อน (NextStats.Cost = ราคาอัพจริง) — ไม่พอก็รอ ไม่ยิงมั่ว
+                        if cost > 0 and yen < cost then
+                            break
+                        end
+                        local before = u.upgrade
+                        pcall(function() rep:FireServer("UpgradeGameUnit", tostring(u.id)) end)
+                        task.wait(1.2)
+                        local after = findMyUnit(e.assets)
+                        if after and after.upgrade > before then
+                            print(("[Exp] ⬆️ %s: %d → %d (จ่าย ¥%d เหลือ ¥%d)")
+                                :format(e.name, before, after.upgrade, cost, getYen()))
+                            acted = true
+                        end
+                        break   -- โฟกัสตัวนี้ก่อนจนถึง target
+                    end
+                end
+
+                end   -- จบ if โหมดสุ่ม / else โหมดฟิคตัว
+            end
+            task.wait(acted and 0.3 or 2.5)   -- อัพติด = ลองต่อเร็ว | ไม่ติด = รอเงิน
+        end
+        print("[Exp] ⏹️ หยุดลูปอัพเกรด")
+    end)
+end
+local function stopUpgradeLoop() upgradeOn = false end
+
+-- ============================================================
+-- 🔁 เฝ้าตัวที่ยังไม่ได้วาง — วางซ้ำจนครบทุกตัว
+--    เหตุ: โหนด Defense ตัวลงจากรถ / คิวที่จองไว้โดนยกเลิก / เงินไม่พอตอนแรก
+--    พิกัดคำนวณจากตำแหน่งรถปัจจุบันเสมอ (liveCF) เลยวางกลางทางได้
+-- ============================================================
+-- ค่าวางของช่องนั้น (จาก HotbarData ในด่าน) — ใช้เช็คเงินก่อนยิงวาง
+local function gameHotbarData()
+    if not registry then return nil end
+    local best
+    for _, rep in pairs(registry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "HotbarData" then
+            local okd, d = pcall(function() return rep.Data end)
+            if okd and type(d) == "table" and type(d.Slots) == "table" then
+                -- hotbar ในด่าน = อันที่ช่องเยอะสุด (10 ช่อง) / วางได้
+                if d.PlacementAllowed == true then return d end
+                if not best or (tonumber(d.MaxSlots) or 0) > (tonumber(best.MaxSlots) or 0) then best = d end
+            end
+        end
+    end
+    return best
+end
+
+local function slotCost(slot)
+    local d = gameHotbarData()
+    if not d then return nil end
+    local s = d.Slots[slot] or d.Slots[tostring(slot)]
+    if type(s) ~= "table" then return nil end
+    return tonumber(s.PlacementCost)
+end
+
+local keepOn = false
+local function startPlaceKeeper()
+    if keepOn then return end
+    keepOn = true
+    task.spawn(function()
+        print("[Exp] 🔁 เฝ้าตัวที่ยังไม่ได้วาง (เรียงตามลำดับ + รอเงินพอค่อยวาง)")
+        local lastTry, lastMsg = {}, 0
+        while keepOn and MYGEN == _G.AE_SCRIPT_GEN do
+            task.wait(3)
+            local yen = getYen()
+
+            -- 🎲 โหมดสุ่ม: ยังวางได้ไม่ครบทุกช่อง → วางเพิ่มเรื่อยๆ เมื่อเงินพอ
+            local rep2 = getReplica("GamePlayerData")
+            if _G.AE_EXP_RANDOM_MODE and rep2 then
+                local hb = gameHotbarSlots()
+                -- ⭐ ตัวไหนวางลงสนามแล้วบ้าง (เทียบด้วยชื่อ asset) → ช่องนั้นข้ามไป
+                local mine = getMyGameUnits()
+                local placedAsset, placedCount = {}, #mine
+                for _, u in ipairs(mine) do
+                    placedAsset[tostring(u.asset):lower():gsub("[^%w]", "")] = true
+                end
+                local left = {}
+                for slot, info in pairs(hb) do
+                    local key = tostring(info.asset or ""):lower():gsub("[^%w]", "")
+                    if key ~= "" and not placedAsset[key] then left[slot] = info end
+                end
+                local nLeft = 0
+                for _ in pairs(left) do nLeft = nLeft + 1 end
+                if nLeft > 0 then
+                    print(("[Exp] 🎲 ยังเหลือ %d ตัวยังไม่ได้วาง (เงิน ¥%d)"):format(nLeft, yen))
+                    for slot, info in pairs(left) do
+                        if not keepOn then break end
+                        local a = info.asset or ""      -- ชื่อตัวในช่องนี้
+                        if (info.cost or 0) <= yen then
+                            -- ตัวหาเงิน/ระยะไกล → จุด 2 เสมอ (ห้ามยืนเดี่ยวหน้ารถ)
+                            local zone = "back"
+                            if isLongRange(a) then zone = "mid"
+                            elseif not isFarmUnit(a) and placedCount >= 1
+                                   and placedCount < FRONT_MAX + 1 then zone = "front" end
+                            local cf = randomPayloadCF(zone)
+                            if cf then
+                                local zn = (zone == "back" and "จุด2") or (zone == "front" and "จุด1") or "กลางรถ"
+                                print(("[Exp] 🎲 วางเพิ่ม %s (ช่อง %d ¥%d) → %s")
+                                    :format(a ~= "" and a or "?", slot, info.cost or 0, zn))
+                                selectSlot(slot)
+                                task.wait(0.12)
+                                pcall(function() rep2:FireServer("PlaceGameUnit", slot, cf) end)
+                                yen = yen - (info.cost or 0)
+                                placedCount = placedCount + 1
+                                task.wait(0.5)
+                            end
+                        elseif tick() - lastMsg > 12 then
+                            lastMsg = tick()
+                            print(("[Exp] 💰 รอเงินวาง %s — ต้อง ¥%d มี ¥%d")
+                                :format(a ~= "" and a or ("ช่อง " .. slot), info.cost or 0, yen))
+                        end
+                    end
+                end
+            end
+            -- ⭐ ไล่ตามลำดับในลิสต์เสมอ: Cursed Student → Puppet → Ice Queen → ...
+            --    ตัวไหนยังวางไม่ได้เพราะเงินไม่พอ → หยุดตรงนั้น เก็บเงินให้ตัวนั้นก่อน
+            for _, e in ipairs(EXP_PLACEMENTS) do
+                if not keepOn then break end
+                if not findMyUnit(e.assets) then
+                    local slot = findSlotFor(e)
+                    if not slot then
+                        -- ลูกค้าไม่มีตัวนี้ในทีม → ข้ามไปตัวถัดไป
+                    else
+                        local cost = slotCost(slot) or 0
+                        if cost > 0 and yen < cost then
+                            if tick() - lastMsg > 10 then
+                                lastMsg = tick()
+                                print(("[Exp] 💰 รอเงินวาง %s — ต้อง ¥%d มี ¥%d (หยุดรอ ไม่วางตัวถัดไป)")
+                                    :format(e.name, cost, yen))
+                            end
+                            break                       -- เก็บเงินให้ตัวนี้ ห้ามข้าม
+                        end
+                        if tick() - (lastTry[e.name] or 0) >= 5 then
+                            lastTry[e.name] = tick()
+                            local cf = liveCF(e)
+                            print(("[Exp] 🔁 วาง %s (ช่อง %d ¥%d | มี ¥%d) → (%.1f, %.1f, %.1f)")
+                                :format(e.name, slot, cost, yen,
+                                        cf.Position.X, cf.Position.Y, cf.Position.Z))
+                            placeOne(e)
+                            yen = yen - cost
+                            task.wait(0.4)
+                        end
+                    end
+                end
+            end
+        end
+        print("[Exp] ⏹️ หยุดเฝ้าการวางตัว")
+    end)
+end
+local function stopPlaceKeeper() keepOn = false end
+
+-- ============================================================
+-- 🏁 จบ 1 รัน = ครบ 10 โหนด (ฆ่าบอส) → ต้องกด Extract ไม่ใช่ Continue
+-- ============================================================
+-- อ่านความคืบหน้า: จาก UI "Map Progress 4 / 10" ก่อน → ไม่มีก็ใช้ GameState
+-- อ่านจากป้าย "Map Progress 6 / 10" (เห็นเฉพาะตอนเปิดแผนที่)
+local function mapProgressUI()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local a, b = tostring(l.Text):gsub("<[^>]->", ""):match("Map%s*Progress%s*(%d+)%s*/%s*(%d+)")
+                    if a then return tonumber(a), tonumber(b) end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ⭐ อ่านจาก GameState — ระวัง! NodeQueue = "โหนดที่เหลือ" ไม่ใช่ทั้งหมด
+--    ของจริง: ทั้งหมด = NodeHistory + NodeQueue  (เดิมใช้ NodeQueue เป็นตัวหาร → 5/5 = จบรันมั่ว)
+local function mapProgressState()
+    local gs = getReplica("GameState")
+    local d = gs and gs.Data
+    if type(d) ~= "table" then return nil end
+    local left, done = 0, 0
+    if type(d.NodeQueue)   == "table" then for _ in pairs(d.NodeQueue)   do left = left + 1 end end
+    if type(d.NodeHistory) == "table" then for _ in pairs(d.NodeHistory) do done = done + 1 end end
+    local total = tonumber(d.TotalNodes)
+    if not total or total <= 0 then total = done + left end
+    if total <= 0 then return nil end
+    return done, total
+end
+
+local function mapProgress()
+    local a, b = mapProgressUI()
+    if a then return a, b end
+    return mapProgressState()
+end
+_G.AE_EXP_PROGRESS = mapProgress
+
+-- โหนดปัจจุบันเป็นบอสไหม
+local function atBossNode()
+    local gs = getReplica("GameState")
+    local d = gs and gs.Data
+    local n = type(d) == "table" and d.CurrentNode
+    return type(n) == "table" and tostring(n.Node) == "Boss"
+end
+
+-- 🗺️ เปิดแผนที่อ่าน Map Progress แล้วปิดกลับ (ใช้ตอนรถจอด เพื่อเช็คว่าครบ 10 โหนดหรือยัง)
+-- ⭐ ยึดป้ายในแผนที่เป็นหลักเสมอ (ค่าจาก GameState เชื่อไม่ได้ 100%)
+-- ⭐ เชื่อเฉพาะป้ายในแผนที่เท่านั้น (GameState ให้ 5/5 มั่วมาแล้ว 2 ครั้ง)
+--    คืน nil = อ่านไม่ได้ → ห้ามถือว่าจบรัน (เดินต่อปลอดภัยกว่าจบก่อนเวลา)
+local function progressViaMap()
+    local cur, total = mapProgressUI()
+    if cur then return cur, total end                -- แผนที่เปิดอยู่แล้ว
+    for attempt = 1, 2 do
+        if clickByText("Expedition Map", 3) then
+            local t0 = tick()
+            while tick() - t0 < 4 do                 -- รอแผนที่โหลด (ป้ายโผล่ช้า)
+                cur, total = mapProgressUI()
+                if cur then break end
+                task.wait(0.4)
+            end
+            clickByText("Back", 3)                    -- ปิดกลับเสมอ
+            task.wait(0.8)
+            if cur then
+                print(("[Exp] 🗺️ เช็คจากแผนที่: %d/%d โหนด"):format(cur, total or 10))
+                return cur, total
+            end
+        end
+        task.wait(1)
+    end
+    local sc, st = mapProgressState()
+    if sc then print(("[Exp] 📊 (อ้างอิงเฉยๆ) GameState: %d/%d โหนด — ไม่ใช้ตัดสินใจ"):format(sc, st)) end
+    return nil
+end
+_G.AE_EXP_PROGRESS_MAP = progressViaMap
+
+-- ⭐ จำไว้ว่าเจอโหนดบอสแล้ว (โหนด 10 สุดท้าย)
+--    เพราะพอฆ่าบอสเสร็จ รถจะจอดที่ checkpoint แล้ว Map Progress รีเป็น 1/10 ของแมพใหม่
+--    ถ้าไม่จำไว้ จะแยกไม่ออกว่าเป็น checkpoint ธรรมดาหรือจุดจบรัน → กด Continue ไปแมพใหม่
+local bossSeen = false
+_G.AE_EXP_BOSSSEEN = function() return bossSeen end
+
+-- ครบโหนดแล้วหรือยัง — ใช้เฉพาะป้ายในแผนที่ (ของจริง) เท่านั้น
+local function runFinished()
+    local cur, total = mapProgressUI()
+    if cur and total and cur >= total then return true end
+    return false
+end
+_G.AE_EXP_FINISHED = runFinished
+
+-- กด Extract (จบรัน) + ยืนยันในกล่อง
+local function pressExtract()
+    print("[Exp] 🏁 ครบโหนดแล้ว → กด Extract (จบรัน)")
+    if not clickByText("Extract", 6) then
+        warn("[Exp] ❌ ไม่เจอปุ่ม Extract")
+        return false
+    end
+    task.wait(1)
+    for attempt = 1, 5 do
+        local btn = findDialogBtn("Extract", "Extract") or findDialogBtn("Expedition", "Extract")
+        if not btn then
+            if attempt > 1 then print("[Exp] ✅ ยืนยัน Extract แล้ว"); return true end
+            task.wait(0.8)
+        else
+            clickHard(btn)
+            task.wait(1.5)
+            if not (findDialogBtn("Extract", "Extract") or findDialogBtn("Expedition", "Extract")) then
+                print("[Exp] ✅ ยืนยัน Extract แล้ว")
+                return true
+            end
+        end
+    end
+    return true
+end
+_G.AE_EXP_EXTRACT = pressExtract
+
+-- ⭐ ลูปกด Continue อัตโนมัติเมื่อรถจอด (checkpoint/ร้านค้า — เราไม่ซื้อ)
+local contOn = false
+local function startAutoContinue()
+    if contOn then return end
+    contOn = true
+    task.spawn(function()
+        print("[Exp] 🚚 เริ่มเฝ้ารถจอด — เจอแล้วกด Continue ทันที")
+        while contOn and MYGEN == _G.AE_SCRIPT_GEN do
+            task.wait(2)
+            -- จำไว้ทันทีที่เข้าโหนดบอส (โหนดสุดท้ายของรัน)
+            if not bossSeen and atBossNode() then
+                bossSeen = true
+                print("[Exp] 👹 เข้าโหนดบอสแล้ว — จบโหนดนี้จะกด Extract (ไม่ไปแมพใหม่)")
+            end
+            -- รถจอด = มีปุ่ม Continue โผล่ (พร้อม Extract)
+            local found = false
+            for _, root in ipairs(player.PlayerGui:GetChildren()) do
+                if root:IsA("ScreenGui") and root.Enabled then
+                    for _, b in ipairs(root:GetDescendants()) do
+                        if b:IsA("GuiButton") and b.Visible then
+                            for _, l in ipairs(b:GetDescendants()) do
+                                if l:IsA("TextLabel") and l.Visible and l.Text == "Continue" then
+                                    found = true; break
+                                end
+                            end
+                        end
+                        if found then break end
+                    end
+                end
+                if found then break end
+            end
+            if found then
+                -- ⭐ ฆ่าบอสแล้ว (หรือครบ 10 โหนด) → จบรัน กด Extract ห้ามไปแมพใหม่
+                --    รถจอดทุกครั้ง = เปิดแผนที่เช็คจำนวนโหนดก่อนตัดสินใจ
+                local cur, total = progressViaMap()
+                local doneAll = (cur and total and cur >= total) or false
+                if not (bossSeen or doneAll) and cur then
+                    print(("[Exp] 🚚 checkpoint ปกติ (โหนด %d/%d) — เดินต่อ"):format(cur, total or 10))
+                end
+                if bossSeen or doneAll then
+                    print(("[Exp] 🏁 จบรัน (บอส=%s, โหนด %s/%s) → Extract ไม่ไปต่อ")
+                        :format(tostring(bossSeen), tostring(cur), tostring(total)))
+                    pressExtract()
+                    task.wait(6)
+                    -- ให้ระบบจบรัน (อ่านผล + Repeat) ทำต่อ
+                    contOn = false
+                    break
+                end
+
+                -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
+                if _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY then
+                    local gs = getReplica("GameState")
+                    local status = gs and gs.Data and tostring(gs.Data.Status) or ""
+                    if status == "Checkpoint" and not _G.AE_EXP_UPG1_DONE then
+                        print("[Exp] ⏸️ ยังไม่จ้างตัว — รอ " .. EXP_UPGRADES[1].name
+                              .. " ถึงขั้น " .. EXP_UPGRADES[1].target .. " ก่อน")
+                    elseif status == "Checkpoint" then
+                        _G.AE_HIRE_BUSY = true
+                        print("[Exp] 🛒 ถึง Checkpoint → จ้างตัวก่อน")
+                        pcall(_G.AE_HIRE_RUN)
+                        _G.AE_HIRE_BUSY = false
+                        task.wait(1)
+                    end
+                end
+                print("[Exp] 🚚 รถจอด → กด Continue")
+                pressContinue()
+                task.wait(4)
+            end
+        end
+        print("[Exp] ⏹️ หยุดเฝ้ารถจอด")
+    end)
+end
+local function stopAutoContinue() contOn = false end
+
+-- ⭐ ชุดเต็มในด่าน: วางตัว → priority → อัพเกรด + เฝ้ารถจอด
+local function combatStart()
+    _G.AE_EXP_UPG1_DONE = false     -- ด่านใหม่ → ล็อกการจ้างตัวไว้ก่อน
+    bossSeen = false                -- ด่านใหม่ → รีเซ็ตธงบอส
+    placeAll()
+    task.wait(1)
+    applyPriorities()
+    startUpgradeLoop()
+    startAutoContinue()
+    startPlaceKeeper()
+    print("[Exp] ⚔️ ระบบในด่านทำงานแล้ว (อัพเกรด + กด Continue อัตโนมัติ)")
+    print("[Exp]     หยุด: _G.AE_EXP_COMBAT_STOP()")
+end
+
+-- ---------- expose ----------
+_G.AE_EXP_PRIORITY = applyPriorities
+_G.AE_EXP_UPGRADE  = startUpgradeLoop
+_G.AE_EXP_AUTOCONT = startAutoContinue
+_G.AE_EXP_COMBAT   = combatStart
+_G.AE_EXP_COMBAT_STOP = function() stopUpgradeLoop(); stopAutoContinue(); stopPlaceKeeper() end
+-- เริ่มด่าน/รันใหม่ → รีเซ็ตธงต่างๆ
+_G.AE_EXP_RESETRUN = function()
+    bossSeen = false
+    _G.AE_EXP_UPG1_DONE = false
+end
+_G.AE_EXP_KEEPER      = startPlaceKeeper
+_G.AE_EXP_KEEPER_STOP = stopPlaceKeeper
+_G.AE_EXP_UPGRADE_STOP  = stopUpgradeLoop
+_G.AE_EXP_AUTOCONT_STOP = stopAutoContinue
+
+-- ---------- 🧭 เช็คสถานะปัจจุบัน (ใช้กับ FULL AUTO) ----------
+local function guiVisible(name)
+    local g = player.PlayerGui:FindFirstChild(name)
+    if not g then return false end
+    if g:IsA("ScreenGui") and not g.Enabled then return false end
+    for _, d in ipairs(g:GetDescendants()) do
+        if d:IsA("GuiObject") and d.Visible and d.AbsoluteSize.X > 5 and d.AbsoluteSize.Y > 5 then
+            return true
+        end
+    end
+    return false
+end
+
+-- 🗺️ เปิดหน้าแผนที่ (ปุ่ม "Expedition Map" ทางขวาในด่าน)
+_G.AE_EXP_OPENMAP = function()
+    if inNodeSelect() then print("[Exp] 🗺️ อยู่หน้าแผนที่อยู่แล้ว"); return true end
+    for attempt = 1, 3 do
+        if clickByText("Expedition Map", 4) then
+            task.wait(1.5)
+            if inNodeSelect() then print("[Exp] 🗺️ เปิดหน้าแผนที่แล้ว"); return true end
+        end
+        task.wait(1)
+    end
+    warn("[Exp] ❌ เปิดหน้าแผนที่ไม่ได้")
+    return false
+end
+
+_G.AE_EXP_INMAP = inNodeSelect
+_G.AE_EXP_MYUNITS = function() return #getMyGameUnits() end
+
+-- "map"   = อยู่หน้าเลือกเส้นทาง
+-- "stage" = อยู่ในด่าน (มีรถ Payload / มีตัวที่เราวาง)
+-- "other" = ล็อบบี้ / หน้าจอ Expedition หน้าแรก / กำลังโหลด
+_G.AE_EXP_STATE = function()
+    if inNodeSelect() then return "map" end
+    if guiVisible("PayloadHealth") then return "stage" end
+    if #getMyGameUnits() > 0 then return "stage" end
+    return "other"
+end
+-- 🔍 debug: dump GameUnit ทุกตัว (ทุก field) — หา ID จริง + field ราคาอัพ
+_G.AE_EXP_UNITS = function()
+    local lines = { "===== AE GameUnits =====" }
+    local function add(s) lines[#lines+1] = s; print(s) end
+    add("ผู้เล่น: " .. player.Name .. " | เงิน: ¥" .. getYen())
+
+    local n = 0
+    if registry then
+        for _, rep in pairs(registry) do
+            local ok, tok = pcall(function() return rep.Token end)
+            if ok and tok == "GameUnit" then
+                local okd, d = pcall(function() return rep.Data end)
+                if okd and type(d) == "table" then
+                    n = n + 1
+                    if n > 12 then break end
+                    add("")
+                    add(("📦 GameUnit replicaId=%s"):format(tostring(rep.Id)))
+                    -- field สำคัญ + ทุก field ที่เป็นตัวเลข/สตริง (หาราคาอัพ)
+                    local keys = {}
+                    for k in pairs(d) do keys[#keys+1] = tostring(k) end
+                    table.sort(keys)
+                    for _, k in ipairs(keys) do
+                        local v = d[k]
+                        if type(v) ~= "table" then
+                            add(("   %s = %s"):format(k, tostring(v)))
+                        else
+                            -- ตารางย่อย: โชว์เฉพาะ key ที่มีคำว่า cost/upgrade/price
+                            local sub = {}
+                            for k2, v2 in pairs(v) do
+                                local lk = tostring(k2):lower()
+                                if type(v2) ~= "table" and (lk:find("cost") or lk:find("upgrade")
+                                   or lk:find("price") or lk:find("sell") or lk:find("asset")
+                                   or lk:find("level")) then
+                                    sub[#sub+1] = tostring(k2) .. "=" .. tostring(v2)
+                                end
+                            end
+                            if #sub > 0 then add(("   %s: %s"):format(k, table.concat(sub, ", "))) end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    add("")
+    add("รวม GameUnit: " .. n)
+    pcall(setclipboard, table.concat(lines, "\n"))
+    print("📋 ก๊อปผลเข้าคลิปบอร์ดแล้ว — Ctrl+V ส่งมา")
+end
+_G.AE_EXP_PLACE = placeAll
+_G.AE_EXP_CONTINUE = pressContinue
+_G.AE_EXP_CHECK = function()
+    print("[Exp] 🔍 เช็คแมพ...")
+    local best, info = checkMap()
+    print("[Exp] แมพ: " .. tostring(info))
+    if best then
+        lastPath = best.path
+        print(("[Exp] ✅ ผ่าน! Defense=%d Yen=%d → {%s}"):format(best.def, best.yen, table.concat(best.path,",")))
+    else
+        print("[Exp] ❌ ไม่ผ่าน — ไม่มีเส้นทาง Defense≥"..NEED_DEFENSE.." + Yen≥"..NEED_YEN)
+    end
+    return best
+end
+_G.AE_EXP_SETROUTE = function() return setRoute(lastPath) end
+_G.AE_EXP_RESTART = restartGame
+_G.AE_EXP_AUTO = function()
+    task.spawn(function()
+        for attempt=1,50 do
+            print("[Exp] ===== รอบ " .. attempt .. " =====")
+            local best = checkMap()
+            if best then
+                lastPath = best.path
+                print(("[Exp] ✅ เจอแมพดี! Defense=%d Yen=%d"):format(best.def, best.yen))
+                setRoute(best.path)
+                task.wait(1.5)
+                -- ⭐ เลือกเส้นทางแล้ว → ออกจากแผนที่ → กด Continue เริ่มเดิน
+                pressContinue()
+                print("[Exp] 🏁 เริ่ม expedition แล้ว")
+                return
+            end
+            print("[Exp] ❌ แมพไม่ผ่าน → Restart")
+            restartGame()
+            task.wait(6)   -- รอแมพใหม่โหลด
+        end
+        warn("[Exp] ครบ 50 รอบยังไม่เจอแมพดี — หยุด")
+    end)
+end
+
+print("[Exp] ✅ พร้อม | เทส: _G.AE_EXP_CHECK() → _G.AE_EXP_SETROUTE() → _G.AE_EXP_CONTINUE()")
+print("[Exp]         วางตัว: _G.AE_EXP_PLACE()  |  Restart: _G.AE_EXP_RESTART()")
+print("[Exp]         วนอัตโนมัติ (เช็ค→เลือก→เริ่ม): _G.AE_EXP_AUTO()")
+
+end
+do -- [EXP 2] CARD
+-- ============================================================
+-- AE Expedition — เลือกการ์ด (Level Up Upgrade Cards)
+--   การ์ดโผล่แล้วรัน:
+--     _G.AE_CARD_LIST()  → อ่านการ์ด 3 ใบ (ชื่อ / สแต็ก / คำอธิบาย)
+--     _G.AE_CARD_PICK(n) → กด Select Upgrade ใบที่ n (1-3)
+--     _G.AE_CARD_BEST()  → เลือกใบที่ดีที่สุดตาม CARD_PRIORITY
+--     _G.AE_CARD_AUTO()  → เฝ้าอัตโนมัติ (เกม auto-select ใน 10 วิ ต้องกดก่อน)
+--     _G.AE_CARD_STOP()
+--     _G.AE_CARD_DUMP()  → dump ละเอียด (ตอนเจอบัค)
+--     _G.AE_CARD_SEEN()  → รายชื่อการ์ดทั้งหมดที่เคยเจอ (เอาไว้ตั้ง priority)
+-- ============================================================
+local MYGEN = _G.AE_SCRIPT_GEN   -- รุ่นสคริปต์ (โหลดใหม่ = ลูปเก่าตาย)
+local player = game:GetService("Players").LocalPlayer
+local VIM = game:GetService("VirtualInputManager")
+local inset = game:GetService("GuiService"):GetGuiInset()
+
+-- ============================================================
+-- ⭐ ระบบให้คะแนนการ์ด
+--   อันดับ 1 = เงิน (Yen)   อันดับ 2 = ดาเมจดอท (ยูตะตีติดดอท)   อันดับ 3 = เลือดรถ Payload
+--   ให้คะแนนจาก "คำในชื่อ+คำอธิบาย" → การ์ดใหม่ที่ไม่เคยเจอก็คิดคะแนนได้
+-- ============================================================
+local WEIGHTS = {
+    -- 🥇 เงิน
+    { tag="💰 เงิน",    w=100, keys={"yen","money","gold","cash","income","coin","currency"} },
+    -- 🥈 ดาเมจตัวละคร (มาแทนที่ดอท)
+    { tag="⚔️ ดาเมจ",   w=80,  keys={"more damage","unit damage","attack damage","deal",
+                                     "damage","critical","crit"} },
+    -- 🥉 เลือดรถ
+    { tag="❤️ เลือดรถ", w=60,  keys={"payload health","payload hp","restore","heal","repair",
+                                     "payload"} },
+    -- รองลงมา
+    { tag="📏 ระยะ",    w=25,  keys={"range","reach"} },
+    { tag="⚡ สปีด",    w=20,  keys={"attack speed","cooldown","faster","speed"} },
+    -- 🔻 ดอท — ไม่เอาแล้ว (ให้คะแนนต่ำสุด เลือกก็ต่อเมื่อไม่มีอะไรดีกว่า)
+    { tag="🔥 ดอท(ไม่เน้น)", w=8, keys={"damage over time","dot ","burn","burning","poison",
+                                        "bleed","toxic","ignite","corrosion","decay","rot",
+                                        "lingering","per second"} },
+    { tag="🔮 อื่นๆ",   w=5,   keys={"health","buff","element"} },
+}
+
+-- ⭐ ชื่อการ์ดที่บังคับให้เอาก่อนเสมอ (บนสุด = ก่อน)
+local CARD_PRIORITY = {
+    "Extended Reach",   -- อันดับ 1 (+ระยะจาก buff ตัวอื่น)
+    -- อันดับ 2 — การ์ด EXP (ชื่อต่างกันได้ จับจากคำอธิบาย)
+    "exp gain",
+    "player exp",
+    "experience",
+    "% exp",
+}
+local AVOID = {}         -- ชื่อการ์ดที่ไม่เอาเด็ดขาด
+
+local SELECT_TEXT = "select upgrade"
+local seenCards = {}     -- ชื่อการ์ดที่เคยเจอ
+
+-- ---------- utils ----------
+local function strip(s)                      -- ตัด rich text tag ออก
+    s = tostring(s):gsub("<[^>]->", "")
+    s = s:gsub("&lt;","<"):gsub("&gt;",">"):gsub("&amp;","&")
+    return (s:gsub("^%s+",""):gsub("%s+$",""))
+end
+local function low(s) return strip(s):lower() end
+
+local function clickHard(b)
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    task.wait(0.2)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset.Y
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+local function isAncestor(a, d)
+    local n = d
+    while n do if n == a then return true end n = n.Parent end
+    return false
+end
+
+-- ---------- หาปุ่ม Select Upgrade ----------
+local function findSelectBtns()
+    local out = {}
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    local scope = prompt or player.PlayerGui
+    for _, b in ipairs(scope:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 0 then
+            local hit = b:IsA("TextButton") and low(b.Text):find(SELECT_TEXT, 1, true) ~= nil
+            if not hit then
+                for _, l in ipairs(b:GetDescendants()) do
+                    if l:IsA("TextLabel") and low(l.Text):find(SELECT_TEXT, 1, true) then hit = true; break end
+                end
+            end
+            if hit then table.insert(out, b) end
+        end
+    end
+    table.sort(out, function(a,b) return a.AbsolutePosition.X < b.AbsolutePosition.X end)
+    return out
+end
+
+-- ---------- หา "กล่องการ์ด" ของแต่ละปุ่ม (ใช้ common ancestor ของปุ่มทั้งหมด) ----------
+local function cardRoots(btns)
+    if #btns == 0 then return {} end
+    if #btns == 1 then                       -- fallback: ขึ้นไป 3 ชั้น
+        local n = btns[1]
+        for _ = 1, 3 do if n.Parent and n.Parent:IsA("GuiObject") then n = n.Parent end end
+        return { n }
+    end
+    -- แถวที่บรรจุปุ่มทุกใบ
+    local row = btns[1].Parent
+    while row do
+        local all = true
+        for i = 2, #btns do if not isAncestor(row, btns[i]) then all = false; break end end
+        if all then break end
+        row = row.Parent
+    end
+    if not row then return {} end
+    -- การ์ด = ลูกตรงของ row ที่เป็นบรรพบุรุษของปุ่มนั้น
+    local roots = {}
+    for i, b in ipairs(btns) do
+        local n = b
+        while n and n.Parent ~= row do n = n.Parent end
+        roots[i] = n or b
+    end
+    return roots
+end
+
+-- ---------- อ่านการ์ด 1 ใบ ----------
+local function readCard(btn, root)
+    local labels = {}
+    for _, l in ipairs(root:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible then
+            local t = strip(l.Text)
+            if t ~= "" then
+                table.insert(labels, { t = t, size = l.TextSize,
+                    y = l.AbsolutePosition.Y, x = l.AbsolutePosition.X })
+            end
+        end
+    end
+    table.sort(labels, function(a, b)
+        if math.abs(a.y - b.y) > 6 then return a.y < b.y end
+        return a.x < b.x
+    end)
+
+    local title, stack, cur, max = nil, nil, nil, nil
+    local descWords = {}
+    local bestSize = -1
+    for _, e in ipairs(labels) do
+        local tl = e.t:lower()
+        local a, b = e.t:match("^(%d+)%s*/%s*(%d+)$")
+        if tl:find(SELECT_TEXT, 1, true) or tl:find("reroll", 1, true) then
+            -- ข้าม
+        elseif a then
+            if not stack then stack, cur, max = e.t, tonumber(a), tonumber(b) end
+        elseif e.size > bestSize then
+            if title then table.insert(descWords, title) end   -- ตัวเก่ากลายเป็นคำอธิบาย
+            bestSize, title = e.size, e.t
+        else
+            table.insert(descWords, e.t)
+        end
+    end
+    local desc = table.concat(descWords, " "):gsub("%s+", " ")
+    if title then seenCards[title] = true end
+    return { btn = btn, root = root, title = title or "?", desc = desc,
+             stack = stack, cur = cur, max = max, labels = labels }
+end
+
+local function listCards()
+    local btns  = findSelectBtns()
+    local roots = cardRoots(btns)
+    local cards = {}
+    for i, b in ipairs(btns) do
+        if roots[i] then table.insert(cards, readCard(b, roots[i])) end
+    end
+    return cards
+end
+
+-- ---------- ให้คะแนน + เลือก ----------
+local function scoreCard(c)
+    local t = low(c.title .. " " .. c.desc)
+    for _, a in ipairs(AVOID) do
+        if t:find(low(a), 1, true) then return -9999, "🚫 ห้ามเอา" end
+    end
+
+    -- 1) ชื่อที่บังคับไว้ มาก่อนเสมอ
+    for i, p in ipairs(CARD_PRIORITY) do
+        if t:find(low(p), 1, true) then return 100000 - i, "📌 ลิสต์บังคับ #" .. i end
+    end
+
+    -- 2) หากลุ่มที่ตรง (เอากลุ่มคะแนนสูงสุดที่เจอ)
+    local best, tag = 0, "❔ ไม่รู้จัก"
+
+    -- ⭐ การ์ดดอทมักเขียนว่า "DoT Damage" → อย่าให้ไปนับเป็นกลุ่มดาเมจ
+    --    เจอคำดอทเมื่อไหร่ = ล็อกเป็นกลุ่มดอท (คะแนนต่ำ) ทันที
+    local DOT_KEYS = { "damage over time", "dot", "burn", "poison", "bleed", "toxic",
+                       "ignite", "corrosion", "decay", "lingering", "per second" }
+    for _, k in ipairs(DOT_KEYS) do
+        if t:find(k, 1, true) then return 8 * 100 + 0, "🔥 ดอท(ไม่เน้น)" end
+    end
+    for _, g in ipairs(WEIGHTS) do
+        for _, k in ipairs(g.keys) do
+            if t:find(k, 1, true) and g.w > best then best, tag = g.w, g.tag; break end
+        end
+    end
+
+    -- 3) ตัวเลข % ในการ์ด ใช้ตัดสินตอนกลุ่มเท่ากัน (เช่น +15% ชนะ +10%)
+    local pct = 0
+    for n in t:gmatch("%+(%d+)%%") do pct = math.max(pct, tonumber(n) or 0) end
+    for n in t:gmatch("%+(%d+)")   do pct = math.max(pct, math.min(tonumber(n) or 0, 99)) end
+
+    local s = best * 100 + pct
+
+    -- 4) สแต็ก: ยังไม่เต็ม = ดี / เต็มแล้ว = เลือกไม่ได้ผล
+    if c.cur and c.max then
+        if c.cur >= c.max then s = s - 50000; tag = tag .. " (เต็มแล้ว)"
+        elseif c.cur > 0  then s = s + 150;   tag = tag .. " (ต่อสแต็ก)" end
+    end
+    return s, tag
+end
+
+local function pickBest()
+    local cards = listCards()
+    if #cards == 0 then return false end
+    local best, bestScore, bestI, bestTag = nil, -math.huge, 0, ""
+    for i, c in ipairs(cards) do
+        local s, tag = scoreCard(c)
+        -- ⭐ โชว์ทั้ง 3 ใบเสมอ จะได้ตรวจได้ว่าทำไมเลือกใบนี้
+        print(("[Card]    ใบ %d: %-22s %-5s %-18s score=%d"):format(
+            i, c.title, c.stack or "", tag, s))
+        if s > bestScore then best, bestScore, bestI, bestTag = c, s, i, tag end
+    end
+    print(("[Card] 🎴 เลือกใบ %d: %s %s  [%s]"):format(bestI, best.title, best.stack or "", bestTag))
+    clickHard(best.btn)
+    return true, best, bestTag
+end
+
+-- ---------- API ----------
+_G.AE_CARD_LIST = function()
+    local cards = listCards()
+    print("[Card] เจอการ์ด " .. #cards .. " ใบ")
+    for i, c in ipairs(cards) do
+        local s, tag = scoreCard(c)
+        print(("  %d) %-22s %-6s %s  (score %d)"):format(i, c.title, c.stack or "", tag, s))
+        if c.desc ~= "" then print("       " .. c.desc) end
+    end
+    return cards
+end
+
+_G.AE_CARD_PICK = function(n)
+    local cards = listCards()
+    local c = cards[n or 1]
+    if not c then warn("[Card] ❌ ไม่เจอการ์ดใบที่ " .. tostring(n)); return false end
+    print("[Card] 👆 กดเลือก: " .. c.title)
+    clickHard(c.btn)
+    return true
+end
+
+_G.AE_CARD_BEST = pickBest
+
+_G.AE_CARD_SEEN = function()
+    local names = {}
+    for n in pairs(seenCards) do table.insert(names, n) end
+    table.sort(names)
+    print("[Card] การ์ดที่เคยเจอ (" .. #names .. "):")
+    for _, n in ipairs(names) do print("   - " .. n) end
+    pcall(function() setclipboard(table.concat(names, "\n")) end)
+    return names
+end
+
+_G.AE_CARD_DUMP = function()
+    local btns  = findSelectBtns()
+    local roots = cardRoots(btns)
+    local out = { "===== AE Card Dump =====", "ปุ่ม Select Upgrade: " .. #btns }
+    for i, b in ipairs(btns) do
+        local c = readCard(b, roots[i] or b)
+        table.insert(out, ("\n--- ใบ %d ---"):format(i))
+        table.insert(out, "  root  : " .. c.root:GetFullName() ..
+            ("  [%dx%d]"):format(c.root.AbsoluteSize.X, c.root.AbsoluteSize.Y))
+        table.insert(out, "  title : " .. c.title)
+        table.insert(out, "  stack : " .. tostring(c.stack))
+        table.insert(out, "  desc  : " .. c.desc)
+        local s, tag = scoreCard(c)
+        table.insert(out, ("  score : %d  [%s]"):format(s, tag))
+    end
+    local s = table.concat(out, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Card] 📋 คัดลอกแล้ว")
+end
+
+local watching = false
+_G.AE_CARD_AUTO = function()
+    if watching then print("[Card] เฝ้าอยู่แล้ว"); return end
+    watching = true
+    print("[Card] 👀 เฝ้าการ์ดเลเวลอัพ... (หยุด: _G.AE_CARD_STOP())")
+    task.spawn(function()
+        while watching and MYGEN == _G.AE_SCRIPT_GEN do
+            local ok, err = pcall(function()
+                if #findSelectBtns() >= 1 then
+                    task.wait(0.5)                     -- รอ UI เด้งเสร็จ
+                    if #findSelectBtns() >= 1 then
+                        pickBest()
+                        -- รอจนการ์ดหาย (กันกดซ้ำ) สูงสุด 5 วิ
+                        local t0 = tick()
+                        repeat task.wait(0.3) until #findSelectBtns() == 0 or tick() - t0 > 5
+                    end
+                end
+            end)
+            if not ok then warn("[Card] err: " .. tostring(err)) end
+            task.wait(0.4)
+        end
+    end)
+end
+_G.AE_CARD_STOP = function() watching = false; print("[Card] ⏹ หยุดเฝ้าแล้ว") end
+
+print("[Card] ✅ พร้อม | อ่าน: _G.AE_CARD_LIST()  เลือกเอง: _G.AE_CARD_PICK(1)")
+print("[Card]           ดีที่สุด: _G.AE_CARD_BEST()  อัตโนมัติ: _G.AE_CARD_AUTO()")
+
+end
+do -- [EXP 3] HIRE
+-- ============================================================
+-- AE Checkpoint HIRE — จ้างตัวที่ checkpoint แล้ววางบน Payload (สุ่มตำแหน่ง)
+--   ลำดับที่ยิง (ได้จาก spy):
+--     NPCreplica:FireServer("Interacted")
+--     GameState  :FireServer("HireUnit", "HelperN")
+--     HotbarData :FireServer("SelectSlot", slot)      ⭐ ต้องเลือกช่องก่อนวาง
+--     GamePlayerData:FireServer("PlaceGameUnit", slot, CFrame)
+--   คำสั่ง:
+--     _G.AE_HIRE_LIST()   → ดูตัวที่จ้างได้ + ราคา + เงินพอไหม
+--     _G.AE_HIRE_RUN()    → จ้าง+วางอัตโนมัติ (Shadow ก่อน แล้วไล่ตัวที่เงินพอ)
+--     _G.AE_HIRE_ONE(key) → จ้างตัวเดียว เช่น _G.AE_HIRE_ONE("Helper2")
+--     _G.AE_HIRE_PLACE(slot) → ทดสอบวางช่องนั้นบนรถ (สุ่มจุด)
+-- ============================================================
+local player = game:GetService("Players").LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+
+-- ⭐ ลำดับตัวที่อยากจ้าง (บนสุดก่อน) — ใส่ได้ทั้งชื่อ Asset และชื่อที่โชว์ในเกม
+local HIRE_PRIORITY = {
+    "Shadow",       -- อันดับ 1  (Shadow (Divine))
+    "Berserk",      -- อันดับ 2  (8th Sword (Berserk) = KenpachiEVO)
+    "Kenpachi",     --            ชื่อ asset ของ Berserk
+}
+-- จ้างตัวอื่นที่ไม่อยู่ในลิสต์ด้วยไหม (ถ้าเงินเหลือ)
+local HIRE_OTHERS   = true
+-- กันเงินไว้อัพเกรดเท่าไหร่ (จ้างแล้วต้องเหลือไม่น้อยกว่านี้)
+local KEEP_YEN      = 0
+
+-- ---------- registry / replica ----------
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up) == "table" then
+            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
+            if registry then break end
+        end
+    end
+end)
+
+local function repData(rep)
+    local ok, d = pcall(function() return rep.Data end)
+    return (ok and type(d) == "table") and d or nil
+end
+
+local function eachReplica(token)
+    local out = {}
+    if not registry then return out end
+    for id, rep in pairs(registry) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == token then table.insert(out, { id = id, rep = rep, data = repData(rep) }) end
+    end
+    return out
+end
+
+local function getReplica(token)
+    local cand
+    for _, e in ipairs(eachReplica(token)) do
+        if rawget(e.rep, "write_lib") then return e.rep end
+        cand = cand or e.rep
+    end
+    return cand
+end
+
+local function getYen()
+    for _, e in ipairs(eachReplica("GamePlayerData")) do
+        if e.data and tonumber(e.data.Yen) then return tonumber(e.data.Yen) end
+    end
+    return 0
+end
+
+-- ---------- อ่านรายชื่อตัวที่จ้างได้ ----------
+-- โครงสร้างจริง: Helpers.HelperN = { Asset, Id, Level, MaxPlacements, Price, Shiny, Trait, StatPotential }
+local function parseHelper(key, info)
+    if type(info) ~= "table" then return { key = key, unit = tostring(info) } end
+    return {
+        key   = key,
+        unit  = tostring(info.Asset or info.Id or "?"),
+        cost  = tonumber(info.Price),
+        level = tonumber(info.Level),
+        trait = info.Trait and tostring(info.Trait) or nil,
+        maxPlace = tonumber(info.MaxPlacements) or 1,
+        raw   = info,
+    }
+end
+
+local findNPCForUnit   -- (นิยามข้างล่าง)
+
+local function getHelpers()
+    local gs = nil
+    for _, e in ipairs(eachReplica("GameState")) do gs = e; break end
+    if not gs or not gs.data or type(gs.data.Helpers) ~= "table" then return {}, gs end
+    local list = {}
+    for key, info in pairs(gs.data.Helpers) do
+        local h = parseHelper(key, info)
+        -- จับคู่กับ NPC ที่ยืนอยู่ → ได้ชื่อที่โชว์ในเกม เช่น "8th Sword (Berserk)"
+        local npc = findNPCForUnit(h.unit)
+        if npc then h.npc = npc; h.display = npc.name end
+        table.insert(list, h)
+    end
+    table.sort(list, function(a, b) return a.key < b.key end)
+    return list, gs
+end
+
+-- NPC ที่ checkpoint (เอาไว้ยิง Interacted)
+local function getCheckpointNPCs()
+    local out = {}
+    for _, e in ipairs(eachReplica("NPCData")) do
+        local d = e.data
+        local ex = d and d.ExtraData
+        if ex and tostring(ex.SectionName) == "Checkpoint" and tostring(ex.PartName):find("UnitHire") then
+            table.insert(out, { id = e.id, rep = e.rep, unit = tostring(d.Unit),
+                                name = tostring(d.Name), part = tostring(ex.PartName) })
+        end
+    end
+    return out
+end
+
+findNPCForUnit = function(unitName)
+    if not unitName then return nil end
+    local target = unitName:lower()
+    for _, n in ipairs(getCheckpointNPCs()) do
+        if n.unit:lower() == target then return n end
+    end
+    for _, n in ipairs(getCheckpointNPCs()) do
+        if n.unit:lower():find(target, 1, true) or target:find(n.unit:lower(), 1, true) then return n end
+    end
+    return nil
+end
+
+-- ---------- ช่องตัวละคร ----------
+-- ⭐ hotbar "ในด่าน" = HotbarData ที่ PlacementAllowed=true / MaxSlots=10 (id 67)
+--    ช่องปกติ  : Slots[n].ID = "Yuta#uuid"
+--    ช่องตัวจ้าง: Slots[n].ID = JSON  {"Asset":"IchigoEVO","IsHelper":true,...}
+local function gameHotbar()
+    local best
+    for _, e in ipairs(eachReplica("HotbarData")) do
+        local d = e.data
+        if d and type(d.Slots) == "table" then
+            if d.PlacementAllowed == true then return e end
+            if not best or (tonumber(d.MaxSlots) or 0) > (tonumber(best.data.MaxSlots) or 0) then best = e end
+        end
+    end
+    return best
+end
+
+local function parseSlotAsset(id)
+    if type(id) ~= "string" then return nil end
+    if id:find('"Asset"') then
+        -- JSON ของตัวจ้าง: มี "Asset" หลายที่ (EquipmentData ด้วย) → เอาตัวที่ไม่ใช่ Equipment
+        local first
+        for a in id:gmatch('"Asset"%s*:%s*"([^"]+)"') do
+            first = first or a
+            if not a:find("Equipment") then return a, true end
+        end
+        return first, true
+    end
+    return (id:gsub("#.*$", "")), false                -- ตัวปกติ "Yuta#uuid"
+end
+
+local function scanSlots()
+    local slots = {}
+    local hb = gameHotbar()
+    if not hb or not hb.data or type(hb.data.Slots) ~= "table" then return slots end
+    for k, v in pairs(hb.data.Slots) do
+        local n = tonumber(k)
+        if n and type(v) == "table" then
+            local asset = parseSlotAsset(v.ID)
+            local id = type(v.ID) == "string" and v.ID or ""
+            slots[n] = {
+                asset  = asset or "?",
+                atype  = tostring(v.AssetType or "?"),          -- Unit / Tome / Item ...
+                helper = id:find('"IsHelper":true', 1, true) ~= nil,
+                cost   = tonumber(v.PlacementCost),
+                limit  = tonumber(v.PlacementLimit),
+            }
+        end
+    end
+    return slots
+end
+
+-- ⭐ เฉพาะช่องที่เป็น "ตัวละคร" เท่านั้น (กันไปโดน ExpeditionTome / ไอเทม)
+local function isUnitSlot(info)
+    return info and info.atype == "Unit"
+end
+
+local function findSlotWithAsset(assetName)
+    if not assetName then return nil end
+    local a = assetName:lower():gsub("[^%w]", "")
+    local best
+    for slot, info in pairs(scanSlots()) do
+        if isUnitSlot(info) then
+            local name = tostring(info.asset):lower():gsub("[^%w]", "")
+            if name == a then return slot end
+            if name:find(a, 1, true) or a:find(name, 1, true) then best = best or slot end
+        end
+    end
+    return best
+end
+
+-- ช่องของตัวจ้าง (IsHelper + เป็นตัวละคร) ที่ยังไม่ได้วาง — เผื่อชื่อ asset ไม่ตรง
+local function findHelperSlot()
+    for slot, info in pairs(scanSlots()) do
+        if info.helper and isUnitSlot(info) then return slot, info.asset end
+    end
+    return nil
+end
+
+-- ⭐ ตัวที่จะใส่ Tome ให้ (ตามที่สั่ง: ยูตะ = Cursed Student)
+local TOME_TARGET = { "Yuta" }
+
+-- ปิดกล่อง "Apply <Trait> Tome — Select a unit to apply to!" ที่เด้งมาบัง
+local function closeTomePrompt()
+    local found
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and tostring(l.Text):find("Tome", 1, true)
+                   and tostring(l.Text):find("Apply", 1, true) then
+                    found = g; break
+                end
+            end
+        end
+        if found then break end
+    end
+    if not found then return false end
+    print("[Hire] ✖️ ปิดกล่อง Tome ที่เด้งมา")
+    for _, b in ipairs(found:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X <= 45 and b.AbsoluteSize.Y <= 45 then
+            pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+            pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+            task.wait(0.3)
+        end
+    end
+    -- ⚠️ ห้ามกด Escape — Roblox จะเปิดเมนูเกม (People/Settings/Leave) มาบังแทน
+    return true
+end
+
+local function selectSlot(slot)
+    local hb = gameHotbar()
+    if hb then pcall(function() hb.rep:FireServer("SelectSlot", slot) end) end
+    for _, e in ipairs(eachReplica("HotbarData")) do
+        if not hb or e.rep ~= hb.rep then pcall(function() e.rep:FireServer("SelectSlot", slot) end) end
+    end
+end
+
+-- ---------- สุ่มจุดวางบน Payload ----------
+local function getUnitArea()
+    local map = workspace:FindFirstChild("Map")
+    local pm = map and map:FindFirstChild("PayloadModel")
+    if not pm then return nil end
+    return pm:FindFirstChild("UnitArea") or pm:FindFirstChild("Primary") or pm.PrimaryPart
+end
+
+local function unitsNear(pos, radius)
+    local u = workspace:FindFirstChild("Units")
+    if not u then return 0 end
+    local n = 0
+    for _, m in ipairs(u:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p and (p - pos).Magnitude <= radius then n = n + 1 end
+    end
+    return n
+end
+
+-- ⭐ ความสูงที่วางได้ = ผิวบนของ Base (ไม่ใช่ UnitArea ซึ่งต่ำกว่า 1.5)
+--    ยืนยันจากของจริง: Base.topY = 1946.36 / จุดที่วางมือได้ = 1946.375
+local function payloadTopY()
+    local map = workspace:FindFirstChild("Map")
+    local pm = map and map:FindFirstChild("PayloadModel")
+    local base = pm and pm:FindFirstChild("Base")
+    if base then return base.Position.Y + base.Size.Y / 2 + 0.015 end
+    local area = getUnitArea()
+    if area then return area.Position.Y + area.Size.Y / 2 + 1.5 end
+    return nil
+end
+
+-- จุดที่วางไปแล้วรอบนี้ (workspace.Units ว่างเปล่าในโหมด Expedition เลยจำเอง)
+local placedSpots = {}
+
+-- ⭐ โซนวางบนรถ: หัวรถ (1) และท้ายรถ (2) เท่านั้น — ห้ามวางกลางรถ
+--    กลางรถ = ช่วง |z| < MID_EXCLUDE เท่าของครึ่งความยาว
+local MID_EXCLUDE  = 0.40   -- กันกลางรถ 40% ของครึ่งความยาว (ทั้งสองฝั่ง)
+local HOT_SIDE_ODDS = 0.7   -- 70% วางฝั่งที่มอนมาเยอะ (ท้ายรถ/ฝั่งบอส)
+
+-- ฝั่งไหนมอนเยอะ → ดูจากตำแหน่งมอนจริงเทียบแกนรถ
+local function hotSideSign(area)
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    local sum, n = 0, 0
+    for _, m in ipairs(enemies:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok and p then
+            local lp = area.CFrame:PointToObjectSpace(p)
+            if math.abs(lp.Z) < 400 then sum = sum + lp.Z; n = n + 1 end
+        end
+    end
+    if n == 0 then return nil end
+    return (sum >= 0) and 1 or -1
+end
+
+local function randomPayloadCF()
+    local area = getUnitArea()
+    local y = payloadTopY()
+    if not area or not y then return nil end
+    local halfX = math.max(area.Size.X / 2 - 1.5, 0.5)
+    local halfZ = math.max(area.Size.Z / 2 - 2.0, 0.5)
+    local minZ  = halfZ * MID_EXCLUDE          -- ใกล้กว่านี้ = กลางรถ ห้ามวาง
+    local hot   = hotSideSign(area)
+    local best, bestGap = nil, -math.huge
+    for _ = 1, 20 do
+        local dx = (math.random() * 2 - 1) * halfX
+        -- เลือกฝั่ง: เน้นฝั่งมอนเยอะ ถ้าไม่รู้ก็สุ่ม 50/50
+        local sign
+        if hot then sign = (math.random() < HOT_SIDE_ODDS) and hot or -hot
+        else sign = (math.random() < 0.5) and 1 or -1 end
+        local dz = sign * (minZ + math.random() * (halfZ - minZ))
+        local p  = (area.CFrame * CFrame.new(dx, 0, dz)).Position
+        local pos = Vector3.new(p.X, y, p.Z)
+        -- ห่างจากตัวที่วางไปแล้ว (ทั้งที่จำไว้เอง และที่เจอใน workspace.Units)
+        local gap = math.huge
+        for _, sp in ipairs(placedSpots) do
+            gap = math.min(gap, (Vector3.new(sp.X, 0, sp.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude)
+        end
+        if unitsNear(pos, 3) > 0 then gap = 0 end
+        if gap >= 4 then return CFrame.new(pos) end
+        if gap > bestGap then best, bestGap = CFrame.new(pos), gap end
+    end
+    return best
+end
+
+-- ---------- วางตัวบนรถ ----------
+-- เช็คสำเร็จ 2 ทาง: (1) ช่องนั้นหายจาก hotbar  (2) มีตัวโผล่ใกล้จุดที่วาง
+local function slotExists(slot)
+    return scanSlots()[slot] ~= nil
+end
+
+local function placeOnPayload(slot, label)
+    local gpd = getReplica("GamePlayerData")
+    if not gpd then warn("[Hire] ❌ ไม่เจอ GamePlayerData"); return false end
+    local hadSlot = slotExists(slot)
+    for attempt = 1, 6 do
+        local cf = randomPayloadCF()
+        if not cf then warn("[Hire] ❌ ไม่เจอ UnitArea บน Payload"); return false end
+        local before = unitsNear(cf.Position, 4)
+        selectSlot(slot)
+        task.wait(0.3)
+        pcall(function() gpd:FireServer("PlaceGameUnit", slot, cf) end)
+        print(("[Hire]    📤 ยิงวาง ช่อง %d → (%.2f, %.2f, %.2f)")
+            :format(slot, cf.Position.X, cf.Position.Y, cf.Position.Z))
+        task.wait(1.2)
+        local gone = hadSlot and not slotExists(slot)
+        if gone or unitsNear(cf.Position, 4) > before then
+            table.insert(placedSpots, cf.Position)      -- จำไว้ กันวางทับรอบหน้า
+            print(("[Hire] ✅ วาง %s (ช่อง %d) สำเร็จ %s")
+                :format(label or "?", slot, gone and "(ช่องหายไปแล้ว)" or "(เจอตัวใหม่)"))
+            return true
+        end
+        print(("[Hire] ↻ วางไม่ติด ลองจุดใหม่ (รอบ %d)"):format(attempt))
+        task.wait(0.6)
+    end
+    warn("[Hire] ⚠️ วางไม่สำเร็จ (ช่อง " .. tostring(slot) .. ") → ลอง _G.AE_HIRE_AREA() ดูตัวเลข")
+    return false
+end
+
+-- 🔍 ตรวจพื้นที่วางบนรถ (เทียบกับจุดที่วางมือได้จริง)
+_G.AE_HIRE_AREA = function()
+    local buf = {}
+    local function p(s) print(s); table.insert(buf, s) end
+    local map = workspace:FindFirstChild("Map")
+    local pm = map and map:FindFirstChild("PayloadModel")
+    p("===== PAYLOAD AREA =====")
+    if not pm then p("❌ ไม่เจอ Workspace.Map.PayloadModel"); return end
+    for _, part in ipairs(pm:GetChildren()) do
+        if part:IsA("BasePart") then
+            p(("%-14s pos=(%.2f, %.2f, %.2f) size=(%.2f, %.2f, %.2f) topY=%.2f collide=%s trans=%.2f")
+                :format(part.Name, part.Position.X, part.Position.Y, part.Position.Z,
+                        part.Size.X, part.Size.Y, part.Size.Z,
+                        part.Position.Y + part.Size.Y / 2, tostring(part.CanCollide), part.Transparency))
+        end
+    end
+    local area = getUnitArea()
+    if area then
+        p("\nUnitArea ที่ใช้ = " .. area.Name)
+        for i = 1, 3 do
+            local cf = randomPayloadCF()
+            if cf then p(("  สุ่มจุด %d = (%.2f, %.2f, %.2f)"):format(i, cf.Position.X, cf.Position.Y, cf.Position.Z)) end
+        end
+    end
+    p("\nจุดที่วางมือได้จริง (จาก spy) = (2906.51, 1946.375, 2493.10)")
+    p("                              = (2906.44, 1946.375, 2484.68)")
+    local u = workspace:FindFirstChild("Units")
+    p(("\nworkspace.Units = %s ตัว"):format(u and #u:GetChildren() or "ไม่มีโฟลเดอร์"))
+    if u then
+        for _, m in ipairs(u:GetChildren()) do
+            local ok, pos = pcall(function() return m:GetPivot().Position end)
+            if ok then p(("   %-28s (%.2f, %.2f, %.2f)"):format(m.Name, pos.X, pos.Y, pos.Z)) end
+        end
+    end
+    p("\nช่องตัวละคร:")
+    for slot, i in pairs(scanSlots()) do
+        p(("   ช่อง %d = %s %s"):format(slot, i.asset, i.helper and "⭐ตัวจ้าง" or ""))
+    end
+    pcall(function() setclipboard(table.concat(buf, "\n")) end)
+    print("[Hire] 📋 คัดลอกแล้ว")
+end
+
+-- ---------- จ้าง 1 ตัว ----------
+local function hireOne(h)
+    local gs = getReplica("GameState")
+    if not gs then warn("[Hire] ❌ ไม่เจอ GameState"); return false end
+
+    local npc = findNPCForUnit(h.unit)
+    if npc then
+        pcall(function() npc.rep:FireServer("Interacted") end)
+        print(("[Hire] 💬 คุยกับ %s (%s)"):format(npc.name, npc.part))
+        task.wait(0.6)
+    else
+        print("[Hire] ⚠️ ไม่เจอ NPC ของ " .. tostring(h.unit) .. " — ลองจ้างตรงๆ")
+    end
+
+    local before = getYen()
+    pcall(function() gs:FireServer("HireUnit", h.key) end)
+    print(("[Hire] 📤 HireUnit %s (%s)"):format(h.key, tostring(h.unit)))
+    task.wait(1.2)
+
+    local after = getYen()
+    if after < before then
+        print(("[Hire] ✅ จ้างสำเร็จ — เงิน %d → %d"):format(before, after))
+    else
+        print(("[Hire] ⚠️ เงินไม่ลด (%d) — อาจจ้างไม่สำเร็จ แต่จะลองหาช่องต่อ"):format(after))
+    end
+
+    -- มี Tome อยู่ → ใส่ให้ยูตะก่อน (ไม่งั้นกล่อง "Select a unit" จะบังการวาง)
+    if _G.AE_TOME_USE then pcall(_G.AE_TOME_USE) end
+    closeTomePrompt()   -- กันกล่อง Tome บังอยู่
+
+    -- หาช่องที่ตัวใหม่เข้าไป (ชื่อ asset ก่อน → ไม่เจอใช้ช่องที่เป็นตัวจ้าง IsHelper)
+    local slot
+    for _ = 1, 8 do
+        slot = findSlotWithAsset(h.unit)
+        if not slot then
+            local hs, hasset = findHelperSlot()
+            if hs then slot = hs; print("[Hire] 🔎 ใช้ช่องตัวจ้าง " .. hs .. " (" .. tostring(hasset) .. ")") end
+        end
+        if slot then break end
+        task.wait(0.5)
+    end
+    if not slot then
+        warn("[Hire] ⚠️ หาช่องของ " .. tostring(h.unit) .. " ไม่เจอ — ข้ามการวาง")
+        return false
+    end
+    print(("[Hire] 📦 %s อยู่ช่อง %d → วางบนรถ"):format(tostring(h.unit), slot))
+    return placeOnPayload(slot, h.unit)
+end
+
+-- ---------- จัดลำดับ ----------
+local function rankOf(h)
+    -- เทียบทั้งชื่อ asset (KenpachiEVO) และชื่อที่โชว์ในเกม (8th Sword (Berserk))
+    local u = (tostring(h.unit) .. " " .. tostring(h.display or "")):lower()
+    for i, p in ipairs(HIRE_PRIORITY) do
+        if u:find(p:lower(), 1, true) then return i end
+    end
+    return HIRE_OTHERS and 100 or nil
+end
+
+-- ============================================================
+-- API
+-- ============================================================
+_G.AE_HIRE_LIST = function()
+    local list, gs = getHelpers()
+    local yen = getYen()
+    print(("[Hire] 💰 เงิน %d | สถานะ %s"):format(yen, gs and gs.data and tostring(gs.data.Status) or "?"))
+    if #list == 0 then print("[Hire] ไม่มีตัวให้จ้าง (ไม่ได้อยู่ checkpoint?)"); return list end
+    for _, h in ipairs(list) do
+        local r = rankOf(h)
+        print(("  %-8s %-14s %-26s ราคา %-6s Lv%-3s %-14s %s | %s")
+            :format(h.key, tostring(h.unit), tostring(h.display or "-"),
+                    tostring(h.cost or "?"), tostring(h.level or "?"), tostring(h.trait or "-"),
+                    (h.cost and yen >= h.cost + KEEP_YEN) and "✅ ซื้อได้" or "❌ เงินไม่พอ",
+                    r and ("ลำดับ " .. r) or "ข้าม"))
+    end
+    print("[Hire] NPC ที่ checkpoint:")
+    for _, n in ipairs(getCheckpointNPCs()) do
+        print(("   id=%s %-14s unit=%s"):format(tostring(n.id), n.part, n.unit))
+    end
+    print("[Hire] ช่องตัวละครในด่านตอนนี้:")
+    local slots = scanSlots()
+    for slot = 1, 10 do
+        local i = slots[slot]
+        if i then
+            print(("   ช่อง %d = %-16s [%s] %s ค่าวาง %s"):format(
+                slot, i.asset, i.atype, i.helper and "⭐ตัวจ้าง" or "        ", tostring(i.cost or "-")))
+        end
+    end
+    return list
+end
+
+-- 🔍 dump โครงสร้าง Helpers จริง (print ทีละบรรทัด กันข้อความโดนตัด)
+_G.AE_HIRE_RAW = function()
+    local _, gs = getHelpers()
+    if not gs or not gs.data or type(gs.data.Helpers) ~= "table" then
+        warn("[Hire] ❌ ไม่เจอ GameState.Helpers"); return
+    end
+    local buf = {}
+    local function p(s) print(s); table.insert(buf, s) end
+    p("===== HELPERS RAW =====")
+    local function walk(t, prefix, depth)
+        if depth > 4 then p(prefix .. " = {...ลึกเกิน}"); return end
+        local keys = {}
+        for k in pairs(t) do table.insert(keys, k) end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        for _, k in ipairs(keys) do
+            local v = t[k]
+            local path = prefix .. "." .. tostring(k)
+            if type(v) == "table" then
+                local n = 0
+                for _ in pairs(v) do n = n + 1 end
+                p(("%s = <table %d>"):format(path, n))
+                walk(v, path, depth + 1)
+            else
+                p(("%s = %s (%s)"):format(path, tostring(v), type(v)))
+            end
+        end
+    end
+    walk(gs.data.Helpers, "Helpers", 1)
+    p("===== NPC ที่ checkpoint =====")
+    for _, n in ipairs(getCheckpointNPCs()) do
+        p(("  id=%s %s unit=%s name=%s"):format(tostring(n.id), n.part, n.unit, n.name))
+    end
+    p(("===== เงิน %d ====="):format(getYen()))
+    pcall(function() setclipboard(table.concat(buf, "\n")) end)
+    print("[Hire] 📋 คัดลอกแล้ว")
+end
+
+-- 🔍 dump ทุกที่ที่อาจเก็บ "ช่องตัวละครในด่าน" (หาว่า IchigoEVO อยู่ช่อง 7 ตรงไหน)
+_G.AE_HIRE_SLOTS = function()
+    local buf = {}
+    local function p(s) print(s); table.insert(buf, s) end
+    local function walk(t, prefix, depth)
+        if depth > 3 then return end
+        local keys = {}
+        for k in pairs(t) do table.insert(keys, k) end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        for _, k in ipairs(keys) do
+            local v = t[k]
+            local path = prefix .. "." .. tostring(k)
+            if type(v) == "table" then
+                p(path .. " = <table>")
+                walk(v, path, depth + 1)
+            else
+                p(("%s = %s (%s)"):format(path, tostring(v), type(v)))
+            end
+        end
+    end
+
+    p("===== SLOT SOURCES =====")
+    for _, tok in ipairs({ "HotbarData", "GamePlayerData", "GameState", "SessionData" }) do
+        for _, e in ipairs(eachReplica(tok)) do
+            p(("\n--- %s (id=%s) ---"):format(tok, tostring(e.id)))
+            if e.data then
+                if tok == "GameState" then
+                    -- เอาเฉพาะที่เกี่ยว (GameState ใหญ่มาก)
+                    for _, f in ipairs({ "Helpers", "Players", "Grid" }) do
+                        if type(e.data[f]) == "table" then
+                            p("  " .. f .. " = <table>")
+                        end
+                    end
+                else
+                    walk(e.data, "  " .. tok, 1)
+                end
+            else
+                p("  (ไม่มี Data)")
+            end
+        end
+    end
+
+    p("\n===== UI ช่องตัวละคร (BottomHUD) =====")
+    local bh = player.PlayerGui:FindFirstChild("BottomHUD")
+    if bh then
+        for _, d in ipairs(bh:GetDescendants()) do
+            if d:IsA("GuiButton") or (d:IsA("Frame") and tonumber(d.Name)) then
+                local attrs = {}
+                for k, v in pairs(d:GetAttributes()) do table.insert(attrs, k .. "=" .. tostring(v)) end
+                if #attrs > 0 then
+                    p(("  %s [%s] %s"):format(d.Name, d.ClassName, table.concat(attrs, " ")))
+                end
+            end
+        end
+    else
+        p("  ไม่เจอ BottomHUD")
+    end
+
+    pcall(function() setclipboard(table.concat(buf, "\n")) end)
+    print("[Hire] 📋 คัดลอกแล้ว")
+end
+
+_G.AE_HIRE_ONE = function(key)
+    local list = getHelpers()
+    for _, h in ipairs(list) do
+        if h.key == key then return hireOne(h) end
+    end
+    warn("[Hire] ❌ ไม่เจอ " .. tostring(key))
+    return false
+end
+
+_G.AE_HIRE_PLACE = function(slot)
+    return placeOnPayload(slot, "ช่อง " .. tostring(slot))
+end
+
+-- 🎯 ทำทั้งหมดที่ checkpoint: ไล่จ้างตามลำดับ + วางบนรถ
+_G.AE_HIRE_RUN = function()
+    local done = {}
+    for round = 1, 6 do
+        local list = getHelpers()
+        if #list == 0 then
+            if round == 1 then print("[Hire] ไม่มีตัวให้จ้างที่ checkpoint นี้") end
+            break
+        end
+        -- คัดเฉพาะที่ยังไม่จ้าง + เงินพอ แล้วเรียงตามลำดับ (ลำดับเดียวกันเอาถูกก่อน)
+        local pool = {}
+        for _, h in ipairs(list) do
+            local r = rankOf(h)
+            if r and not done[h.key] and not h.hired then
+                local cost = h.cost or math.huge
+                if getYen() >= cost + KEEP_YEN then
+                    h.rank = r; table.insert(pool, h)
+                end
+            end
+        end
+        if #pool == 0 then
+            print(("[Hire] 💰 เงิน %d — ไม่มีตัวที่ซื้อได้แล้ว"):format(getYen()))
+            break
+        end
+        table.sort(pool, function(a, b)
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            return (a.cost or 0) < (b.cost or 0)
+        end)
+        local h = pool[1]
+        print(("[Hire] 🛒 จ้าง %s [%s] (%s) ราคา %s | เงิน %d")
+            :format(tostring(h.display or h.unit), tostring(h.unit), h.key, tostring(h.cost), getYen()))
+        hireOne(h)
+        done[h.key] = true
+        task.wait(1)
+    end
+    -- 📖 มี Tome ติดมา → ใส่ให้ยูตะ
+    if findTomeSlot() then
+        _G.AE_TOME_USE(TOME_TARGET)
+        task.wait(0.5)
+    end
+
+    -- 🧹 กวาดตัวจ้างที่ยังค้างในช่อง (วางไม่ติดตอนแรก) ให้ลงรถให้หมด
+    closeTomePrompt()
+    for round = 1, 4 do
+        local slot, asset = findHelperSlot()
+        if not slot then break end
+        print(("[Hire] 🧹 ยังมีตัวจ้างค้างช่อง %d (%s) → วางลงรถ"):format(slot, tostring(asset)))
+        if not placeOnPayload(slot, asset) then task.wait(1) end
+        task.wait(0.5)
+    end
+
+    print("[Hire] 🏁 จบขั้นตอนจ้างตัวที่ checkpoint")
+end
+
+-- ============================================================
+-- 📖 TOME — ใส่ให้ยูตะอัตโนมัติ
+--   ลำดับจริง (จาก spy):  HotbarData:FireServer("SelectSlot", ช่องTome)
+--                         <replica ที่เพิ่งเกิด>:FireServer("Response", "<GameUnit ID>")
+--   replica ตัวตอบเป็นตัวชั่วคราว (id เปลี่ยนทุกครั้ง) → หาโดยเทียบ registry ก่อน/หลัง
+-- ============================================================
+local function findTomeSlot()
+    for slot, i in pairs(scanSlots()) do
+        if i.atype ~= "Unit" and tostring(i.asset):lower():find("tome", 1, true) then
+            return slot, i.asset
+        end
+    end
+    for slot, i in pairs(scanSlots()) do
+        if tostring(i.atype):lower():find("tome", 1, true) then return slot, i.asset end
+    end
+    return nil
+end
+
+-- GameUnit ID ของตัวที่จะใส่ Tome (ข้ามโคลนซัมมอน)
+local function findUnitIdFor(assets)
+    local me = player.Name
+    local best, bestScore
+    for _, e in ipairs(eachReplica("GameUnit")) do
+        local d = e.data
+        if d and (tostring(d.Owner) == me) then
+            local isClone = d.IsClone or d.Unupgradeable or d.HiddenUnitManager
+            local asset = d.UnitData and tostring(d.UnitData.Asset) or ""
+            if not isClone and asset ~= "" then
+                local a = asset:lower()
+                for _, want in ipairs(assets) do
+                    local w = want:lower()
+                    local score
+                    if a == w then score = 10000
+                    elseif a:sub(1, #w) == w then score = 5000 - #a
+                    elseif a:find(w, 1, true) then score = 1000 - #a end
+                    if score and (not bestScore or score > bestScore) then
+                        best, bestScore = d.ID, score
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+
+local function registrySnapshot()
+    local ids = {}
+    if registry then for id in pairs(registry) do ids[id] = true end end
+    return ids
+end
+
+_G.AE_TOME_USE = function(assets)
+    assets = assets or TOME_TARGET
+    local slot, tomeName = findTomeSlot()
+    if not slot then return false end
+    local unitId = findUnitIdFor(assets)
+    if not unitId then
+        print("[Tome] ⚠️ ยังไม่เจอตัวเป้าหมายในสนาม (" .. table.concat(assets, "/") .. ") — ยังไม่ใช้ Tome")
+        return false
+    end
+
+    print(("[Tome] 📖 ใช้ %s (ช่อง %d) ใส่ให้ %s (ID %s)")
+        :format(tostring(tomeName), slot, table.concat(assets, "/"), tostring(unitId)))
+
+    local before = registrySnapshot()
+    selectSlot(slot)
+    task.wait(0.9)
+
+    -- replica ที่เพิ่งเกิด = ตัวรับคำตอบ
+    local fired = false
+    if registry then
+        for id, rep in pairs(registry) do
+            if not before[id] then
+                local ok = pcall(function() rep:FireServer("Response", tostring(unitId)) end)
+                if ok then
+                    local tk = select(2, pcall(function() return rep.Token end))
+                    print(("[Tome]    📤 ตอบผ่าน replica id=%s Token=%s"):format(tostring(id), tostring(tk)))
+                    fired = true
+                end
+            end
+        end
+    end
+    -- สำรอง: ยิงใส่ replica ที่ token เกี่ยวกับ prompt/selection
+    if not fired and registry then
+        for _, rep in pairs(registry) do
+            local ok, tk = pcall(function() return rep.Token end)
+            if ok and tk then
+                local t = tostring(tk):lower()
+                if t:find("prompt") or t:find("select") or t:find("response") or t:find("request") then
+                    pcall(function() rep:FireServer("Response", tostring(unitId)) end)
+                    fired = true
+                end
+            end
+        end
+    end
+
+    task.wait(1)
+    if not findTomeSlot() then
+        print("[Tome] ✅ ใส่ Tome สำเร็จ (ช่องหายแล้ว)")
+        return true
+    end
+    print("[Tome] ⚠️ ยังมี Tome ค้างอยู่ — ปิดกล่องไว้ก่อน")
+    closeTomePrompt()
+    return false
+end
+
+-- ============================================================
+-- 📖 TOME SPY — ดักวิธีใช้ (เผื่อเกมเปลี่ยนวิธี)
+--    _G.AE_TOME_SPY()  → เริ่มดัก แล้วเปิด Tome ใส่ให้ยูตะด้วยมือ
+--    _G.AE_TOME_STOP() → หยุด + คัดลอก log
+-- ============================================================
+local tomeQ, tomeOn, tomeLog = {}, false, {}
+_G.AE_TOME_SPY = function()
+    if tomeOn then print("[Tome] ดักอยู่แล้ว"); return end
+    tomeOn = true
+    table.clear(tomeQ); table.clear(tomeLog)
+    local ev = RS:WaitForChild("RemoteEvents"):WaitForChild("ReplicaSignal")
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        if tomeOn and self == ev and getnamecallmethod() == "FireServer" then
+            table.insert(tomeQ, { t = tick(), args = table.pack(...) })   -- เก็บคิวอย่างเดียว (กัน kick 267)
+        end
+        return old(self, ...)
+    end)
+    print("[Tome] 🔍 เริ่มดักแล้ว — ตอนนี้ทำมือ: กดใช้ Tome → เลือกยูตะ")
+    print("[Tome]    เสร็จแล้วพิมพ์ _G.AE_TOME_STOP()")
+    task.spawn(function()
+        local t0 = tick()
+        while tomeOn do
+            while #tomeQ > 0 do
+                local e = table.remove(tomeQ, 1)
+                local parts = {}
+                for i = 1, e.args.n do
+                    local v = e.args[i]
+                    parts[i] = (type(v) == "string") and ('"' .. v .. '"') or tostring(v)
+                end
+                local line = ("[TOME %5.1fs] %s"):format(e.t - t0, table.concat(parts, ", "))
+                print(line); table.insert(tomeLog, line)
+            end
+            task.wait(0.2)
+        end
+    end)
+end
+_G.AE_TOME_STOP = function()
+    tomeOn = false
+    -- ช่อง Tome ที่มีตอนนี้ + ตัวที่วางอยู่ (เอาไว้แมพ id ใน log)
+    table.insert(tomeLog, "--- ช่องตอนนี้ ---")
+    for slot, i in pairs(scanSlots()) do
+        table.insert(tomeLog, ("  ช่อง %d = %s [%s]"):format(slot, i.asset, i.atype))
+    end
+    table.insert(tomeLog, "--- GameUnit ที่วางอยู่ ---")
+    for _, e in ipairs(eachReplica("GameUnit")) do
+        local d = e.data
+        if d then
+            table.insert(tomeLog, ("  id=%s ID=%s Owner=%s Asset=%s")
+                :format(tostring(e.id), tostring(d.ID), tostring(d.Owner),
+                        tostring(d.UnitData and d.UnitData.Asset)))
+        end
+    end
+    local s = table.concat(tomeLog, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Tome] 📋 คัดลอกแล้ว — ส่งมาให้ดู")
+end
+
+print("[Hire] ✅ พร้อม — ที่ checkpoint พิมพ์ _G.AE_HIRE_LIST() ดูก่อน แล้วค่อย _G.AE_HIRE_RUN()")
+
+end
+do -- [EXP 4] ENTER
+-- ============================================================
+-- AE Expedition ENTER — จากล็อบบี้ → วาป → กด E → เลือกแมพ/ความยาก → เข้าด่าน
+--   _G.AE_ENTER_TP()             วาปไปจุดเข้า Expedition
+--   _G.AE_ENTER_PROMPT()         กด E (View Gamemode)
+--   _G.AE_ENTER_MAP("School Grounds")   เลือกหมวดแมพ
+--   _G.AE_ENTER_DIFF(3)          ปรับความยาก 1-3
+--   _G.AE_ENTER_SELECT()         กด Select Stage
+--   _G.AE_ENTER_START()          กด Start (หน้าปาร์ตี้)
+--   _G.AE_ENTER_RUN("School Grounds", 3)   ⭐ ทำทั้งหมดรวดเดียว
+--   _G.AE_ENTER_DUMP()           ดูปุ่มทั้งหมดในหน้านี้ (ตอนหาไม่เจอ)
+-- ============================================================
+local Players = game:GetService("Players")
+local player  = Players.LocalPlayer
+local VIM     = game:GetService("VirtualInputManager")
+local inset   = game:GetService("GuiService"):GetGuiInset()
+
+-- จุดยืนหน้าประตู Expedition ในล็อบบี้
+local ENTER_CFRAME = CFrame.new(10000.318359375, 14.128889083862305, -1.0543943643569946)
+
+local DEFAULT_MAP  = "School Grounds"
+local DEFAULT_DIFF = 3
+
+-- ---------- utils ----------
+local function txt(o)
+    if o:IsA("TextLabel") or o:IsA("TextButton") then
+        return (tostring(o.Text):gsub("<[^>]->", ""))
+    end
+    return ""
+end
+
+local function clickHard(b)
+    pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    task.wait(0.15)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X / 2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y / 2 + inset.Y
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+-- ปุ่มที่มองเห็นทั้งหมด (พร้อมข้อความรวมลูก)
+local function visibleButtons()
+    local out = {}
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, b in ipairs(g:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 3 then
+                    local parts = { txt(b) }
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible then table.insert(parts, txt(l)) end
+                    end
+                    table.insert(out, { btn = b, text = table.concat(parts, " | ") })
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function findBtn(needle, timeout)
+    local t0 = tick()
+    local want = needle:lower()
+    repeat
+        local exact, loose
+        for _, e in ipairs(visibleButtons()) do
+            local t = e.text:lower()
+            if t:gsub("^%s*|*%s*", "") == want or (" " .. t .. " "):find("| " .. want .. " |", 1, true) then
+                exact = exact or e.btn
+            elseif t:find(want, 1, true) then
+                loose = loose or e.btn
+            end
+        end
+        if exact then return exact end
+        if loose then return loose end
+        task.wait(0.3)
+    until tick() - t0 > (timeout or 5)
+    return nil
+end
+
+local function clickText(needle, timeout)
+    local b = findBtn(needle, timeout)
+    if not b then warn("[Enter] ❌ ไม่เจอปุ่ม '" .. needle .. "'"); return false end
+    clickHard(b)
+    print("[Enter] 👆 กด '" .. needle .. "'")
+    return true
+end
+
+-- ---------- 1) วาป ----------
+_G.AE_ENTER_TP = function()
+    local ch = player.Character or player.CharacterAdded:Wait()
+    local hrp = ch:WaitForChild("HumanoidRootPart", 5)
+    if not hrp then warn("[Enter] ❌ ไม่เจอ HumanoidRootPart"); return false end
+    hrp.CFrame = ENTER_CFRAME
+    print("[Enter] 🚀 วาปไปจุดเข้า Expedition แล้ว")
+    return true
+end
+
+-- ---------- 2) กด E (ProximityPrompt) ----------
+local function findEnterPrompt()
+    local best, bestDist
+    local pos = ENTER_CFRAME.Position
+    for _, p in ipairs(workspace:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and p.Enabled then
+            local part = p.Parent
+            local ok, ppos = pcall(function()
+                return part:IsA("BasePart") and part.Position
+                    or (part:IsA("Model") and part:GetPivot().Position)
+            end)
+            if ok and ppos then
+                local d = (ppos - pos).Magnitude
+                local hit = tostring(p.ObjectText):find("Expedition")
+                         or tostring(p.ActionText):find("Gamemode")
+                if hit and d < 200 then return p end
+                if d < 60 and (not bestDist or d < bestDist) then best, bestDist = p, d end
+            end
+        end
+    end
+    return best
+end
+
+_G.AE_ENTER_PROMPT = function()
+    local p = findEnterPrompt()
+    if p then
+        print(("[Enter] 🎯 เจอ prompt: %s / %s"):format(tostring(p.ObjectText), tostring(p.ActionText)))
+        local ok = pcall(function() fireproximityprompt(p, 1) end)
+        if ok then task.wait(0.8) end
+    else
+        print("[Enter] ⚠️ ไม่เจอ ProximityPrompt — กดปุ่ม E แทน")
+    end
+    -- กด E จริงด้วย (เผื่อ fireproximityprompt ใช้ไม่ได้)
+    VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.9)
+    VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    print("[Enter] ⌨️ กด E")
+    return true
+end
+
+-- ---------- 3) เลือกหมวดแมพ ----------
+_G.AE_ENTER_MAP = function(mapName)
+    mapName = mapName or DEFAULT_MAP
+    local b = findBtn(mapName, 6)
+    if not b then warn("[Enter] ❌ ไม่เจอแมพ '" .. mapName .. "'"); return false end
+    clickHard(b)
+    print("[Enter] 🗺️ เลือกแมพ " .. mapName)
+    task.wait(0.6)
+    return true
+end
+
+-- ---------- 4) ปรับความยาก ----------
+local function readDifficulty()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local n = txt(l):match("Difficulty%s*(%d+)")
+                    if n then return tonumber(n), l end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+_G.AE_ENTER_DIFF = function(target)
+    target = target or DEFAULT_DIFF
+    local cur, label = readDifficulty()
+    if not cur then warn("[Enter] ❌ ไม่เจอช่อง Difficulty"); return false end
+    print(("[Enter] ⚙️ ความยากตอนนี้ %d → ต้องการ %d"):format(cur, target))
+
+    -- หาปุ่มลูกศร ซ้าย/ขวา ที่อยู่แถวเดียวกับป้าย Difficulty
+    local holder = label.Parent
+    for _ = 1, 3 do
+        if holder and holder.Parent and holder.Parent:IsA("GuiObject") then holder = holder.Parent end
+    end
+    local arrows = {}
+    for _, b in ipairs(holder:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 3 then
+            table.insert(arrows, b)
+        end
+    end
+    table.sort(arrows, function(a, b) return a.AbsolutePosition.X < b.AbsolutePosition.X end)
+    if #arrows < 2 then warn("[Enter] ❌ ไม่เจอปุ่มลูกศรความยาก"); return false end
+    local left, right = arrows[1], arrows[#arrows]
+
+    for _ = 1, 6 do
+        cur = readDifficulty()
+        if not cur or cur == target then break end
+        clickHard(cur < target and right or left)
+        task.wait(0.5)
+    end
+    cur = readDifficulty()
+    print(("[Enter] ⚙️ ความยากตอนนี้ = %s"):format(tostring(cur)))
+    return cur == target
+end
+
+-- ---------- 5) เข้าด่าน ----------
+_G.AE_ENTER_SELECT = function() return clickText("Select Stage", 6) end
+_G.AE_ENTER_START  = function() return clickText("Start", 8) end
+
+-- ---------- 🔍 dump ----------
+_G.AE_ENTER_DUMP = function()
+    local out = { "===== ปุ่มที่เห็นตอนนี้ =====" }
+    for _, e in ipairs(visibleButtons()) do
+        table.insert(out, ("  [%4d,%4d] %s"):format(e.btn.AbsolutePosition.X, e.btn.AbsolutePosition.Y, e.text))
+    end
+    local d = readDifficulty()
+    table.insert(out, "\nDifficulty ที่อ่านได้ = " .. tostring(d))
+    local s = table.concat(out, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Enter] 📋 คัดลอกแล้ว")
+end
+
+-- ---------- ⭐ ทำทั้งหมด ----------
+_G.AE_ENTER_RUN = function(mapName, diff)
+    mapName = mapName or DEFAULT_MAP
+    diff    = diff or DEFAULT_DIFF
+    print(("[Enter] ▶️ เข้าด่าน %s ความยาก %d"):format(mapName, diff))
+
+    task.wait(2)                      -- รอ 2 วิ ตามที่ใช้จริง
+    _G.AE_ENTER_TP()
+    task.wait(2)
+
+    _G.AE_ENTER_PROMPT()
+    task.wait(2)
+
+    if not findBtn("Select Stage", 6) then
+        print("[Enter] ↻ ยังไม่เข้าหน้าเลือกด่าน → กด E ซ้ำ")
+        _G.AE_ENTER_PROMPT()
+        task.wait(2)
+    end
+
+    _G.AE_ENTER_MAP(mapName)
+    task.wait(0.5)
+    _G.AE_ENTER_DIFF(diff)
+    task.wait(0.5)
+
+    if not _G.AE_ENTER_SELECT() then return false end
+    task.wait(2.5)
+
+    -- หน้าปาร์ตี้ → Start
+    if not _G.AE_ENTER_START() then
+        task.wait(2)
+        _G.AE_ENTER_START()
+    end
+    print("[Enter] ✅ กด Start แล้ว — รอเข้าด่าน")
+    return true
+end
+
+print("[Enter] ✅ พร้อม — เทส: _G.AE_ENTER_RUN(\"School Grounds\", 3)")
+print("[Enter]    ทีละขั้น: _G.AE_ENTER_TP() → _G.AE_ENTER_PROMPT() → _G.AE_ENTER_MAP(\"School Grounds\") → _G.AE_ENTER_DIFF(3) → _G.AE_ENTER_SELECT() → _G.AE_ENTER_START()")
+
+end
+do -- [EXP 5] END
+-- ============================================================
+-- AE Expedition END — จบรัน: อ่านผล/ไอเทมที่ได้ → แจ้งเตือน → กด Repeat Stage
+--   _G.AE_EXP_ENDOPEN()  → จบรันหรือยัง (คืน "Victory"/"Defeat"/nil)
+--   _G.AE_EXP_ENDDATA()  → อ่านผลทั้งหมด (สถิติ + ไอเทม)
+--   _G.AE_EXP_REPEAT()   → กด Repeat Stage
+--   _G.AE_EXP_ENDRUN()   → ทำทั้งชุด: อ่าน → แจ้งเตือน → Repeat
+--   _G.AE_EXP_ON_END = function(data) ... end   ← สคริปต์หลักเอาไปส่งขึ้นเว็บ
+-- ============================================================
+local player = game:GetService("Players").LocalPlayer
+local VIM    = game:GetService("VirtualInputManager")
+local inset  = game:GetService("GuiService"):GetGuiInset()
+
+local function clean(s)
+    return (tostring(s):gsub("<[^>]->", ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- หา ScreenGui ของหน้าจบเกม (มีคำว่า Victory/Defeat + ปุ่ม Repeat Stage)
+local function findEndGui()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            local result, hasRepeat = nil, false
+            for _, l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local t = clean(l.Text)
+                    if t == "Victory" or t == "Defeat" then result = t end
+                    if t == "Repeat Stage" then hasRepeat = true end
+                end
+            end
+            if result and hasRepeat then return g, result end
+        end
+    end
+    return nil
+end
+
+_G.AE_EXP_ENDOPEN = function()
+    local _, result = findEndGui()
+    return result
+end
+
+-- อ่านสถิติ + ไอเทมที่ได้
+_G.AE_EXP_ENDDATA = function()
+    local gui, result = findEndGui()
+    if not gui then return nil end
+
+    local labels = {}
+    for _, l in ipairs(gui:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible then
+            local t = clean(l.Text)
+            if t ~= "" then
+                table.insert(labels, { t = t, x = l.AbsolutePosition.X, y = l.AbsolutePosition.Y,
+                                       w = l.AbsoluteSize.X, h = l.AbsoluteSize.Y })
+            end
+        end
+    end
+    table.sort(labels, function(a, b)
+        if math.abs(a.y - b.y) > 8 then return a.y < b.y end
+        return a.x < b.x
+    end)
+
+    -- สถิติ: ป้ายชื่อ + ค่าที่อยู่แถวเดียวกันทางขวา
+    local WANT = { ["Clear Time"] = "clearTime", ["Total Yen"] = "yen",
+                   ["Total Kills"] = "kills", ["Total Damage"] = "damage" }
+    local stats = {}
+    for i, e in ipairs(labels) do
+        local key = WANT[e.t]
+        if key then
+            for j = i + 1, math.min(i + 4, #labels) do
+                local n = labels[j]
+                if math.abs(n.y - e.y) < 12 and n.x > e.x and not WANT[n.t] then
+                    stats[key] = n.t; break
+                end
+            end
+        end
+    end
+
+    -- ไอเทม: ป้าย "8x" คู่กับชื่อไอเทมที่อยู่ใต้/ใกล้ที่สุด
+    local items = {}
+    for i, e in ipairs(labels) do
+        local n = e.t:match("^(%d+)x$")
+        if n then
+            local best, bestD
+            for j = 1, #labels do
+                local c = labels[j]
+                if j ~= i and not c.t:match("^%d+x$") and not WANT[c.t] then
+                    local dx, dy = c.x - e.x, c.y - e.y
+                    if dy >= 0 and dy < 90 and math.abs(dx) < 80 then
+                        local d = dy + math.abs(dx)
+                        if not bestD or d < bestD then best, bestD = c.t, d end
+                    end
+                end
+            end
+            if best then
+                items[best] = (items[best] or 0) + tonumber(n)
+            end
+        end
+    end
+
+    local data = { result = result, stats = stats, items = items,
+                   map = nil, difficulty = nil, time = os.time() }
+    -- ชื่อด่าน + ความยาก
+    for _, e in ipairs(labels) do
+        if e.t:find(" - Expedition", 1, true) then data.map = e.t end
+        local d = e.t:match("^Difficulty%s*(%d+)$")
+        if d then data.difficulty = tonumber(d) end
+    end
+
+    -- สรุปเป็นข้อความ
+    local lines = { ("===== จบรัน: %s ====="):format(result) }
+    if data.map then table.insert(lines, "ด่าน: " .. data.map ..
+        (data.difficulty and ("  (ความยาก %d)"):format(data.difficulty) or "")) end
+    table.insert(lines, ("เวลา %s | Yen %s | Kills %s | Damage %s")
+        :format(stats.clearTime or "-", stats.yen or "-", stats.kills or "-", stats.damage or "-"))
+    table.insert(lines, "ไอเทมที่ได้:")
+    local names = {}
+    for k in pairs(items) do table.insert(names, k) end
+    table.sort(names, function(a, b) return items[a] > items[b] end)
+    for _, k in ipairs(names) do table.insert(lines, ("   %-22s x%d"):format(k, items[k])) end
+    data.text = table.concat(lines, "\n")
+    return data
+end
+
+-- กดปุ่ม Repeat Stage
+local function clickHard(b)
+    pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    task.wait(0.25)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X / 2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y / 2 + inset.Y
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+_G.AE_EXP_REPEAT = function()
+    local gui = findEndGui()
+    if not gui then warn("[End] ❌ ไม่ได้อยู่หน้าจบเกม"); return false end
+    for _, b in ipairs(gui:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible then
+            local hit = (b:IsA("TextButton") and clean(b.Text) == "Repeat Stage")
+            if not hit then
+                for _, l in ipairs(b:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible and clean(l.Text) == "Repeat Stage" then hit = true; break end
+                end
+            end
+            if hit then
+                print("[End] 🔁 กด Repeat Stage")
+                clickHard(b)
+                task.wait(1.5)
+                return true
+            end
+        end
+    end
+    warn("[End] ❌ ไม่เจอปุ่ม Repeat Stage")
+    return false
+end
+
+-- ⭐ ชุดเต็ม: อ่านผล → แจ้งเตือน → Repeat
+local lastEndAt = 0
+_G.AE_EXP_ENDRUN = function()
+    if not findEndGui() then return false end
+    if tick() - lastEndAt < 20 then return false end     -- กันทำซ้ำจอเดิม
+    lastEndAt = tick()
+
+    local data = _G.AE_EXP_ENDDATA()
+    if data then
+        print(data.text)
+        pcall(function() setclipboard(data.text) end)
+        -- ส่งต่อให้สคริปต์หลัก (แจ้งเตือน/ขึ้นเว็บ)
+        if type(_G.AE_EXP_ON_END) == "function" then
+            pcall(_G.AE_EXP_ON_END, data)
+        end
+    end
+    task.wait(1)
+    return _G.AE_EXP_REPEAT()
+end
+
+print("[End] ✅ พร้อม — _G.AE_EXP_ENDDATA() / _G.AE_EXP_REPEAT() / _G.AE_EXP_ENDRUN()")
+
+end
+do -- [EXP 6] FULL AUTO
+-- ============================================================
+-- 🤖 AE EXPEDITION — FULL AUTO (ทำเองทั้งหมด ตั้งแต่ต้นจนจบ)
+--    ลำดับการทำงาน:
+--      0) ปิด Auto-Upgrade ในตั้งค่า (ครั้งเดียว)
+--      1) เปิดเลือกการ์ดอัตโนมัติค้างไว้ (การ์ดมีเวลาแค่ 10 วิ)
+--      2) อยู่หน้าแผนที่ → เช็คโล่3+Yen → ผ่าน: เลือกเส้นทาง + Continue
+--                                        ไม่ผ่าน: Restart หาแมพใหม่
+--      3) เข้าด่านแล้ว → วางตัว → ตั้ง Weakest → อัพเกรดวน + กด Continue ตอนรถจอด
+--      4) จบด่าน/ออกจากด่าน → หยุดระบบในด่าน → กลับไปข้อ 2
+--    เรียกจากสคริปต์หลัก/เว็บ:  _G.AE_EXP_RUN()  /  _G.AE_EXP_RUN_STOP()
+-- ============================================================
+local MYGEN = _G.AE_SCRIPT_GEN   -- รุ่นสคริปต์ (โหลดใหม่ = ลูปเก่าตาย)
+local RUN_player = game:GetService("Players").LocalPlayer
+local UIS_ui     = game:GetService("UserInputService")
+
+-- ⭐ ตั้งค่าด่านที่จะฟาร์ม — สั่งจากเว็บ/สคริปต์หลักได้ผ่าน _G
+--    _G.AE_EXP_MAP  = "School Grounds" | "Flower Forest" | "Rose Kingdom"
+--    _G.AE_EXP_DIFF = 1 | 2 | 3
+local function expMap()  return _G.AE_EXP_MAP or "School Grounds" end
+local function expDiff() return tonumber(_G.AE_EXP_DIFF) or 3 end
+
+local logSink    -- UI จะมาเสียบทีหลัง
+local function L(msg)
+    print("[AUTO] " .. msg)
+    if logSink then pcall(logSink, msg) end
+end
+
+local function has(name) return type(_G[name]) == "function" end
+local function call(name, ...)
+    if not has(name) then L("⚠️ ไม่เจอฟังก์ชัน " .. name); return nil end
+    local r = table.pack(pcall(_G[name], ...))
+    if not r[1] then L("❌ " .. name .. " error: " .. tostring(r[2])); return nil end
+    return table.unpack(r, 2, r.n)
+end
+
+local running = false
+local settingsDone = false
+
+-- รอจนสถานะเป็นอย่างที่ต้องการ (หรือหมดเวลา)
+local function waitState(target, timeout)
+    local t0 = tick()
+    while running and tick() - t0 < (timeout or 30) do
+        if call("AE_EXP_STATE") == target then return true end
+        task.wait(1)
+    end
+    return false
+end
+
+local function stopCombat()
+    if has("AE_EXP_COMBAT_STOP") then call("AE_EXP_COMBAT_STOP") end
+end
+
+_G.AE_EXP_RUN_STOP = function()
+    running = false
+    stopCombat()
+    if has("AE_CARD_STOP") then call("AE_CARD_STOP") end
+    L("⏹ หยุด FULL AUTO แล้ว")
+    print(debug.traceback("[AUTO] ใครสั่งหยุด:", 2))   -- กันโดนกดเองโดยไม่ตั้งใจ
+end
+
+-- ⭐ ซ่อน/โชว์แผงควบคุม — ตอนสคริปต์คลิกพิกัดจริง (แผนที่/เข้าด่าน)
+--    ต้องซ่อนก่อน ไม่งั้นคลิกไปโดนปุ่มบนแผงตัวเอง
+local function uiHide(hide)
+    if _G.AE_UI_SETVISIBLE then pcall(_G.AE_UI_SETVISIBLE, not hide) end
+end
+
+_G.AE_EXP_RUN = function()
+    if running then L("กำลังทำงานอยู่แล้ว"); return end
+    running = true
+    L("🚀 เริ่ม FULL AUTO")
+
+    task.spawn(function()
+        -- ---------- เลือกการ์ดอัตโนมัติ (เปิดค้างตลอด — การ์ดมีเวลาแค่ 10 วิ) ----------
+        if has("AE_CARD_AUTO") then
+            call("AE_CARD_AUTO")
+            L("🎴 เปิดเลือกการ์ดอัตโนมัติ")
+        end
+
+        local placed      = false     -- วางตัวในด่านนี้แล้วหรือยัง
+        local routeDone   = false     -- เลือกเส้นทาง + เริ่มเดินแล้วหรือยัง
+        local runActive   = false     -- ⭐ กำลังเล่นอยู่ (ยังไม่แพ้/ชนะ) → ห้ามแตะแผนที่/รีเกม
+        local lastGuard   = 0
+        local lastState   = ""
+        local otherSince  = tick()
+        local failStreak  = 0
+
+        while running and MYGEN == _G.AE_SCRIPT_GEN do
+            local ok, err = pcall(function()
+                -- ===== 🏁 จบรัน (Victory/Defeat) → อ่านผล + แจ้งเตือน + Repeat Stage =====
+                if has("AE_EXP_ENDOPEN") and _G.AE_EXP_ENDOPEN() then
+                    local res = _G.AE_EXP_ENDOPEN()
+                    L("🏁 จบรัน: " .. tostring(res) .. " → อ่านผล + กด Repeat Stage")
+                    stopCombat()
+                    placed, routeDone, runActive = false, false, false
+                    uiHide(true)
+                    call("AE_EXP_ENDRUN")
+                    uiHide(false)
+                    task.wait(5)
+                    return
+                end
+
+                local state = call("AE_EXP_STATE") or "other"
+
+                -- ===== เปลี่ยนสถานะ =====
+                if state ~= lastState then
+                    L("📍 สถานะ: " .. lastState .. " → " .. state)
+                    if lastState == "stage" and state == "other" then
+                        stopCombat()          -- ออกจากด่านจริง (แพ้/ชนะ) → จบ 1 รัน
+                        placed, routeDone, runActive = false, false, false
+                        L("🏁 จบ 1 รัน (แพ้/ชนะ) — หยุดระบบในด่าน")
+                    end
+                    if state == "other" then otherSince = tick() end
+                    lastState = state
+                end
+
+                -- ===== 🗺️ อยู่หน้าแผนที่ =====
+                if state == "map" then
+                    -- ⭐ กำลังเล่นอยู่ (เปิดแผนที่ดูเฉยๆ) → ห้ามเช็ค/เลือกเส้น/รีเกม
+                    if runActive then
+                        if tick() - lastGuard > 20 then
+                            lastGuard = tick()
+                            L("🛡️ กำลังเล่นอยู่ (ยังไม่จบรัน) — ไม่แตะแผนที่/ไม่รีเกม")
+                        end
+                        task.wait(2)
+                        return
+                    end
+                    L("[3] เช็คแมพ (โล่ 3 + Yen)...")
+                    uiHide(true)                  -- ซ่อนแผง กันคลิกโดนปุ่มตัวเอง
+                    local pass = call("AE_EXP_CHECK")
+                    if pass then
+                        failStreak = 0
+                        L("   ✅ แมพผ่าน → เลือกเส้นทาง")
+                        call("AE_EXP_SETROUTE")
+                        task.wait(1.5)
+                        L("   ▶️ กด Continue เริ่มเดิน")
+                        call("AE_EXP_CONTINUE")
+                        uiHide(false)
+                        routeDone = true
+                        runActive = true          -- ⭐ เริ่มรันแล้ว — ห้ามแตะแผนที่จนกว่าจะจบรัน
+                        task.wait(3)
+                    else
+                        failStreak = failStreak + 1
+                        L(("   ❌ แมพไม่ผ่าน (ครั้งที่ %d) → Restart"):format(failStreak))
+                        call("AE_EXP_RESTART")
+                        uiHide(false)
+                        task.wait(5)
+                    end
+
+                -- ===== ⚔️ อยู่ในด่าน =====
+                elseif state == "stage" then
+                    -- [1] ตั้งค่าก่อน: ปิด Auto-Upgrade / Auto Retry / Auto Next
+                    if not settingsDone and has("AE_EXP_SETTINGS") then
+                        L("[1] ตั้งค่า: ปิด Auto-Upgrade / Auto Retry / Auto Next")
+                        call("AE_EXP_SETTINGS")
+                        settingsDone = true
+                        task.wait(1)
+                    end
+
+                    -- [2] ยังไม่ได้เลือกเส้นทาง → เปิดหน้าแผนที่
+                    if not routeDone then
+                        L("[2] เปิดหน้าแผนที่ (Expedition Map)")
+                        if call("AE_EXP_OPENMAP") then
+                            task.wait(1)          -- รอบหน้าจะเข้าเคส map
+                        else
+                            L("   ⚠️ เปิดแผนที่ไม่ได้ — ถือว่าเดินอยู่แล้ว")
+                            routeDone = true
+                        end
+
+                    -- [4] วางตัว + ระบบในด่าน
+                    elseif not placed then
+                        -- ไม่ดีเลย์: กดเริ่มปุ๊บรถออกเดินทาง มอนมาทันที ต้องวางเลย
+                        if has("AE_EXP_RESETRUN") then call("AE_EXP_RESETRUN") end
+                        L("[4] วางตัวละคร (ทันที)...")
+                        call("AE_EXP_PLACE")
+                        L("   🎯 ตั้ง Priority = Weakest")
+                        call("AE_EXP_PRIORITY")
+                        L("   ⬆️ อัพเกรด + 🔁 วางซ้ำจนครบ + 🛒 จ้างตัว/Continue")
+                        call("AE_EXP_UPGRADE")
+                        call("AE_EXP_AUTOCONT")
+                        call("AE_EXP_KEEPER")
+                        placed = true
+                        L("   ✅ ระบบในด่านทำงานครบแล้ว")
+                    else
+                        task.wait(3)                     -- ปล่อยให้ลูปในด่านทำงาน
+                    end
+
+                -- ===== 🏠 ล็อบบี้ → เข้าด่านใหม่ =====
+                else
+                    if tick() - otherSince > 12 then
+                        if has("AE_ENTER_RUN") then
+                            L(("[0] อยู่ล็อบบี้ → เข้าด่าน %s ความยาก %d"):format(expMap(), expDiff()))
+                            uiHide(true)
+                            call("AE_ENTER_RUN", expMap(), expDiff())
+                            uiHide(false)
+                            settingsDone = settingsDone      -- ตั้งค่าครั้งเดียวพอ
+                            placed, routeDone = false, false
+                            waitState("stage", 60)
+                        else
+                            L("[?] ค้างนอกด่าน → ลองกด Continue")
+                            call("AE_EXP_CONTINUE")
+                        end
+                        otherSince = tick()
+                    end
+                    task.wait(2)
+                end
+            end)
+            if not ok then L("❌ ลูปพัง: " .. tostring(err)) end
+            task.wait(1)
+        end
+
+        stopCombat()
+        L("⏹ FULL AUTO จบการทำงาน")
+    end)
+end
+
+-- ============================================================
+-- 🖥️ UI เล็กๆ สำหรับเทส (สคริปต์หลักไม่ต้องใช้ — เรียก _G.AE_EXP_RUN() ตรงๆ ได้เลย)
+-- ============================================================
+-- ⭐ ฝังในสคริปต์หลัก = ไม่สร้าง UI (สั่งผ่านเว็บอย่างเดียว)
+if _G.AE_EXP_NO_UI then
+    print("[AUTO] ✅ พร้อม (โหมดสคริปต์หลัก ไม่มี UI) — _G.AE_EXP_RUN() / _G.AE_EXP_RUN_STOP()")
+else
+
+pcall(function()
+    local old = (gethui and gethui() or RUN_player.PlayerGui):FindFirstChild("AE_EXP_UI")
+    if old then old:Destroy() end
+end)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "AE_EXP_UI"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 9999
+pcall(function() gui.Parent = (gethui and gethui()) or RUN_player.PlayerGui end)
+if not gui.Parent then gui.Parent = RUN_player.PlayerGui end
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(280, 250)
+main.Position = UDim2.new(0, 20, 0.5, -125)
+main.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+local st = Instance.new("UIStroke", main)
+st.Color = Color3.fromRGB(120, 60, 200); st.Thickness = 2; st.Transparency = 0.3
+
+local head = Instance.new("TextButton")
+head.Size = UDim2.new(1, 0, 0, 32)
+head.BackgroundColor3 = Color3.fromRGB(120, 60, 200)
+head.BorderSizePixel = 0
+head.Text = "  ⚔️ AE EXPEDITION AUTO"
+head.TextXAlignment = Enum.TextXAlignment.Left
+head.Font = Enum.Font.GothamBold
+head.TextSize = 14
+head.TextColor3 = Color3.fromRGB(240, 240, 250)
+head.AutoButtonColor = false
+head.Parent = main
+Instance.new("UICorner", head).CornerRadius = UDim.new(0, 10)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(28, 24)
+closeBtn.Position = UDim2.new(1, -32, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(170, 50, 50)
+closeBtn.Text = "✕"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 13
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Parent = main
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+do  -- ลากหน้าต่าง
+    local dragging, dragStart, startPos
+    head.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, i.Position, main.Position
+        end
+    end)
+    UIS_ui.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    UIS_ui.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(1, -16, 0, 44)
+btn.Position = UDim2.new(0, 8, 0, 40)
+btn.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
+btn.BorderSizePixel = 0
+btn.Text = "▶  เริ่มออโต้ทั้งหมด"
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 16
+btn.TextColor3 = Color3.new(1, 1, 1)
+btn.Parent = main
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+local box = Instance.new("TextLabel")
+box.Size = UDim2.new(1, -16, 1, -96)
+box.Position = UDim2.new(0, 8, 0, 90)
+box.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
+box.Text = "พร้อมใช้งาน"
+box.Font = Enum.Font.Code
+box.TextSize = 11
+box.TextColor3 = Color3.fromRGB(150, 255, 170)
+box.TextXAlignment = Enum.TextXAlignment.Left
+box.TextYAlignment = Enum.TextYAlignment.Top
+box.TextWrapped = true
+box.Parent = main
+Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+local pad = Instance.new("UIPadding", box)
+pad.PaddingLeft = UDim.new(0, 6); pad.PaddingTop = UDim.new(0, 4)
+
+local lines = {}
+logSink = function(msg)
+    table.insert(lines, msg)
+    while #lines > 9 do table.remove(lines, 1) end
+    box.Text = table.concat(lines, "\n")
+end
+
+-- ⭐ ซ่อนแผงตอนสคริปต์คลิกพิกัดจริง (VIM คลิกทะลุมาโดนปุ่มบนแผงได้)
+_G.AE_UI_SETVISIBLE = function(vis)
+    pcall(function() main.Visible = vis and true or false end)
+end
+
+local on = false
+local pendingStop = 0
+btn.MouseButton1Click:Connect(function()
+    if not on then
+        on = true
+        btn.Text = "⏹  หยุด"
+        btn.BackgroundColor3 = Color3.fromRGB(170, 50, 50)
+        _G.AE_EXP_RUN()
+        return
+    end
+    -- ⭐ ต้องกด 2 ครั้งใน 3 วิถึงหยุด — กันคลิกโดนโดยไม่ตั้งใจ
+    if tick() - pendingStop > 3 then
+        pendingStop = tick()
+        btn.Text = "⚠️ กดอีกครั้งเพื่อหยุด"
+        btn.BackgroundColor3 = Color3.fromRGB(200, 140, 40)
+        task.delay(3, function()
+            if on and tick() - pendingStop >= 3 then
+                btn.Text = "⏹  หยุด"
+                btn.BackgroundColor3 = Color3.fromRGB(170, 50, 50)
+            end
+        end)
+        return
+    end
+    on = false
+    pendingStop = 0
+    btn.Text = "▶  เริ่มออโต้ทั้งหมด"
+    btn.BackgroundColor3 = Color3.fromRGB(200, 120, 40)
+    _G.AE_EXP_RUN_STOP()
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    _G.AE_EXP_RUN_STOP()
+    gui:Destroy()
+end)
+
+print("[AUTO] ✅ พร้อม — กดปุ่มเดียว หรือเรียก _G.AE_EXP_RUN()")
+
+end   -- จบ if ไม่มี UI
+
+end
+
+-- ===== [/EXPEDITION MODULE] =====
