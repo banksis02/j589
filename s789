@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.8"
+local SCRIPT_VERSION = "v8.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -8750,9 +8750,11 @@ _G.AE_EXP_ENDRUN = function()
 
     local data = _G.AE_EXP_ENDDATA()
     if data then
-        print(data.text)
-        pcall(function() setclipboard(data.text) end)
-        -- ส่งต่อให้สคริปต์หลัก (แจ้งเตือน/ขึ้นเว็บ)
+        -- ⭐ โชว์บรรทัดเดียวสั้นๆ (ไม่ dump ยาว + ไม่ setclipboard — เดิมมันรบกวน ctrl+c)
+        print(("[End] 🏁 %s | Yen %s | Kills %s")
+            :format(tostring(data.result), tostring(data.stats and data.stats.yen or "-"),
+                    tostring(data.stats and data.stats.kills or "-")))
+        -- ส่งขึ้นเว็บ (คงไว้ — ระบบสั่งงานต้องใช้)
         if type(_G.AE_EXP_ON_END) == "function" then
             pcall(_G.AE_EXP_ON_END, data)
         end
@@ -8914,8 +8916,8 @@ _G.AE_EXP_RUN = function()
                         failStreak = failStreak + 1
                         -- ⭐ restart หาแมพดีมาหลายรอบแล้วยังไม่เจอ → รับแมพที่ดีที่สุดที่มีไปเลย
                         --    (ฟาร์มได้บ้างดีกว่า restart วนไม่จบ ไม่ได้อะไรเลย)
-                        if failStreak >= 8 then
-                            L(("   🆗 restart %d ครั้งแล้วไม่เจอแมพดี → รับแมพนี้เลย"):format(failStreak))
+                        if failStreak >= 5 then
+                            L(("   🆗 restart %d ครั้งแล้วไม่เจอแมพดี → เริ่มเลยไม่สนแมพ"):format(failStreak))
                             if call("AE_EXP_TAKEBEST") then
                                 task.wait(1.5)
                                 L("   ▶️ กด Continue เริ่มเดิน")
