@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.7"
+local SCRIPT_VERSION = "v8.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5445,19 +5445,57 @@ local lastPath = nil
 local lastNodesById = {}   -- id -> node object (มี .btn) ของ scan ล่าสุด
 local lastBestAny = nil    -- เส้นทางดีที่สุดที่เดินได้ (แม้ไม่ผ่านเงื่อนไข) — ใช้ fallback
 
-local function checkMap()
-    local prompt = player.PlayerGui:FindFirstChild("Prompt")
-    if not prompt then return nil, "ไม่เจอ Prompt (เปิดหน้า Expedition Map?)" end
-
-    -- node buttons → id (column→row)
+-- ⭐ สแกนปุ่มโหนด (กรองแถบ Route Rewards ด้านล่างออก)
+local function scanNodeButtons(prompt)
+    local cam = workspace.CurrentCamera
+    local vpY = (cam and cam.ViewportSize.Y) or 600
+    local rewardTop = vpY * 0.78          -- แถบ Route Rewards อยู่ล่างสุด ~22% → ตัดทิ้ง
     local raw = {}
     for _, btn in ipairs(prompt:GetDescendants()) do
         if btn:IsA("TextButton") and btn.Visible
            and btn.AbsoluteSize.X >= 24 and btn.AbsoluteSize.X <= 36 then
             local p = btn.AbsolutePosition
-            table.insert(raw, { btn=btn, x=p.X, y=p.Y,
-                cx=p.X+btn.AbsoluteSize.X/2, cy=p.Y+btn.AbsoluteSize.Y/2 })
+            if p.Y < rewardTop then       -- ไม่เอาปุ่มในแถบรางวัลด้านล่าง
+                table.insert(raw, { btn=btn, x=p.X, y=p.Y,
+                    cx=p.X+btn.AbsoluteSize.X/2, cy=p.Y+btn.AbsoluteSize.Y/2 })
+            end
         end
+    end
+    return raw
+end
+
+-- 🔍 เก็บ log ตอนแมพอ่านผิด (auto — ไม่ต้องนั่งเฝ้า)
+local function dumpBadMap(reason, raw, prompt)
+    local out = { "===== BAD MAP: " .. reason .. " =====", "โหนดที่เจอ: " .. #raw }
+    local cam = workspace.CurrentCamera
+    out[#out+1] = "viewport: " .. tostring(cam and cam.ViewportSize)
+    for i, n in ipairs(raw) do
+        if i <= 60 then out[#out+1] = ("  #%d (%d,%d) size=%s"):format(i, n.x, n.y, tostring(n.btn.AbsoluteSize)) end
+    end
+    local s = table.concat(out, "\n")
+    warn(s)
+    pcall(function() setclipboard(s) end)
+    _G.AE_LAST_BADMAP = s
+end
+
+local function checkMap()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil, "ไม่เจอ Prompt (เปิดหน้า Expedition Map?)" end
+
+    -- ⭐ สแกน + เช็คความถูกต้อง; แมพยังโหลดไม่เสร็จ = โหนดเพี้ยน → รอแล้วสแกนใหม่
+    local raw
+    for tryScan = 1, 4 do
+        raw = scanNodeButtons(prompt)
+        -- แมพ Expedition จริงมี ~10-20 โหนด → เกิน 24 = ปุ่มค้าง/ยังโหลดไม่เสร็จ
+        if #raw >= 3 and #raw <= 24 then break end
+        if tryScan < 4 then
+            print(("[Exp] ⏳ แมพยังไม่นิ่ง (เจอ %d โหนด) — รอโหลด..."):format(#raw))
+            task.wait(1.2)
+        end
+    end
+    if #raw > 24 then
+        dumpBadMap("โหนดเยอะผิดปกติ (" .. #raw .. ")", raw, prompt)
+        return nil, "NOTREADY:โหนดเยอะผิดปกติ (" .. #raw .. ") — แมพยังโหลดไม่เสร็จ"
     end
     if #raw < 3 then return nil, "หา node ไม่เจอ (" .. #raw .. ")" end
     table.sort(raw, function(a,b)
@@ -5585,6 +5623,12 @@ local function checkMap()
     local summary={}
     for _, n in ipairs(raw) do summary[n.type]=(summary[n.type] or 0)+1 end
     local sumStr={}; for t,c in pairs(summary) do sumStr[#sumStr+1]=t.."="..c end
+
+    -- ⭐ แมพจริงมีบอสตัวเดียว — เจอ ≥2 = อ่านเพี้ยน (แมพยังไม่นิ่ง) → ให้รอ ไม่ใช่ restart
+    if (summary["Boss"] or 0) >= 2 then
+        dumpBadMap("Boss=" .. summary["Boss"] .. " (ควรมีตัวเดียว)", raw, prompt)
+        return nil, "NOTREADY:Boss=" .. summary["Boss"] .. " — แมพอ่านเพี้ยน"
+    end
 
     lastBestAny = bestAny   -- เก็บไว้ให้ fallback เรียกใช้
     return best, table.concat(sumStr, " ")
@@ -5719,6 +5763,52 @@ local function fireRestartRemote()
     end
     return ok
 end
+
+-- ============================================================
+-- 🔍 RESTART SPY — ดักว่า "ปุ่ม Restart จริง" ยิงอะไร (ทำมือ 1 ครั้ง)
+--   _G.AE_RESTART_SPY()      → เริ่มดัก แล้วกด Restart ด้วยมือ (รีแมพใหม่จริง)
+--   _G.AE_RESTART_SPY_STOP() → หยุด + สรุป
+-- ============================================================
+local rsQueue, rsOn = {}, false
+_G.AE_RESTART_SPY = function()
+    if rsOn then print("[Spy] ดักอยู่แล้ว"); return end
+    rsOn = true
+    table.clear(rsQueue)
+    -- ดักทั้ง ReplicaSignal และ RemoteEvent/RemoteFunction อื่นๆ (เผื่อไม่ใช่ replica)
+    local old
+    old = hookmetamethod(game, "__namecall", function(self, ...)
+        if rsOn then
+            local m = getnamecallmethod()
+            if m == "FireServer" or m == "InvokeServer" then
+                local okName, nm = pcall(function() return self.Name end)
+                local okCls, cls = pcall(function() return self.ClassName end)
+                rsQueue[#rsQueue+1] = { t = tick(),
+                    name = okName and nm or "?", cls = okCls and cls or "?",
+                    method = m, args = table.pack(...) }
+            end
+        end
+        return old(self, ...)
+    end)
+    print("[Spy] 🔍 เริ่มดักแล้ว — ตอนนี้กด Restart/รีแมพ ด้วยมือ 1 ครั้ง")
+    print("[Spy]    เสร็จแล้วพิมพ์ _G.AE_RESTART_SPY_STOP()")
+    task.spawn(function()
+        local t0 = tick()
+        while rsOn do
+            while #rsQueue > 0 do
+                local e = table.remove(rsQueue, 1)
+                local parts = {}
+                for i = 1, e.args.n do
+                    local v = e.args[i]
+                    parts[i] = (type(v) == "string") and ('"'..v..'"') or tostring(v)
+                end
+                print(("[SPY %5.1fs] %s.%s(%s)  [%s]")
+                    :format(e.t - t0, e.name, e.method, table.concat(parts, ", "), e.cls))
+            end
+            task.wait(0.2)
+        end
+    end)
+end
+_G.AE_RESTART_SPY_STOP = function() rsOn = false; print("[Spy] ⏹ หยุดดักแล้ว") end
 
 -- ⭐ "ลายแมพ" = ตำแหน่งปุ่มโหนดทั้งหมดในหน้าแผนที่ (แมพใหม่ = ลายใหม่เสมอ)
 --    ใช้พิสูจน์ว่า Restart ติดจริง — แค่กลับเข้าหน้าแผนที่ได้ ไม่ได้แปลว่ารีแล้ว
@@ -7018,17 +7108,21 @@ _G.AE_EXP_UNITS = function()
 end
 _G.AE_EXP_PLACE = placeAll
 _G.AE_EXP_CONTINUE = pressContinue
+-- คืน: passed(bool), notReady(bool)  — notReady=true คือแมพยังโหลดไม่เสร็จ (อย่า restart!)
 _G.AE_EXP_CHECK = function()
     print("[Exp] 🔍 เช็คแมพ...")
     local best, info = checkMap()
     print("[Exp] แมพ: " .. tostring(info))
+    local notReady = type(info) == "string" and info:sub(1,9) == "NOTREADY:"
     if best then
         lastPath = best.path
         print(("[Exp] ✅ ผ่าน! Defense=%d Yen=%d → {%s}"):format(best.def, best.yen, table.concat(best.path,",")))
+    elseif notReady then
+        print("[Exp] ⏳ แมพยังไม่พร้อม — รอโหลด (ไม่ restart)")
     else
         print("[Exp] ❌ ไม่ผ่าน — ไม่มีเส้นทาง Defense≥"..NEED_DEFENSE.." + Yen≥"..NEED_YEN)
     end
-    return best
+    return best, notReady
 end
 _G.AE_EXP_SETROUTE = function() return setRoute(lastPath) end
 
@@ -7052,20 +7146,25 @@ _G.AE_EXP_AUTO = function()
     task.spawn(function()
         for attempt=1,50 do
             print("[Exp] ===== รอบ " .. attempt .. " =====")
-            local best = checkMap()
+            local best, info = checkMap()
             if best then
                 lastPath = best.path
                 print(("[Exp] ✅ เจอแมพดี! Defense=%d Yen=%d"):format(best.def, best.yen))
                 setRoute(best.path)
                 task.wait(1.5)
-                -- ⭐ เลือกเส้นทางแล้ว → ออกจากแผนที่ → กด Continue เริ่มเดิน
                 pressContinue()
                 print("[Exp] 🏁 เริ่ม expedition แล้ว")
                 return
             end
-            print("[Exp] ❌ แมพไม่ผ่าน → Restart")
-            restartGame()
-            task.wait(6)   -- รอแมพใหม่โหลด
+            -- ⭐ แมพยังโหลดไม่เสร็จ → รอ ไม่ restart (ไม่งั้นเสียแมพดีไปเปล่าๆ)
+            if type(info)=="string" and info:sub(1,9)=="NOTREADY:" then
+                print("[Exp] ⏳ แมพยังไม่พร้อม → รอโหลดแล้วเช็คใหม่")
+                task.wait(2.5)
+            else
+                print("[Exp] ❌ แมพไม่ผ่าน → Restart")
+                restartGame()
+                task.wait(6)   -- รอแมพใหม่โหลด
+            end
         end
         warn("[Exp] ครบ 50 รอบยังไม่เจอแมพดี — หยุด")
     end)
@@ -8794,8 +8893,13 @@ _G.AE_EXP_RUN = function()
                     end
                     L("[3] เช็คแมพ (โล่ 3 + Yen)...")
                     uiHide(true)                  -- ซ่อนแผง กันคลิกโดนปุ่มตัวเอง
-                    local pass = call("AE_EXP_CHECK")
-                    if pass then
+                    local pass, notReady = call("AE_EXP_CHECK")
+                    if notReady then
+                        -- ⭐ แมพยังโหลดไม่เสร็จ (นับโหนดเพี้ยน) → รอ แล้วเช็คใหม่ ห้าม restart
+                        L("   ⏳ แมพยังไม่พร้อม → รอโหลดแล้วเช็คใหม่ (ไม่ restart)")
+                        uiHide(false)
+                        task.wait(2.5)
+                    elseif pass then
                         failStreak = 0
                         L("   ✅ แมพผ่าน → เลือกเส้นทาง")
                         call("AE_EXP_SETROUTE")
