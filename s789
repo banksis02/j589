@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.9"
+local SCRIPT_VERSION = "v9.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6449,8 +6449,32 @@ local function placeRandomFromHotbar(skipSlots)
 end
 _G.AE_EXP_PLACE_RANDOM = placeRandomFromHotbar
 
+-- ⭐ พิกัดที่ฟิคไว้ = ของ School Grounds เท่านั้น (พิกัดโลกจริงตรงจุดรถเริ่ม)
+--    แมพอื่น (Flower Forest / Rose Kingdom) รถเริ่มคนละที่ → พิกัดหลุดนอกแมพ
+--    แมพอื่นเลยใช้ "โหมดสุ่ม" ซึ่งอิงตำแหน่งรถจริง ใช้ได้ทุกแมพ
+local function currentMapName()
+    local gs = getReplica("GameState")
+    local d = gs and gs.Data
+    if type(d) == "table" and type(d.Parameters) == "table" then
+        return tostring(d.Parameters.MapName or "")
+    end
+    return ""
+end
+
+local function isFixedMap()
+    local m = currentMapName():lower()
+    return m:find("schoolground", 1, true) ~= nil    -- ฟิคไว้เฉพาะ School Grounds
+end
+
 local function placeAll()
-    print("[Exp Place] 🎯 เริ่มวางตัว " .. #EXP_PLACEMENTS .. " ตัว...")
+    -- แมพที่ไม่มีพิกัดฟิค → ใช้โหมดสุ่มเลย (ไม่งั้นวางหลุดนอกแมพ)
+    if not isFixedMap() then
+        print(("[Exp Place] 🗺️ แมพ '%s' ไม่มีพิกัดฟิค → โหมดสุ่ม"):format(currentMapName()))
+        _G.AE_EXP_RANDOM_MODE = true
+        return placeRandomFromHotbar(nil)
+    end
+
+    print("[Exp Place] 🎯 เริ่มวางตัว " .. #EXP_PLACEMENTS .. " ตัว (School Grounds)...")
     local ok, usedSlots = 0, {}
     for _, e in ipairs(EXP_PLACEMENTS) do
         local slot = findSlotFor(e)
@@ -6738,7 +6762,8 @@ local function startPlaceKeeper()
             end
             -- ⭐ ไล่ตามลำดับในลิสต์เสมอ: Cursed Student → Puppet → Ice Queen → ...
             --    ตัวไหนยังวางไม่ได้เพราะเงินไม่พอ → หยุดตรงนั้น เก็บเงินให้ตัวนั้นก่อน
-            for _, e in ipairs(EXP_PLACEMENTS) do
+            --    (โหมดสุ่มจัดการวางซ้ำด้านบนแล้ว — ข้ามลิสต์ฟิค)
+            for _, e in ipairs(_G.AE_EXP_RANDOM_MODE and {} or EXP_PLACEMENTS) do
                 if not keepOn then break end
                 if not findMyUnit(e.assets) then
                     local slot = findSlotFor(e)
