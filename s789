@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v8.6"
+local SCRIPT_VERSION = "v8.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5443,6 +5443,7 @@ end
 -- ---------- เช็คแมพ (scan + graph + pathfind) ----------
 local lastPath = nil
 local lastNodesById = {}   -- id -> node object (มี .btn) ของ scan ล่าสุด
+local lastBestAny = nil    -- เส้นทางดีที่สุดที่เดินได้ (แม้ไม่ผ่านเงื่อนไข) — ใช้ fallback
 
 local function checkMap()
     local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -5556,14 +5557,18 @@ local function checkMap()
     local function scoreOf(def, yen, len)
         return def * 10 + yen * 12 - len                     -- Yen มีค่ามากกว่าโล่นิดหน่อย
     end
+    local bestAny=nil    -- ⭐ เส้นทางที่ดีที่สุด "ที่เดินได้" แม้ไม่ผ่านเงื่อนไข (เผื่อ fallback)
     local function dfs(node, path, def, yen)
         local np={}; for _,v in ipairs(path) do np[#np+1]=v end
         np[#np+1]=node.id
         local nd=def+(node.type=="Defense" and 1 or 0)
         local ny=yen+(countsYen(node) and 1 or 0)
         if node.col==lastCol then
+            local sc = scoreOf(nd, ny, #np)
+            if not bestAny or sc > bestAny.score then
+                bestAny={path=np, def=nd, yen=ny, score=sc}
+            end
             if passes(nd, ny) then
-                local sc = scoreOf(nd, ny, #np)
                 if not best or sc > best.score then
                     best={path=np, def=nd, yen=ny, score=sc}
                 end
@@ -5581,6 +5586,7 @@ local function checkMap()
     for _, n in ipairs(raw) do summary[n.type]=(summary[n.type] or 0)+1 end
     local sumStr={}; for t,c in pairs(summary) do sumStr[#sumStr+1]=t.."="..c end
 
+    lastBestAny = bestAny   -- เก็บไว้ให้ fallback เรียกใช้
     return best, table.concat(sumStr, " ")
 end
 
@@ -5714,8 +5720,38 @@ local function fireRestartRemote()
     return ok
 end
 
+-- ⭐ "ลายแมพ" = ตำแหน่งปุ่มโหนดทั้งหมดในหน้าแผนที่ (แมพใหม่ = ลายใหม่เสมอ)
+--    ใช้พิสูจน์ว่า Restart ติดจริง — แค่กลับเข้าหน้าแผนที่ได้ ไม่ได้แปลว่ารีแล้ว
+local function mapLayoutSig()
+    if not inNodeSelect() then return nil end
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil end
+    local parts = {}
+    for _, btn in ipairs(prompt:GetDescendants()) do
+        if btn:IsA("TextButton") and btn.Visible
+           and btn.AbsoluteSize.X >= 24 and btn.AbsoluteSize.X <= 36 then
+            local p = btn.AbsolutePosition
+            parts[#parts+1] = math.floor(p.X/4) .. "," .. math.floor(p.Y/4)
+        end
+    end
+    if #parts < 3 then return nil end
+    table.sort(parts)
+    return table.concat(parts, "|")
+end
+
+local function reopenMapView()
+    for _ = 1, 8 do
+        if inNodeSelect() then return true end
+        clickByText("Expedition Map", 3)
+        task.wait(2)
+    end
+    return inNodeSelect()
+end
+
 local function restartGame()
     print("[Exp] 🔄 Restart หาแมพใหม่ (Back → Restart → Expedition Map)...")
+    -- จำลายแมพเดิมไว้ก่อนปิด (ถ้าเปิดอยู่) — เอาไว้พิสูจน์ว่ารีติดจริง
+    local sigBefore = mapLayoutSig()
     -- 1) ⭐ ต้องปิดหน้าแผนที่ให้สนิทก่อน ไม่งั้น Restart ไม่ทำงาน
     --    (เครื่องแลค/UI ช้า → กด Back ครั้งเดียวอาจไม่ปิด) → ยืนยันจนปิดจริง
     for attempt = 1, 4 do
@@ -5731,20 +5767,27 @@ local function restartGame()
     end
     task.wait(1)
 
-    -- 2) ⭐ ยิง Restart remote ตรงๆ (วิธีหลัก — เร็วและชัวร์กว่าคลิก UI)
-    fireRestartRemote()
-    task.wait(4)
-    -- ถ้ารีสำเร็จ ให้ข้ามขั้นตอนคลิก UI ไปเลย
-    if not inNodeSelect() then
+    -- 2) ⭐ ยิง Restart remote (ลองสูงสุด 3 รอบ) แล้ว "พิสูจน์" ว่าแมพเปลี่ยนจริง
+    --    เดิมแค่กลับเข้าหน้าแผนที่ได้ก็นับว่าสำเร็จ → เจอเคสรีไม่ติดแล้ววนแมพเดิมไม่รู้จบ
+    for round = 1, 3 do
+        fireRestartRemote()
+        task.wait(4)
         print("[Exp]   → กด Expedition Map เข้าหน้าเลือก node ใหม่")
-        for _=1,8 do
-            if inNodeSelect() then break end
-            clickByText("Expedition Map", 3)
-            task.wait(2)
-        end
-        if inNodeSelect() then
-            print("[Exp] ✅ Restart สำเร็จ (remote) — เข้าหน้า node select แล้ว")
-            return true
+        if reopenMapView() then
+            local sigAfter = mapLayoutSig()
+            if not sigBefore or (sigAfter and sigAfter ~= sigBefore) then
+                print("[Exp] ✅ Restart สำเร็จ — แมพเปลี่ยนแล้ว (ลายโหนดไม่เหมือนเดิม)")
+                return true
+            end
+            warn(("[Exp] ⚠️ แมพยังเป็นลายเดิม — Restart ไม่ติด (รอบ %d/3)"):format(round))
+            -- ปิดแผนที่ก่อนยิงรอบใหม่
+            for _ = 1, 4 do
+                if not inNodeSelect() then break end
+                clickByText("Back", 3)
+                local t0 = tick()
+                while inNodeSelect() and tick() - t0 < 3 do task.wait(0.3) end
+            end
+            task.wait(1.5)
         end
     end
 
@@ -6988,6 +7031,22 @@ _G.AE_EXP_CHECK = function()
     return best
 end
 _G.AE_EXP_SETROUTE = function() return setRoute(lastPath) end
+
+-- ⭐ รับแมพนี้เลย (ไม่ผ่านเงื่อนไขก็เอา) — ใช้ตอน restart หลายรอบแล้วยังไม่เจอแมพดี
+_G.AE_EXP_TAKEBEST = function()
+    if not lastBestAny then
+        -- ยังไม่มีข้อมูล → เช็คใหม่ก่อน
+        checkMap()
+    end
+    if lastBestAny then
+        print(("[Exp] 🆗 รับแมพนี้เลย (Defense=%d Yen=%d) — restart หลายรอบแล้วไม่เจอที่ดีกว่า")
+            :format(lastBestAny.def, lastBestAny.yen))
+        lastPath = lastBestAny.path
+        return setRoute(lastBestAny.path)
+    end
+    warn("[Exp] ❌ ไม่มีเส้นทางที่เดินได้เลย")
+    return false
+end
 _G.AE_EXP_RESTART = restartGame
 _G.AE_EXP_AUTO = function()
     task.spawn(function()
@@ -8749,10 +8808,30 @@ _G.AE_EXP_RUN = function()
                         task.wait(3)
                     else
                         failStreak = failStreak + 1
-                        L(("   ❌ แมพไม่ผ่าน (ครั้งที่ %d) → Restart"):format(failStreak))
-                        call("AE_EXP_RESTART")
-                        uiHide(false)
-                        task.wait(5)
+                        -- ⭐ restart หาแมพดีมาหลายรอบแล้วยังไม่เจอ → รับแมพที่ดีที่สุดที่มีไปเลย
+                        --    (ฟาร์มได้บ้างดีกว่า restart วนไม่จบ ไม่ได้อะไรเลย)
+                        if failStreak >= 8 then
+                            L(("   🆗 restart %d ครั้งแล้วไม่เจอแมพดี → รับแมพนี้เลย"):format(failStreak))
+                            if call("AE_EXP_TAKEBEST") then
+                                task.wait(1.5)
+                                L("   ▶️ กด Continue เริ่มเดิน")
+                                call("AE_EXP_CONTINUE")
+                                uiHide(false)
+                                routeDone = true
+                                runActive = true
+                                failStreak = 0
+                                task.wait(3)
+                            else
+                                call("AE_EXP_RESTART")
+                                uiHide(false)
+                                task.wait(5)
+                            end
+                        else
+                            L(("   ❌ แมพไม่ผ่าน (ครั้งที่ %d) → Restart"):format(failStreak))
+                            call("AE_EXP_RESTART")
+                            uiHide(false)
+                            task.wait(5)
+                        end
                     end
 
                 -- ===== ⚔️ อยู่ในด่าน =====
