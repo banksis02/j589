@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.6"
+local SCRIPT_VERSION = "v9.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2015,6 +2015,63 @@ if GAME_ID == "anime_expeditions" then
         return s and s:FindFirstChild("Frame") ~= nil and #s.Frame:GetChildren() > 1
     end
 
+    -- ⭐ v8.x: เกมเพิ่มปุ่ม "ออกจากด่าน" (ประตู) ข้างเฟือง → สคริปต์เผลอกดโดน
+    --    → เด้งกล่อง "Exit Confirmation" (Return to Lobby / Cancel)
+    --    ห้ามกด Return to Lobby เด็ดขาด — เจอกล่องนี้เมื่อไหร่กด Cancel ทิ้งทันที
+    local function dismissExitConfirm()
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                local isExit = false
+                for _, l in ipairs(g:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible then
+                        local t = tostring(l.Text)
+                        if t == "Exit Confirmation" or t:find("like to exit this game", 1, true) then
+                            isExit = true; break
+                        end
+                    end
+                end
+                if isExit then
+                    for _, b in ipairs(g:GetDescendants()) do
+                        if b:IsA("GuiButton") and b.Visible then
+                            local hit = (b:IsA("TextButton") and b.Text == "Cancel")
+                            if not hit then
+                                for _, l in ipairs(b:GetDescendants()) do
+                                    if l:IsA("TextLabel") and l.Visible and l.Text == "Cancel" then hit = true; break end
+                                end
+                            end
+                            if hit then
+                                fireButtonConns(b)
+                                pcall(function()
+                                    local inset = game:GetService("GuiService"):GetGuiInset()
+                                    local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+                                    local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset.Y
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                                    task.wait(0.05)
+                                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                                end)
+                                print("[AE] ✖️ ปิดกล่อง Exit Confirmation (กด Cancel)")
+                                task.wait(0.4)
+                                return true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+    _G.AE_DISMISS_EXIT = dismissExitConfirm
+
+    -- เฝ้าตลอด — เจอกล่อง Exit Confirmation เมื่อไหร่กด Cancel ทันที
+    task.spawn(function()
+        while true do
+            pcall(dismissExitConfirm)
+            task.wait(1)
+        end
+    end)
+
+    -- ⭐ เฟือง Settings = ปุ่มที่ "เปิดหน้า Settings ได้จริง" เท่านั้น — ไม่ใช่ปุ่มขวาสุด
+    --    (เกมเพิ่มปุ่ม Exit ขวาสุด ถ้าไล่กดขวา→ซ้ายจะโดน Exit ก่อน)
     local cachedSettingsBtn = nil
     local function openSettings()
         if settingsOpen() then return true end
@@ -2038,14 +2095,18 @@ if GAME_ID == "anime_expeditions" then
         end)
         for _, btn in ipairs(btns) do
             fireButtonConns(btn)
-            task.wait(1.5)
-            if settingsOpen() then
+            task.wait(1.2)
+            -- ⭐ กดโดนปุ่ม Exit → เด้ง Exit Confirmation → กด Cancel แล้วข้ามปุ่มนี้
+            if dismissExitConfirm() then
+                task.wait(0.4)
+            elseif settingsOpen() then
                 cachedSettingsBtn = btn   -- ⭐ จำปุ่มที่ถูก
                 return true
+            else
+                -- กดผิดตัว (เปิดเมนู ... ค้าง) → กดซ้ำเพื่อปิด
+                fireButtonConns(btn)
+                task.wait(0.5)
             end
-            -- ⭐ กดผิดตัว (เปิดเมนู ... ค้าง) → กดซ้ำเพื่อปิด
-            fireButtonConns(btn)
-            task.wait(0.5)
         end
         return settingsOpen()
     end
