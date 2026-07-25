@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.1"
+local SCRIPT_VERSION = "v9.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -7032,6 +7032,17 @@ _G.AE_EXP_OPENMAP = function()
     return false
 end
 
+-- 🗺️ ปิดหน้าแผนที่ (กด Back จนปิดสนิท) — ใช้ตอนแผนที่เปิดค้างระหว่างเล่น
+_G.AE_EXP_CLOSEMAP = function()
+    for attempt = 1, 5 do
+        if not inNodeSelect() then return true end
+        clickByText("Back", 3)
+        local t0 = tick()
+        while inNodeSelect() and tick() - t0 < 2.5 do task.wait(0.3) end
+    end
+    return not inNodeSelect()
+end
+
 _G.AE_EXP_INMAP = inNodeSelect
 _G.AE_EXP_MYUNITS = function() return #getMyGameUnits() end
 
@@ -8895,13 +8906,12 @@ _G.AE_EXP_RUN = function()
 
                 -- ===== 🗺️ อยู่หน้าแผนที่ =====
                 if state == "map" then
-                    -- ⭐ กำลังเล่นอยู่ (เปิดแผนที่ดูเฉยๆ) → ห้ามเช็ค/เลือกเส้น/รีเกม
+                    -- ⭐ กำลังเล่นอยู่แล้วแผนที่เปิดค้าง → ปิดมัน (กด Back) กลับไปเล่นต่อ
+                    --    ไม่ restart ไม่เลือกเส้นใหม่ แค่ปิดแผนที่
                     if runActive then
-                        if tick() - lastGuard > 20 then
-                            lastGuard = tick()
-                            L("🛡️ กำลังเล่นอยู่ (ยังไม่จบรัน) — ไม่แตะแผนที่/ไม่รีเกม")
-                        end
-                        task.wait(2)
+                        L("🛡️ กำลังเล่นอยู่ + แผนที่เปิดค้าง → ปิดแผนที่ (Back)")
+                        if has("AE_EXP_CLOSEMAP") then call("AE_EXP_CLOSEMAP") end
+                        task.wait(1.5)
                         return
                     end
                     -- ⭐ ไม่เช็ค/ไม่ reroll แล้ว — เจอแมพไหนเล่นแมพนั้นเลย
