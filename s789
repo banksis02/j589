@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.2"
+local SCRIPT_VERSION = "v9.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5474,8 +5474,7 @@ local function dumpBadMap(reason, raw, prompt)
     end
     local s = table.concat(out, "\n")
     warn(s)
-    pcall(function() setclipboard(s) end)
-    _G.AE_LAST_BADMAP = s
+    _G.AE_LAST_BADMAP = s   -- เก็บไว้ใน _G ดูได้ — ไม่ setclipboard (รบกวน ctrl+c)
 end
 
 local function checkMap()
@@ -5483,17 +5482,18 @@ local function checkMap()
     if not prompt then return nil, "ไม่เจอ Prompt (เปิดหน้า Expedition Map?)" end
 
     -- ⭐ สแกน + เช็คความถูกต้อง; แมพยังโหลดไม่เสร็จ = โหนดเพี้ยน → รอแล้วสแกนใหม่
+    -- แมพ Expedition จริง: 10 คอลัมน์ × 2-3 แถว = ได้ถึง ~30 โหนด (25 = ปกติ!)
+    --    เกิน 40 = ปุ่มค้าง/แมพยังโหลดไม่เสร็จจริงๆ
     local raw
     for tryScan = 1, 4 do
         raw = scanNodeButtons(prompt)
-        -- แมพ Expedition จริงมี ~10-20 โหนด → เกิน 24 = ปุ่มค้าง/ยังโหลดไม่เสร็จ
-        if #raw >= 3 and #raw <= 24 then break end
+        if #raw >= 3 and #raw <= 40 then break end
         if tryScan < 4 then
             print(("[Exp] ⏳ แมพยังไม่นิ่ง (เจอ %d โหนด) — รอโหลด..."):format(#raw))
             task.wait(1.2)
         end
     end
-    if #raw > 24 then
+    if #raw > 40 then
         dumpBadMap("โหนดเยอะผิดปกติ (" .. #raw .. ")", raw, prompt)
         return nil, "NOTREADY:โหนดเยอะผิดปกติ (" .. #raw .. ") — แมพยังโหลดไม่เสร็จ"
     end
