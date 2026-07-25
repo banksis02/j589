@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.7"
+local SCRIPT_VERSION = "v9.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2070,42 +2070,60 @@ if GAME_ID == "anime_expeditions" then
         end
     end)
 
-    -- ⭐ เฟือง Settings = ปุ่มที่ "เปิดหน้า Settings ได้จริง" เท่านั้น — ไม่ใช่ปุ่มขวาสุด
-    --    (เกมเพิ่มปุ่ม Exit ขวาสุด ถ้าไล่กดขวา→ซ้ายจะโดน Exit ก่อน)
+    -- ⭐ เฟือง Settings = ปุ่มที่ "เปิดหน้า Settings ได้จริง" เท่านั้น
+    --    เกมเพิ่มปุ่ม Exit ขวาสุด → ต้องจำว่าปุ่มไหนคือ Exit แล้วไม่กดอีก (blacklist)
     local cachedSettingsBtn = nil
+    local exitBtnBlacklist = {}   -- ปุ่มที่กดแล้วเด้ง Exit Confirmation → ห้ามกดอีก
+
+    -- เดาปุ่ม Exit จากไอคอน/ชื่อ (กันไว้ก่อนตั้งแต่ยังไม่เคยกด)
+    local function looksLikeExitBtn(btn)
+        local n = tostring(btn.Name):lower()
+        if n:find("exit") or n:find("leave") or n:find("quit") or n:find("door") then return true end
+        for _, d in ipairs(btn:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible then
+                local t = tostring(d.Text):lower()
+                if t == "exit" or t == "leave" then return true end
+            end
+            local dn = tostring(d.Name):lower()
+            if dn:find("exit") or dn:find("leave") or dn:find("door") then return true end
+        end
+        return false
+    end
+
     local function openSettings()
         if settingsOpen() then return true end
-        -- ใช้ปุ่มที่จำไว้ก่อน (เจอครั้งแรกแล้วจำ)
+        -- ใช้ปุ่มที่จำไว้ก่อน (เจอครั้งแรกแล้วจำ — ไม่ต้องไล่กดใหม่)
         if cachedSettingsBtn and cachedSettingsBtn.Parent then
             fireButtonConns(cachedSettingsBtn)
             task.wait(1.5)
             if settingsOpen() then return true end
+            dismissExitConfirm()   -- เผื่อปุ่มที่จำไว้เปลี่ยนไปเป็น Exit
         end
         local topbar = player.PlayerGui:FindFirstChild("TopBar")
         if not topbar then return false end
-        -- ⭐ เรียงปุ่มจากขวาไปซ้าย — ⚙️ อยู่ขวาสุด (ตัวซ้ายคือเมนู ... )
         local btns = {}
         for _, btn in ipairs(topbar:GetDescendants()) do
-            if btn:IsA("TextButton") and btn.Visible then
+            if btn:IsA("TextButton") and btn.Visible
+               and not exitBtnBlacklist[btn] and not looksLikeExitBtn(btn) then
                 table.insert(btns, btn)
             end
         end
-        table.sort(btns, function(a, b)
-            return a.AbsolutePosition.X > b.AbsolutePosition.X
-        end)
+        -- เรียงขวา→ซ้าย (เฟืองอยู่ทางขวา แต่ Exit ถูกกรองออกแล้ว)
+        table.sort(btns, function(a, b) return a.AbsolutePosition.X > b.AbsolutePosition.X end)
         for _, btn in ipairs(btns) do
             fireButtonConns(btn)
             task.wait(1.2)
-            -- ⭐ กดโดนปุ่ม Exit → เด้ง Exit Confirmation → กด Cancel แล้วข้ามปุ่มนี้
             if dismissExitConfirm() then
+                -- ปุ่มนี้คือ Exit → ขึ้นบัญชีดำ ไม่กดอีกตลอด session
+                exitBtnBlacklist[btn] = true
+                print("[AE] 🚪 เจอปุ่ม Exit → ขึ้นบัญชีดำ (ไม่กดอีก)")
                 task.wait(0.4)
             elseif settingsOpen() then
-                cachedSettingsBtn = btn   -- ⭐ จำปุ่มที่ถูก
+                cachedSettingsBtn = btn
+                print("[AE] ⚙️ เจอปุ่มเฟือง Settings แล้ว (จำไว้)")
                 return true
             else
-                -- กดผิดตัว (เปิดเมนู ... ค้าง) → กดซ้ำเพื่อปิด
-                fireButtonConns(btn)
-                task.wait(0.5)
+                fireButtonConns(btn); task.wait(0.5)   -- กดผิด (เมนู...) → กดปิด
             end
         end
         return settingsOpen()
@@ -5300,23 +5318,60 @@ end
 
 -- เปิด Settings — กด TopBar ปุ่มขวาสุด (เกียร์) แบบสคริปต์หลัก
 local cachedSettingsBtn = nil
+-- ⭐ กัน "ปุ่ม Exit" ที่เกมเพิ่มมาข้างเฟือง
+local exitBlack = {}
+local function looksLikeExit(btn)
+    local n = tostring(btn.Name):lower()
+    if n:find("exit") or n:find("leave") or n:find("door") or n:find("quit") then return true end
+    for _, d in ipairs(btn:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Visible then
+            local t = tostring(d.Text):lower()
+            if t == "exit" or t == "leave" then return true end
+        end
+    end
+    return false
+end
+local function dismissExit()
+    if _G.AE_DISMISS_EXIT then return _G.AE_DISMISS_EXIT() end
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and tostring(l.Text):find("exit this game",1,true) then
+                    for _, b in ipairs(g:GetDescendants()) do
+                        if b:IsA("TextButton") then
+                            local hit = b.Text=="Cancel"
+                            if not hit then for _,x in ipairs(b:GetDescendants()) do if x:IsA("TextLabel") and x.Text=="Cancel" then hit=true break end end end
+                            if hit then fireBtn(b); task.wait(0.4); return true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 local function openSettings()
     if settingsOpen() then return true end
     if cachedSettingsBtn and cachedSettingsBtn.Parent then
         fireBtn(cachedSettingsBtn); task.wait(1.5)
         if settingsOpen() then return true end
+        dismissExit()
     end
     local topbar = player.PlayerGui:FindFirstChild("TopBar")
     if not topbar then return false end
     local btns = {}
     for _, btn in ipairs(topbar:GetDescendants()) do
-        if btn:IsA("TextButton") and btn.Visible then table.insert(btns, btn) end
+        if btn:IsA("TextButton") and btn.Visible and not exitBlack[btn] and not looksLikeExit(btn) then
+            table.insert(btns, btn)
+        end
     end
     table.sort(btns, function(a, b) return a.AbsolutePosition.X > b.AbsolutePosition.X end)
     for _, btn in ipairs(btns) do
-        fireBtn(btn); task.wait(1.5)
-        if settingsOpen() then cachedSettingsBtn = btn; return true end
-        fireBtn(btn); task.wait(0.5)   -- กดผิด → ปิด
+        fireBtn(btn); task.wait(1.2)
+        if dismissExit() then exitBlack[btn] = true; task.wait(0.4)   -- ปุ่ม Exit → บัญชีดำ
+        elseif settingsOpen() then cachedSettingsBtn = btn; return true
+        else fireBtn(btn); task.wait(0.5) end   -- กดผิด → ปิด
     end
     return settingsOpen()
 end
