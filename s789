@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.8"
+local SCRIPT_VERSION = "v9.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1022,18 +1022,27 @@ if GAME_ID == "anime_expeditions" then
 
     local PLACE_FALLBACK = { 66, 64, 65, 67, 68, 69, 70 }  -- ตัวปัจจุบันก่อน แล้วไล่ช่วง
     local function placeUnit(slot, cframe)
+        -- ⭐ v9.9: ยิงผ่าน replica GamePlayerData ตรงๆ (หาจาก Token — ไม่ต้องเดา id)
+        --    บางไอดี replica id ไม่ใช่ 64-70 (เจอ 72) → สเปรย์ opcode เลยไม่โดน วางไม่ได้
+        local rep = aeGetReplica("GamePlayerData")
+        if rep then
+            local ok = pcall(function() rep:FireServer("PlaceGameUnit", slot, cframe) end)
+            if ok then
+                print("[AE] ✅ Placed slot " .. slot .. " (replica GamePlayerData)")
+                return
+            end
+        end
+        -- fallback: สเปรย์ opcode (เผื่อหา replica ไม่เจอ)
         local sig = game:GetService("ReplicatedStorage")
             :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
         local ops = opcodesFor("PlaceGameUnit", PLACE_FALLBACK)
         scriptFiring = true
         for _, op in ipairs(ops) do
-            pcall(function()
-                sig:FireServer(op, "PlaceGameUnit", slot, cframe)
-            end)
-            task.wait(0.05)  -- delay สั้น กัน rate limit
+            pcall(function() sig:FireServer(op, "PlaceGameUnit", slot, cframe) end)
+            task.wait(0.05)
         end
         scriptFiring = false
-        print("[AE] ✅ Placed slot " .. slot .. " (opcodes: " .. table.concat(ops, ",") .. ")")
+        print("[AE] ✅ Placed slot " .. slot .. " (opcodes: " .. table.concat(ops, ",") .. " — fallback)")
     end
 
     local isPlacing = false
