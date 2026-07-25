@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.3"
+local SCRIPT_VERSION = "v9.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6016,8 +6016,10 @@ end
 
 local function pressContinue()
     -- ออกจากหน้า node select ก่อน (Continue อยู่หน้าแรก Expedition)
+    -- ⭐ ปิดแผนที่ให้สนิทจริง (Back อย่างเดียวไม่พอ → ใช้ CLOSEMAP ที่คลิกพิกัดจริง)
     if inNodeSelect() then
-        if clickByText("Back", 3) then print("[Exp]   ← กด Back (ออกจากหน้าแผนที่)") end
+        print("[Exp]   ← ปิดหน้าแผนที่...")
+        if _G.AE_EXP_CLOSEMAP then _G.AE_EXP_CLOSEMAP() else clickByText("Back", 3) end
         task.wait(1.5)
     end
     -- 1) กด Continue หลัก (รอโผล่สูงสุด 8 วิ)
@@ -7032,13 +7034,52 @@ _G.AE_EXP_OPENMAP = function()
     return false
 end
 
--- 🗺️ ปิดหน้าแผนที่ (กด Back จนปิดสนิท) — ใช้ตอนแผนที่เปิดค้างระหว่างเล่น
+-- 🗺️ หาปุ่มปิดแผนที่ (Back หรือปุ่ม X มุมบน) — คืน object ปุ่ม
+local function findMapCloseBtn()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt then return nil end
+    -- 1) ปุ่มที่มีข้อความ "Back"
+    for _, b in ipairs(prompt:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible then
+            if b:IsA("TextButton") and b.Text == "Back" then return b end
+            for _, l in ipairs(b:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text == "Back" then return b end
+            end
+        end
+    end
+    -- 2) ปุ่มปิด X (ปุ่มเล็กมุมขวาบน)
+    local best, bestScore
+    for _, b in ipairs(prompt:GetDescendants()) do
+        if b:IsA("GuiButton") and b.Visible
+           and b.AbsoluteSize.X <= 45 and b.AbsoluteSize.Y <= 45 then
+            local score = b.AbsolutePosition.X - b.AbsolutePosition.Y   -- ขวาสุด+บนสุด
+            if not bestScore or score > bestScore then best, bestScore = b, score end
+        end
+    end
+    return best
+end
+
+-- 🗺️ ปิดหน้าแผนที่แบบ "แรง" — Back + คลิกพิกัดจริง + ปุ่ม X
 _G.AE_EXP_CLOSEMAP = function()
-    for attempt = 1, 5 do
+    for attempt = 1, 8 do
         if not inNodeSelect() then return true end
-        clickByText("Back", 3)
+        local b = findMapCloseBtn()
+        if b then
+            -- ยิง connection
+            pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+            pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+            task.wait(0.3)
+            -- คลิกพิกัดจริง (connection มักไม่ทำงาน)
+            pcall(function()
+                local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+                local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset_exp.Y
+                VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                task.wait(0.06)
+                VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end)
+        end
         local t0 = tick()
-        while inNodeSelect() and tick() - t0 < 2.5 do task.wait(0.3) end
+        while inNodeSelect() and tick() - t0 < 2 do task.wait(0.3) end
     end
     return not inNodeSelect()
 end
@@ -8871,6 +8912,7 @@ _G.AE_EXP_RUN = function()
         local routeDone   = false     -- เลือกเส้นทาง + เริ่มเดินแล้วหรือยัง
         local runActive   = false     -- ⭐ กำลังเล่นอยู่ (ยังไม่แพ้/ชนะ) → ห้ามแตะแผนที่/รีเกม
         local lastGuard   = 0
+        local mapOpenSince = nil       -- เวลาเริ่มเห็นแผนที่เปิดค้าง (ระหว่างเล่น)
         local lastState   = ""
         local otherSince  = tick()
         local failStreak  = 0
@@ -8906,11 +8948,19 @@ _G.AE_EXP_RUN = function()
 
                 -- ===== 🗺️ อยู่หน้าแผนที่ =====
                 if state == "map" then
-                    -- ⭐ กำลังเล่นอยู่แล้วแผนที่เปิดค้าง → ปิดมัน (กด Back) กลับไปเล่นต่อ
-                    --    ไม่ restart ไม่เลือกเส้นใหม่ แค่ปิดแผนที่
+                    -- ⭐ กำลังเล่นอยู่แล้วแผนที่เปิดค้าง → ปิดมัน กลับไปเล่นต่อ
                     if runActive then
-                        L("🛡️ กำลังเล่นอยู่ + แผนที่เปิดค้าง → ปิดแผนที่ (Back)")
+                        mapOpenSince = mapOpenSince or tick()
+                        local openFor = tick() - mapOpenSince
+                        L(("🛡️ แผนที่เปิดค้าง %ds → ปิดแผนที่"):format(math.floor(openFor)))
                         if has("AE_EXP_CLOSEMAP") then call("AE_EXP_CLOSEMAP") end
+                        -- เปิดค้างเกิน 30 วิ = ปิดไม่ลงจริง → ยอมแพ้รันนี้ กลับไปเริ่มใหม่
+                        if openFor > 30 then
+                            L("⚠️ แผนที่ปิดไม่ลงเกิน 30 วิ → รีเซ็ตรัน เริ่มใหม่")
+                            stopCombat()
+                            placed, routeDone, runActive = false, false, false
+                            mapOpenSince = nil
+                        end
                         task.wait(1.5)
                         return
                     end
@@ -8934,6 +8984,7 @@ _G.AE_EXP_RUN = function()
 
                 -- ===== ⚔️ อยู่ในด่าน =====
                 elseif state == "stage" then
+                    mapOpenSince = nil          -- กลับเข้าด่านแล้ว → รีเซ็ตตัวจับเวลาแผนที่
                     -- [1] ตั้งค่าก่อน: ปิด Auto-Upgrade / Auto Retry / Auto Next
                     if not settingsDone and has("AE_EXP_SETTINGS") then
                         L("[1] ตั้งค่า: ปิด Auto-Upgrade / Auto Retry / Auto Next")
