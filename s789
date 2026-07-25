@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.0"
+local SCRIPT_VERSION = "v9.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5840,8 +5840,6 @@ end
 
 local function restartGame()
     print("[Exp] 🔄 Restart หาแมพใหม่ (Back → Restart → Expedition Map)...")
-    -- จำลายแมพเดิมไว้ก่อนปิด (ถ้าเปิดอยู่) — เอาไว้พิสูจน์ว่ารีติดจริง
-    local sigBefore = mapLayoutSig()
     -- 1) ⭐ ต้องปิดหน้าแผนที่ให้สนิทก่อน ไม่งั้น Restart ไม่ทำงาน
     --    (เครื่องแลค/UI ช้า → กด Back ครั้งเดียวอาจไม่ปิด) → ยืนยันจนปิดจริง
     for attempt = 1, 4 do
@@ -5857,28 +5855,14 @@ local function restartGame()
     end
     task.wait(1)
 
-    -- 2) ⭐ ยิง Restart remote (ลองสูงสุด 3 รอบ) แล้ว "พิสูจน์" ว่าแมพเปลี่ยนจริง
-    --    เดิมแค่กลับเข้าหน้าแผนที่ได้ก็นับว่าสำเร็จ → เจอเคสรีไม่ติดแล้ววนแมพเดิมไม่รู้จบ
-    for round = 1, 3 do
-        fireRestartRemote()
-        task.wait(4)
-        print("[Exp]   → กด Expedition Map เข้าหน้าเลือก node ใหม่")
-        if reopenMapView() then
-            local sigAfter = mapLayoutSig()
-            if not sigBefore or (sigAfter and sigAfter ~= sigBefore) then
-                print("[Exp] ✅ Restart สำเร็จ — แมพเปลี่ยนแล้ว (ลายโหนดไม่เหมือนเดิม)")
-                return true
-            end
-            warn(("[Exp] ⚠️ แมพยังเป็นลายเดิม — Restart ไม่ติด (รอบ %d/3)"):format(round))
-            -- ปิดแผนที่ก่อนยิงรอบใหม่
-            for _ = 1, 4 do
-                if not inNodeSelect() then break end
-                clickByText("Back", 3)
-                local t0 = tick()
-                while inNodeSelect() and tick() - t0 < 3 do task.wait(0.3) end
-            end
-            task.wait(1.5)
-        end
+    -- 2) ⭐ ยิง Restart remote → รอ → เปิดแผนที่ใหม่ (reroll ใช้ได้จริง ยืนยันแล้ว)
+    --    ไม่เช็ค "ลายแมพ" แล้ว (v8.7 เช็คผิด → false negative → วน retry 40 วิ/ครั้ง)
+    fireRestartRemote()
+    task.wait(4)
+    print("[Exp]   → กด Expedition Map เข้าหน้าเลือก node ใหม่")
+    if reopenMapView() then
+        print("[Exp] ✅ Restart แล้ว — เข้าหน้าเลือก node")
+        return true
     end
 
     print("[Exp]   ⚠️ remote ไม่ได้ผล → ลองคลิก UI แทน")
@@ -7151,19 +7135,21 @@ _G.AE_EXP_CHECK = function()
 end
 _G.AE_EXP_SETROUTE = function() return setRoute(lastPath) end
 
--- ⭐ รับแมพนี้เลย (ไม่ผ่านเงื่อนไขก็เอา) — ใช้ตอน restart หลายรอบแล้วยังไม่เจอแมพดี
+-- ⭐ เลือกเส้นทางที่ดีที่สุดในแมพนี้ แล้วเดินเลย (ไม่เช็คเงื่อนไข ไม่ reroll)
 _G.AE_EXP_TAKEBEST = function()
-    if not lastBestAny then
-        -- ยังไม่มีข้อมูล → เช็คใหม่ก่อน
-        checkMap()
+    lastBestAny = nil
+    local _, info = checkMap()          -- คำนวณ lastBestAny ใหม่จากแมพปัจจุบัน
+    -- แมพยังโหลดไม่เสร็จ → คืน false ให้ลูปรอแล้วลองใหม่
+    if type(info) == "string" and info:sub(1,9) == "NOTREADY:" then
+        print("[Exp] ⏳ แมพยังไม่พร้อม (" .. info:sub(10) .. ")")
+        return false
     end
     if lastBestAny then
-        print(("[Exp] 🆗 รับแมพนี้เลย (Defense=%d Yen=%d) — restart หลายรอบแล้วไม่เจอที่ดีกว่า")
-            :format(lastBestAny.def, lastBestAny.yen))
+        print(("[Exp] 🆗 เล่นแมพนี้เลย (Defense=%d Yen=%d)"):format(lastBestAny.def, lastBestAny.yen))
         lastPath = lastBestAny.path
         return setRoute(lastBestAny.path)
     end
-    warn("[Exp] ❌ ไม่มีเส้นทางที่เดินได้เลย")
+    warn("[Exp] ❌ ยังอ่านเส้นทางไม่ได้ — รอโหลด")
     return false
 end
 _G.AE_EXP_RESTART = restartGame
@@ -8918,18 +8904,10 @@ _G.AE_EXP_RUN = function()
                         task.wait(2)
                         return
                     end
-                    L("[3] เช็คแมพ (โล่ 3 + Yen)...")
+                    -- ⭐ ไม่เช็ค/ไม่ reroll แล้ว — เจอแมพไหนเล่นแมพนั้นเลย
+                    L("[3] เลือกเส้นทางในแมพนี้ → เริ่มเลย")
                     uiHide(true)                  -- ซ่อนแผง กันคลิกโดนปุ่มตัวเอง
-                    local pass, notReady = call("AE_EXP_CHECK")
-                    if notReady then
-                        -- ⭐ แมพยังโหลดไม่เสร็จ (นับโหนดเพี้ยน) → รอ แล้วเช็คใหม่ ห้าม restart
-                        L("   ⏳ แมพยังไม่พร้อม → รอโหลดแล้วเช็คใหม่ (ไม่ restart)")
-                        uiHide(false)
-                        task.wait(2.5)
-                    elseif pass then
-                        failStreak = 0
-                        L("   ✅ แมพผ่าน → เลือกเส้นทาง")
-                        call("AE_EXP_SETROUTE")
+                    if call("AE_EXP_TAKEBEST") then
                         task.wait(1.5)
                         L("   ▶️ กด Continue เริ่มเดิน")
                         call("AE_EXP_CONTINUE")
@@ -8938,31 +8916,10 @@ _G.AE_EXP_RUN = function()
                         runActive = true          -- ⭐ เริ่มรันแล้ว — ห้ามแตะแผนที่จนกว่าจะจบรัน
                         task.wait(3)
                     else
-                        failStreak = failStreak + 1
-                        -- ⭐ restart หาแมพดีมาหลายรอบแล้วยังไม่เจอ → รับแมพที่ดีที่สุดที่มีไปเลย
-                        --    (ฟาร์มได้บ้างดีกว่า restart วนไม่จบ ไม่ได้อะไรเลย)
-                        if failStreak >= 5 then
-                            L(("   🆗 restart %d ครั้งแล้วไม่เจอแมพดี → เริ่มเลยไม่สนแมพ"):format(failStreak))
-                            if call("AE_EXP_TAKEBEST") then
-                                task.wait(1.5)
-                                L("   ▶️ กด Continue เริ่มเดิน")
-                                call("AE_EXP_CONTINUE")
-                                uiHide(false)
-                                routeDone = true
-                                runActive = true
-                                failStreak = 0
-                                task.wait(3)
-                            else
-                                call("AE_EXP_RESTART")
-                                uiHide(false)
-                                task.wait(5)
-                            end
-                        else
-                            L(("   ❌ แมพไม่ผ่าน (ครั้งที่ %d) → Restart"):format(failStreak))
-                            call("AE_EXP_RESTART")
-                            uiHide(false)
-                            task.wait(5)
-                        end
+                        -- ยังอ่านเส้นทางไม่ได้ (แมพโหลดไม่เสร็จ) → รอแล้วลองใหม่
+                        L("   ⏳ ยังอ่านเส้นทางไม่ได้ → รอโหลด")
+                        uiHide(false)
+                        task.wait(2.5)
                     end
 
                 -- ===== ⚔️ อยู่ในด่าน =====
