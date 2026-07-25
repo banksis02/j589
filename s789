@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.4"
+local SCRIPT_VERSION = "v9.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6935,19 +6935,13 @@ local function startAutoContinue()
                 if found then break end
             end
             if found then
-                -- ⭐ ฆ่าบอสแล้ว (หรือครบ 10 โหนด) → จบรัน กด Extract ห้ามไปแมพใหม่
-                --    รถจอดทุกครั้ง = เปิดแผนที่เช็คจำนวนโหนดก่อนตัดสินใจ
-                local cur, total = progressViaMap()
-                local doneAll = (cur and total and cur >= total) or false
-                if not (bossSeen or doneAll) and cur then
-                    print(("[Exp] 🚚 checkpoint ปกติ (โหนด %d/%d) — เดินต่อ"):format(cur, total or 10))
-                end
-                if bossSeen or doneAll then
-                    print(("[Exp] 🏁 จบรัน (บอส=%s, โหนด %s/%s) → Extract ไม่ไปต่อ")
-                        :format(tostring(bossSeen), tostring(cur), tostring(total)))
+                -- ⭐ ฆ่าบอสแล้ว → จบรัน กด Extract (ใช้ธง bossSeen อย่างเดียว)
+                --    ⚠️ ห้ามเปิดแผนที่เช็ค progress ที่นี่ — มันทำให้ state กระพริบ map↔stage
+                --       แล้ว guard ปิดแผนที่วนไม่จบ Continue กดไม่ติด
+                if bossSeen then
+                    print("[Exp] 🏁 จบรัน (ฆ่าบอสแล้ว) → Extract ไม่ไปต่อ")
                     pressExtract()
                     task.wait(6)
-                    -- ให้ระบบจบรัน (อ่านผล + Repeat) ทำต่อ
                     contOn = false
                     break
                 end
