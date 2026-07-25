@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.5"
+local SCRIPT_VERSION = "v9.6"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6877,29 +6877,64 @@ local function runFinished()
 end
 _G.AE_EXP_FINISHED = runFinished
 
--- กด Extract (จบรัน) + ยืนยันในกล่อง
-local function pressExtract()
-    print("[Exp] 🏁 ครบโหนดแล้ว → กด Extract (จบรัน)")
-    if not clickByText("Extract", 6) then
-        warn("[Exp] ❌ ไม่เจอปุ่ม Extract")
-        return false
-    end
-    task.wait(1)
-    for attempt = 1, 5 do
-        local btn = findDialogBtn("Extract", "Extract") or findDialogBtn("Expedition", "Extract")
-        if not btn then
-            if attempt > 1 then print("[Exp] ✅ ยืนยัน Extract แล้ว"); return true end
-            task.wait(0.8)
-        else
-            clickHard(btn)
-            task.wait(1.5)
-            if not (findDialogBtn("Extract", "Extract") or findDialogBtn("Expedition", "Extract")) then
-                print("[Exp] ✅ ยืนยัน Extract แล้ว")
-                return true
+-- หาปุ่ม Extract ที่เห็นบนจอ (ปุ่มหลัก ไม่ใช่ในกล่อง)
+local function findExtractBtn()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, b in ipairs(g:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 40 then
+                    if b:IsA("TextButton") and b.Text == "Extract" then return b end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and l.Text == "Extract" then return b end
+                    end
+                end
             end
         end
     end
-    return true
+    return nil
+end
+
+-- Victory/Defeat เด้งแล้วหรือยัง (= จบรันจริง)
+local function endScreenOpen()
+    if _G.AE_EXP_ENDOPEN then
+        local ok, r = pcall(_G.AE_EXP_ENDOPEN)
+        if ok and r then return true end
+    end
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and (l.Text == "Victory" or l.Text == "Defeat") then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- ⭐ กด Extract (จบรัน) — คลิกพิกัดจริง + ยืนยันกล่อง + เช็คว่า Victory เด้งจริง
+local function pressExtract()
+    print("[Exp] 🏁 จบรัน → กด Extract")
+    for attempt = 1, 6 do
+        if endScreenOpen() then
+            print("[Exp] ✅ Extract สำเร็จ — Victory/Defeat เด้งแล้ว")
+            return true
+        end
+        -- 1) กดปุ่ม Extract หลัก (คลิกพิกัดจริง ไม่ใช่แค่ connection)
+        local main = findExtractBtn()
+        if main then clickHard(main); task.wait(1.2) end
+        -- 2) กล่องยืนยัน Extract (ถ้ามี)
+        local dlg = findDialogBtn("Extract", "Extract") or findDialogBtn("Expedition", "Extract")
+        if dlg then clickHard(dlg); task.wait(1.5) end
+        task.wait(1)
+        if endScreenOpen() then
+            print("[Exp] ✅ Extract สำเร็จ — Victory/Defeat เด้งแล้ว")
+            return true
+        end
+        print(("[Exp] ⚠️ ยังไม่จบ → ลอง Extract อีก (รอบ %d)"):format(attempt))
+    end
+    warn("[Exp] ❌ กด Extract ไม่สำเร็จ (Victory ไม่เด้ง)")
+    return false
 end
 _G.AE_EXP_EXTRACT = pressExtract
 
@@ -6939,11 +6974,14 @@ local function startAutoContinue()
                 --    ⚠️ ห้ามเปิดแผนที่เช็ค progress ที่นี่ — มันทำให้ state กระพริบ map↔stage
                 --       แล้ว guard ปิดแผนที่วนไม่จบ Continue กดไม่ติด
                 if bossSeen then
-                    print("[Exp] 🏁 จบรัน (ฆ่าบอสแล้ว) → Extract ไม่ไปต่อ")
-                    pressExtract()
-                    task.wait(6)
-                    contOn = false
-                    break
+                    print("[Exp] 🏁 ฆ่าบอสแล้ว → Extract จบรัน")
+                    if pressExtract() then
+                        task.wait(4)
+                        contOn = false
+                        break
+                    end
+                    -- Extract ยังไม่ติด → ไม่ break (กันค้าง) กด Continue เดินต่อไปก่อน
+                    print("[Exp] ⚠️ Extract ไม่ติด → เดินต่อ แล้วลองใหม่ที่จุดจอดถัดไป")
                 end
 
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
