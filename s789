@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.13"
+local SCRIPT_VERSION = "v9.14"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2007,8 +2007,13 @@ if GAME_ID == "anime_expeditions" then
                 break
             end
         end
-        -- ปิดกลับถ้าเดิมปิดอยู่
-        if not wasOpen then toggleItemInv() end
+        -- ⭐ ปิดกลับถ้าเดิมปิดอยู่ — ยืนยันปิดจริง (คอมช้า กด J ครั้งเดียวอาจไม่ปิด)
+        if not wasOpen then
+            for _ = 1, 3 do
+                if not itemInvOpen() then break end
+                toggleItemInv()
+            end
+        end
         return result
     end
     _G.AE_READ_ITEM = readItemCount
@@ -2354,25 +2359,30 @@ if GAME_ID == "anime_expeditions" then
     end)
 
     -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
+    --    v9.14: ปิดกระเป๋า Items ก่อน (ถ้าเปิดค้าง มันบังปุ่ม Repeat) + ยืนยันกดติดจริง
     local function clickRepeatStageButton()
+        -- ⭐ กระเป๋าเปิดค้าง (จาก readItemCount ตอนคอมช้า) → ปิดก่อน ไม่งั้นคลิกไม่โดนปุ่ม
+        if itemInvOpen() then
+            print("[AE Farm] 🎒 กระเป๋าเปิดค้าง → ปิดก่อนกด Repeat")
+            toggleItemInv()
+            task.wait(0.5)
+            if itemInvOpen() then toggleItemInv(); task.wait(0.5) end   -- ลองอีกที
+        end
         local prompt = player.PlayerGui:FindFirstChild("Prompt")
         if not prompt then return false end
+        local inset = game:GetService("GuiService"):GetGuiInset()
         for _, btn in ipairs(prompt:GetDescendants()) do
             if btn:IsA("TextButton") then
-                -- หา TextLabel "Repeat Stage" ในลูก
                 for _, lbl in ipairs(btn:GetDescendants()) do
                     if lbl:IsA("TextLabel") and lbl.Text == "Repeat Stage" then
                         pcall(function()
-                            if firesignal then
-                                firesignal(btn.MouseButton1Click)
-                                firesignal(btn.Activated)
-                            end
+                            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+                            for _, c in ipairs(getconnections(btn.Activated)) do c:Fire() end
                         end)
                         pcall(function()
-                            local pos = btn.AbsolutePosition
-                            local sz = btn.AbsoluteSize
+                            local pos, sz = btn.AbsolutePosition, btn.AbsoluteSize
                             local cx = pos.X + sz.X / 2
-                            local cy = pos.Y + sz.Y / 2
+                            local cy = pos.Y + sz.Y / 2 + inset.Y   -- ⭐ บวก inset (เดิมลืม → คลิกเยื้อง)
                             VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
                             task.wait(0.05)
                             VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
@@ -3073,21 +3083,21 @@ if GAME_ID == "anime_expeditions" then
                         else
                             fireRestart()
 
-                            -- รอ Victory UI ปิด + ถ้าไม่ปิดใน 5 วิ → click ปุ่ม Repeat Stage
+                            -- รอ Victory UI ปิด + กดปุ่ม Repeat ซ้ำเรื่อยๆ จนกว่าจะติด
+                            -- ⭐ v9.14: กดซ้ำทุก 3 วิ (เดิมกดครั้งเดียว — ถ้ากระเป๋าบังจะไม่รีเพลเลย)
                             local waitClose = tick()
-                            local clickedButton = false
-                            while tick() - waitClose < 20 do
+                            local lastClick = 0
+                            while tick() - waitClose < 25 do
                                 local prompt = player.PlayerGui:FindFirstChild("Prompt")
                                 local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
                                 local promptClosed = not prompt or not prompt.Enabled
                                 local gameReady = rh and rh.Enabled
-                                if promptClosed and gameReady then
-                                    break
-                                end
-                                if not clickedButton and tick() - waitClose > 5 then
+                                if promptClosed and gameReady then break end
+                                -- หลัง 4 วิ → กดปุ่ม Repeat ซ้ำทุก 3 วิ (ปิดกระเป๋าให้เองในฟังก์ชัน)
+                                if tick() - waitClose > 4 and tick() - lastClick > 3 then
+                                    lastClick = tick()
                                     if clickRepeatStageButton() then
-                                        print("[AE Farm] 🖱️ Clicked Repeat Stage button (fallback)")
-                                        clickedButton = true
+                                        print("[AE Farm] 🖱️ กด Repeat Stage (ลองจนติด)")
                                     end
                                 end
                                 task.wait(0.3)
