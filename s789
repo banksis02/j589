@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.19"
+local SCRIPT_VERSION = "v9.20"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2424,11 +2424,11 @@ if GAME_ID == "anime_expeditions" then
     end
     _G.AE_APPLY_SETTINGS = applyRecommendedSettings
 
-    -- ⭐ รันอัตโนมัติทุกครั้งที่ script โหลด (รอเกมโหลดก่อน 10 วิ)
-    task.spawn(function()
-        task.wait(10)
-        applyRecommendedSettings()
-    end)
+    -- ⭐ v9.20: เอาการตั้งค่าที่ล็อบบี้ออก (เดิมเปิดเมนู Settings ตอนโหลด →
+    --    ชนกับตอนสคริปต์กำลังเข้าด่าน ทำให้ทางเข้าไม่โหลด)
+    --    ตั้งค่าทำในเกมอยู่แล้ว (Expedition/Villain สั่งปิด auto-upgrade ในด่านเอง)
+    --    → mark ว่าเสร็จเลย ไม่ให้ลูปไหนรอ
+    _G.AE_SETTINGS_DONE = true
 
     -- ⭐ Click "Repeat Stage" button ใน Prompt (fallback ถ้า Restart remote ไม่ทำงาน)
     --    v9.14: ปิดกระเป๋า Items ก่อน (ถ้าเปิดค้าง มันบังปุ่ม Repeat) + ยืนยันกดติดจริง
@@ -3068,14 +3068,7 @@ if GAME_ID == "anime_expeditions" then
                     victoryStuck = 0
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม (lobby)")
                     local entered
-                    -- ⭐ v9.18: ทำทีละอย่างให้เสร็จจริงก่อนไปต่อ (ไม่รีบ เน้นถูกต้อง)
-                    --   [1] ตั้งค่าให้เสร็จ → [2] คราฟ Grey ให้หมด → [3] เข้าด่าน
-                    -- [1] รอตั้งค่าเสร็จ
-                    if not _G.AE_SETTINGS_DONE then
-                        print("[AE Farm] ⏳ [1] รอตั้งค่าให้เสร็จก่อน...")
-                        local t0 = tick()
-                        while not _G.AE_SETTINGS_DONE and tick() - t0 < 60 do task.wait(1) end
-                    end
+                    -- ⭐ v9.20: ไม่ตั้งค่าที่ล็อบบี้แล้ว → [1] คราฟ Grey ให้หมด → [2] เข้าด่าน
                     if farmMode == "actM" then
                         -- [2] เปิดหน้าคราฟ → คราฟ Grey ให้หมด (ไม่รีบปิด เครื่องช้ารอได้)
                         --     autoCraftIfFull อ่าน Grey จริงจากหน้าคราฟ/กระเป๋า แล้วคราฟจนหมดเอง
