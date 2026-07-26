@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.9"
+local SCRIPT_VERSION = "v9.10"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2869,6 +2869,17 @@ if GAME_ID == "anime_expeditions" then
             end
             return
         end
+
+        -- ⭐ โหมด Villain Invasion → ใช้ระบบ Villain (Act 1/2/3 จากเว็บ _G.AE_VILLAIN_ACT)
+        if farmMode == "villain" then
+            if _G.AE_VILLAIN_RUN then
+                print(("[AE Farm] 😈 Villain Invasion — Act %s"):format(tostring(_G.AE_VILLAIN_ACT or 1)))
+                pcall(_G.AE_VILLAIN_RUN, tonumber(_G.AE_VILLAIN_ACT) or 1)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Villain (_G.AE_VILLAIN_RUN)")
+            end
+            return
+        end
         -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
         local function isVictoryOpen()
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -3080,6 +3091,9 @@ if GAME_ID == "anime_expeditions" then
         if farmMode == "expedition" and _G.AE_EXP_RUN_STOP then
             pcall(_G.AE_EXP_RUN_STOP)
         end
+        if farmMode == "villain" and _G.AE_VILLAIN_RUN_STOP then
+            pcall(_G.AE_VILLAIN_RUN_STOP)
+        end
     end
 
     _G.AE_FARM_START = startFarm
@@ -3178,6 +3192,14 @@ if GAME_ID == "anime_expeditions" then
                         end
                         _G.AE_EXP_DIFF = newDiff
                         _G.AE_EXP_MAP  = newMap
+                    end
+                    -- ⭐ งาน Villain Invasion — รับ Act 1/2/3 จากเว็บ (job.difficulty = act)
+                    if wantMode == "villain" then
+                        local newAct = tonumber(job.difficulty) or 1
+                        if _G.AE_VILLAIN_ACT ~= newAct then
+                            print(("[AE Remote] 😈 Villain Invasion: Act %d"):format(newAct))
+                        end
+                        _G.AE_VILLAIN_ACT = newAct
                     end
                     if changed then
                         print(("[AE Remote] 📋 งานใหม่: %s | %s | %s (%s/%s)")
@@ -5284,6 +5306,631 @@ task.spawn(function()
 
     print("Merciless God Fight watcher ready!")
 end)
+
+
+-- ===== [VILLAIN MODULE] =====
+do -- Villain Invasion (headless — สั่งผ่าน _G.AE_VILLAIN_RUN / _G.AE_VILLAIN_ACT)
+-- ============================================================
+-- AE VILLAIN INVASION — เข้าด่าน + วางตัวกอง 50-70% (สคริปต์เทสแยก)
+--   flow: Events → Villain Invasion → Event Gamemode → Act N → Select Stage → Start
+--   _G.AE_VILLAIN_ENTER(1/2/3)  → เข้าด่านทั้งชุด
+--   _G.AE_VILLAIN_PLACE()       → วางตัวกองที่ 50-70% ของเส้นทาง
+--   _G.AE_VILLAIN_DUMP()        → ลิสต์ปุ่มที่เห็นตอนนี้ (ตอนหาปุ่มไม่เจอ)
+-- ============================================================
+local Players = game:GetService("Players")
+local player  = Players.LocalPlayer
+local VIM     = game:GetService("VirtualInputManager")
+local RS      = game:GetService("ReplicatedStorage")
+local inset   = game:GetService("GuiService"):GetGuiInset()
+
+-- ---------- replica (วางตัวผ่าน GamePlayerData) ----------
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up) == "table" then
+            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
+            if registry then break end
+        end
+    end
+end)
+local function getReplica(token)
+    if not registry then return nil end
+    local cand
+    for _, rep in pairs(registry) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == token then
+            if rawget(rep, "write_lib") then return rep end
+            cand = cand or rep
+        end
+    end
+    return cand
+end
+
+-- ---------- คลิกปุ่มแบบทน (connection + VIM คลิกพิกัดจริง) ----------
+local function fireConns(b)
+    local n = 0
+    pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n = n + 1 end end)
+    if n == 0 then pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire(); n = n + 1 end end) end
+    return n
+end
+local function clickHard(b)
+    fireConns(b)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X / 2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y / 2 + inset.Y
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+-- ปุ่มที่ "เห็นบนจอจริง" + ข้อความตรง/มีคำ (คืนปุ่มใหญ่สุด)
+local function reallyVisible(o)
+    local n = o
+    while n and n:IsA("GuiObject") do
+        if not n.Visible then return false end
+        n = n.Parent
+    end
+    if n and n:IsA("ScreenGui") and not n.Enabled then return false end
+    local cam = workspace.CurrentCamera
+    if cam then
+        local p, s, vp = o.AbsolutePosition, o.AbsoluteSize, cam.ViewportSize
+        if s.X < 5 or s.Y < 5 then return false end
+        if p.X + s.X < 0 or p.Y + s.Y < 0 or p.X > vp.X or p.Y > vp.Y then return false end
+    end
+    return true
+end
+local function btnText(b)
+    local parts = {}
+    if b:IsA("TextButton") and b.Text ~= "" then table.insert(parts, b.Text) end
+    for _, l in ipairs(b:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text ~= "" then table.insert(parts, l.Text) end
+    end
+    return (table.concat(parts, " | "):gsub("<[^>]->", ""))
+end
+local function findBtn(needle, exact)
+    local want = needle:lower()
+    local best, bestArea
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
+                    local t = btnText(b):lower()
+                    local hit = exact and (t == want or (" "..t):find("| "..want.."$"))
+                              or t:find(want, 1, true)
+                    if hit then
+                        local a = b.AbsoluteSize.X * b.AbsoluteSize.Y
+                        if not bestArea or a > bestArea then best, bestArea = b, a end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+local function clickText(needle, timeout, exact)
+    local t0 = tick()
+    repeat
+        local b = findBtn(needle, exact)
+        if b then clickHard(b); print("[Villain] 👆 กด '" .. needle .. "'"); return true end
+        task.wait(0.4)
+    until tick() - t0 > (timeout or 5)
+    warn("[Villain] ❌ ไม่เจอปุ่ม '" .. needle .. "'")
+    return false
+end
+
+-- ============================================================
+-- 🚪 เข้าด่าน Villain Invasion
+-- ============================================================
+_G.AE_VILLAIN_ENTER = function(act)
+    act = tonumber(act) or 1
+    print(("[Villain] ▶️ เข้าด่าน Villain Invasion — Act %d"):format(act))
+
+    -- 1) เปิด Events (เมนูซ้ายในล็อบบี้)
+    if not clickText("Events", 6) then return false end
+    task.wait(1.5)
+
+    -- 2) เลือก Villain Invasion (ลิสต์ซ้าย)
+    if not clickText("Villain Invasion", 6) then return false end
+    task.wait(1.2)
+
+    -- 3) Event Gamemode
+    if not clickText("Event Gamemode", 6) then return false end
+    task.wait(1.5)
+
+    -- 4) เลือก Act — การ์ดมีข้อความ "Act 1 - Death" / "Act 2 - Tartaros" / "Act 3 - Sword"
+    local actNames = { [1]="Act 1", [2]="Act 2", [3]="Act 3" }
+    if not clickText(actNames[act] or "Act 1", 6) then return false end
+    task.wait(1.5)
+
+    -- 5) Select Stage
+    if not clickText("Select Stage", 8) then return false end
+    task.wait(2.5)
+
+    -- 6) Start (หน้า Private Party)
+    if not clickText("Start", 10) then
+        clickText("Select Stage", 4); task.wait(2)
+        if not clickText("Start", 8) then return false end
+    end
+    print("[Villain] ✅ กด Start แล้ว — เข้าด่าน")
+    return true
+end
+
+-- ============================================================
+-- 🎯 วางตัวกองที่ 50-70% ของเส้นทาง (ด่านนี้ยาก → รวมพลังจุดเดียว)
+-- ============================================================
+local PILE_MIN, PILE_MAX = 0.50, 0.70   -- ช่วง % ของเส้นทาง
+-- เยื้องข้างแคบ (ด่านยาก → เกาะกันแน่น) แต่มีสำรองห่างขึ้นถ้าที่เต็ม
+local SIDE_OFFSETS = { 0, 3, -3, 2, -2, 5, -5, 4, -4, 7, -7, 9, -9 }
+
+-- สร้าง 1 เลน จากโฟลเดอร์ waypoint
+local function buildLane(lane)
+    local parts = {}
+    for _, p in ipairs(lane:GetChildren()) do
+        if p:IsA("BasePart") and tonumber(p.Name) then table.insert(parts, p) end
+    end
+    if #parts < 2 then return nil end
+    table.sort(parts, function(a, b) return tonumber(a.Name) < tonumber(b.Name) end)
+    local pts, cum = {}, { 0 }
+    for i, p in ipairs(parts) do
+        pts[i] = p.Position
+        if i > 1 then cum[i] = cum[i-1] + (pts[i]-pts[i-1]).Magnitude end
+    end
+    return { pts = pts, cum = cum, total = cum[#cum] }
+end
+
+-- ⭐ สร้าง "ทุกเลน" (แมพ Villain มอบมาหลายทาง — ต้องวางคร่อมทุกเลน)
+local function buildAllPaths()
+    local map = workspace:FindFirstChild("Map")
+    local paths = map and map:FindFirstChild("Paths")
+    if not paths then return {} end
+    local lanes = {}
+    for _, lane in ipairs(paths:GetChildren()) do
+        local L = buildLane(lane)
+        if L then L.name = lane.Name; table.insert(lanes, L) end
+    end
+    table.sort(lanes, function(a, b) return a.name < b.name end)
+    return lanes
+end
+
+-- เข้ากันได้กับโค้ดเดิม (เลนแรก)
+local function buildPath()
+    local lanes = buildAllPaths()
+    return lanes[1]
+end
+local function posAt(path, d)
+    d = math.clamp(d, 0, path.total)
+    for i = 2, #path.pts do
+        if path.cum[i] >= d then
+            local segLen = path.cum[i] - path.cum[i-1]
+            local t = segLen > 0 and (d - path.cum[i-1]) / segLen or 0
+            return path.pts[i-1]:Lerp(path.pts[i], t)
+        end
+    end
+    return path.pts[#path.pts]
+end
+local function dirAt(path, d)
+    d = math.clamp(d, 0, path.total)
+    for i = 2, #path.pts do
+        if path.cum[i] >= d then
+            local v = path.pts[i] - path.pts[i-1]
+            if v.Magnitude > 0 then return v.Unit end
+        end
+    end
+    return Vector3.new(0, 0, 1)
+end
+local function unitCount()
+    local u = workspace:FindFirstChild("Units")
+    return u and #u:GetChildren() or 0
+end
+
+-- ⭐ หา "เลนที่มอนเดินจริง" — นับมอนที่อยู่ใกล้แต่ละเลน เลือกเลนที่มอนเยอะสุด
+--    (ใช้ได้ทุก Act ไม่ต้องเดาว่า Act ไหน = เลนไหน)
+local function nearestDistToLane(lane, pos)
+    local best = math.huge
+    for _, wp in ipairs(lane.pts) do
+        local d = (Vector3.new(wp.X, 0, wp.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude
+        if d < best then best = d end
+    end
+    return best
+end
+local function findActiveLane(lanes)
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    local score = {}
+    local total = 0
+    for _, m in ipairs(enemies:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok then
+            total = total + 1
+            -- มอนตัวนี้ใกล้เลนไหนสุด → ให้คะแนนเลนนั้น
+            local bestLane, bestD
+            for li, lane in ipairs(lanes) do
+                local d = nearestDistToLane(lane, p)
+                if not bestD or d < bestD then bestLane, bestD = li, d end
+            end
+            if bestLane and bestD <= 30 then score[bestLane] = (score[bestLane] or 0) + 1 end
+        end
+    end
+    if total == 0 then return nil end
+    local winner, winScore
+    for li, sc in pairs(score) do
+        if not winScore or sc > winScore then winner, winScore = li, sc end
+    end
+    if winner then return lanes[winner], winScore, total end
+    return nil
+end
+
+-- ⭐ ตัวเงิน (Investor / DPS 0) — วางก่อนเสมอ
+local MONEY_ASSETS = { "ichiraku", "ramen", "stonealchemist", "stone alchemist", "alchemist", "sankzu", "chefbum" }
+local function isMoneyUnit(asset)
+    local a = tostring(asset):lower()
+    for _, k in ipairs(MONEY_ASSETS) do if a:find(k, 1, true) then return true end end
+    return false
+end
+local function slotAsset(id)
+    if type(id) ~= "string" then return "" end
+    local a = id:match('"Asset"%s*:%s*"([^"]+)"')       -- JSON (ตัวจ้าง)
+    if a then
+        if a:find("Equipment") then
+            for x in id:gmatch('"Asset"%s*:%s*"([^"]+)"') do if not x:find("Equipment") then a = x; break end end
+        end
+        return a
+    end
+    return (id:gsub("#.*$", ""))
+end
+
+-- อ่านช่องตัวละครในด่าน (hotbar ที่วางได้) — เรียงตัวเงินก่อน
+local function gameHotbarSlots()
+    if not registry then return {} end
+    local best
+    for _, rep in pairs(registry) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == "HotbarData" then
+            local okd, d = pcall(function() return rep.Data end)
+            if okd and type(d) == "table" and type(d.Slots) == "table" then
+                if d.PlacementAllowed == true then best = d; break end
+                if not best or (tonumber(d.MaxSlots) or 0) > (tonumber(best.MaxSlots) or 0) then best = d end
+            end
+        end
+    end
+    local out = {}
+    if best then
+        for k, v in pairs(best.Slots) do
+            local n = tonumber(k)
+            if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
+                local asset = slotAsset(v.ID)
+                out[#out+1] = { slot = n, cost = tonumber(v.PlacementCost) or 0,
+                                asset = asset, money = isMoneyUnit(asset) }
+            end
+        end
+    end
+    -- ⭐ ตัวเงินก่อน (money=true มาก่อน) แล้วค่อยเรียงตาม slot
+    table.sort(out, function(a, b)
+        if a.money ~= b.money then return a.money end
+        return a.slot < b.slot
+    end)
+    return out
+end
+
+-- วางตัว 1 ช่องที่จุด d (ลองเยื้องข้างจนติด)
+local function placeAt(path, slot, d)
+    local rep = getReplica("GamePlayerData")
+    if not rep then return false end
+    local hb = getReplica("HotbarData")
+    local base = posAt(path, d)
+    local dir = dirAt(path, d)
+    local perp = Vector3.new(-dir.Z, 0, dir.X)
+    for _, off in ipairs(SIDE_OFFSETS) do
+        local p = base + perp * off
+        local before = unitCount()
+        if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.1) end
+        pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
+        task.wait(0.7)
+        if unitCount() > before then return true end
+    end
+    return false
+end
+
+local pileOn = false
+_G.AE_VILLAIN_PLACE = function()
+    if pileOn then print("[Villain] วางอยู่แล้ว"); return end
+    pileOn = true
+    task.spawn(function()
+        local lanes = buildAllPaths()
+        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); pileOn = false; return end
+
+        -- ⭐ รอมอนโผล่ แล้วหาเลนที่มอนเดินจริง (สูงสุด 20 วิ)
+        local lane
+        for _ = 1, 20 do
+            if not pileOn then break end
+            local L, sc, total = findActiveLane(lanes)
+            if L then
+                lane = L
+                print(("[Villain] 🎯 เลนที่มอนเดิน = '%s' (มอน %d/%d ตัวอยู่เลนนี้)"):format(L.name, sc, total))
+                break
+            end
+            task.wait(1)
+        end
+        if not lane then
+            -- ยังไม่เจอมอน → ใช้เลนแรกไปก่อน (เดี๋ยว round หลังหาใหม่)
+            lane = lanes[1]
+            print("[Villain] ⏳ ยังไม่เจอมอน → ใช้เลน '" .. lane.name .. "' ไปก่อน")
+        end
+
+        -- ⭐ วางทุกช่อง "เกาะกันแน่น" ที่ 55-65% ของเลนเดียว (ด่านยาก รวมพลัง)
+        for round = 1, 40 do
+            if not pileOn then break end
+            -- อัปเดตเลนที่ถูกทุก 5 รอบ (เผื่อรอบแรกเดาผิด)
+            if round % 5 == 0 then
+                local L = findActiveLane(lanes)
+                if L and L ~= lane then
+                    lane = L
+                    print("[Villain] 🔄 เปลี่ยนไปเลนที่มอนเยอะ = '" .. L.name .. "'")
+                end
+            end
+            local slots = gameHotbarSlots()
+            if #slots == 0 then task.wait(2); else
+                local yen = 0
+                pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
+                local didPlace = false
+                for _, s in ipairs(slots) do
+                    if not pileOn then break end
+                    if s.cost <= yen then
+                        -- เกาะกัน: จุดกลาง 60% + เยื้องเล็กน้อย (placeAt ลอง offset ให้อยู่แล้ว)
+                        local frac = 0.55 + math.random() * 0.10   -- 55-65%
+                        if placeAt(lane, s.slot, lane.total * frac) then
+                            print(("[Villain] ✅ วาง%s ช่อง %d → เลน '%s' ~%.0f%% (¥%d)")
+                                :format(s.money and "💰เงิน" or "⚔️ตัว", s.slot, lane.name, frac*100, s.cost))
+                            yen = yen - s.cost
+                            didPlace = true
+                            task.wait(0.3)
+                        end
+                    end
+                end
+                if not didPlace then task.wait(2) end
+            end
+        end
+        print("[Villain] 🏁 จบการวาง")
+        pileOn = false
+    end)
+end
+_G.AE_VILLAIN_PLACE_STOP = function() pileOn = false end
+
+-- ============================================================
+-- 🏁 จบด่าน → กด Replay (เล่นซ้ำ)
+-- ============================================================
+-- จบด่านหรือยัง (มีปุ่ม Replay / Repeat / Victory / Defeat)
+_G.AE_VILLAIN_ENDOPEN = function()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            local hasEnd, hasReplay = nil, false
+            for _, l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local t = (tostring(l.Text):gsub("<[^>]->", ""))
+                    if t == "Victory" or t == "Defeat" then hasEnd = t end
+                    if t == "Replay" or t == "Repeat Stage" or t == "Repeat" then hasReplay = true end
+                end
+            end
+            if hasEnd or hasReplay then return hasEnd or "End" end
+        end
+    end
+    return nil
+end
+
+_G.AE_VILLAIN_REPLAY = function()
+    for _, name in ipairs({ "Replay", "Repeat Stage", "Repeat" }) do
+        if clickText(name, 4, false) then
+            print("[Villain] 🔁 กด " .. name)
+            task.wait(2)
+            return true
+        end
+    end
+    warn("[Villain] ❌ ไม่เจอปุ่ม Replay")
+    return false
+end
+
+-- 🔍 dump โครงสร้างเส้นทาง + ตำแหน่งมอน (หาเลนที่ถูก)
+_G.AE_VILLAIN_PATHDUMP = function()
+    local out = { "===== VILLAIN PATH DUMP =====" }
+    local map = workspace:FindFirstChild("Map")
+    out[#out+1] = "Map = " .. tostring(map)
+    if map then
+        -- ลิสต์ทุกโฟลเดอร์ใน Map (เผื่อเส้นทางไม่ได้อยู่ใน "Paths")
+        out[#out+1] = "\n--- ลูกของ Map ---"
+        for _, c in ipairs(map:GetChildren()) do
+            out[#out+1] = ("  %s [%s]"):format(c.Name, c.ClassName)
+        end
+        local paths = map:FindFirstChild("Paths")
+        if paths then
+            out[#out+1] = "\n--- Map.Paths (แต่ละเลน) ---"
+            for _, lane in ipairs(paths:GetChildren()) do
+                local wpts = {}
+                for _, p in ipairs(lane:GetChildren()) do
+                    if p:IsA("BasePart") and tonumber(p.Name) then table.insert(wpts, p) end
+                end
+                table.sort(wpts, function(a, b) return tonumber(a.Name) < tonumber(b.Name) end)
+                local first = wpts[1] and wpts[1].Position
+                local last  = wpts[#wpts] and wpts[#wpts].Position
+                out[#out+1] = ("  เลน '%s' [%s] : %d waypoints%s")
+                    :format(lane.Name, lane.ClassName, #wpts,
+                        first and (("  เริ่ม(%.0f,%.0f,%.0f) → จบ(%.0f,%.0f,%.0f)")
+                            :format(first.X, first.Y, first.Z, last.X, last.Y, last.Z)) or "")
+            end
+        else
+            out[#out+1] = "\n⚠️ ไม่มี Map.Paths — เส้นทางอยู่ที่อื่น"
+        end
+    end
+    -- ตำแหน่งมอนจริง (เอาไว้เทียบว่าเลนไหนถูก)
+    local enemies = workspace:FindFirstChild("Enemies")
+    out[#out+1] = "\n--- Enemies (ตำแหน่งมอน 10 ตัวแรก) ---"
+    if enemies then
+        local n = 0
+        for _, m in ipairs(enemies:GetChildren()) do
+            local ok, p = pcall(function() return m:GetPivot().Position end)
+            if ok then
+                n = n + 1
+                if n <= 10 then out[#out+1] = ("  %s (%.0f, %.0f, %.0f)"):format(m.Name, p.X, p.Y, p.Z) end
+            end
+        end
+        out[#out+1] = "  รวม " .. n .. " ตัว"
+    else
+        out[#out+1] = "  ไม่เจอ workspace.Enemies"
+    end
+    -- ตำแหน่งตัวที่วางไปแล้ว (จุดเหลือง = ผิด)
+    local units = workspace:FindFirstChild("Units")
+    out[#out+1] = "\n--- ตัวที่วางไปแล้ว ---"
+    if units then
+        for _, m in ipairs(units:GetChildren()) do
+            local ok, p = pcall(function() return m:GetPivot().Position end)
+            if ok then out[#out+1] = ("  %s (%.0f, %.0f, %.0f)"):format(m.Name, p.X, p.Y, p.Z) end
+        end
+    end
+    local s = table.concat(out, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Villain] 📋 คัดลอกแล้ว — ส่งมาให้ดู")
+end
+
+_G.AE_VILLAIN_DUMP = function()
+    print("===== ปุ่มที่เห็นตอนนี้ =====")
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and reallyVisible(b) then
+                    local t = btnText(b)
+                    if t ~= "" then print(("  [%s] %s"):format(g.Name, t)) end
+                end
+            end
+        end
+    end
+end
+
+-- ============================================================
+-- 🤖 FULL AUTO — เข้าด่าน → วางตัว → รอจบ → Replay วนไป
+--   _G.AE_VILLAIN_RUN(1/2/3)   สั่งจากเว็บ: _G.AE_VILLAIN_ACT
+--   _G.AE_VILLAIN_RUN_STOP()
+-- ============================================================
+local function inVillainStage()
+    -- อยู่ในด่าน = เจอ workspace.Map.Paths + GameState active
+    local gs = getReplica("GameState")
+    local d = gs and gs.Data
+    if type(d) == "table" and (d.Active == true or tostring(d.CurrentGameState) == "InProgress") then
+        local map = workspace:FindFirstChild("Map")
+        if map and map:FindFirstChild("Paths") then return true end
+    end
+    return false
+end
+
+local villainRunning = false
+_G.AE_VILLAIN_RUN = function(act)
+    if villainRunning then print("[Villain] ทำงานอยู่แล้ว"); return end
+    villainRunning = true
+    act = tonumber(act) or tonumber(_G.AE_VILLAIN_ACT) or 1
+    print(("[Villain] 🚀 FULL AUTO — Act %d"):format(act))
+    task.spawn(function()
+        local placedThisRun = false
+        while villainRunning do
+            local ok, err = pcall(function()
+                -- จบด่าน → Replay
+                if _G.AE_VILLAIN_ENDOPEN() then
+                    print("[Villain] 🏁 จบด่าน → Replay")
+                    _G.AE_VILLAIN_PLACE_STOP()
+                    placedThisRun = false
+                    _G.AE_VILLAIN_REPLAY()
+                    task.wait(5)
+                    return
+                end
+                -- ในด่าน → วางตัว (ครั้งเดียวต่อรอบ)
+                if inVillainStage() then
+                    if not placedThisRun then
+                        act = tonumber(_G.AE_VILLAIN_ACT) or act   -- อัปเดต act จากเว็บ
+                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัว")
+                        _G.AE_VILLAIN_PLACE()
+                        placedThisRun = true
+                    end
+                    task.wait(3)
+                -- ล็อบบี้ → เข้าด่าน
+                else
+                    placedThisRun = false
+                    act = tonumber(_G.AE_VILLAIN_ACT) or act
+                    print(("[Villain] 🏠 ล็อบบี้ → เข้าด่าน Act %d"):format(act))
+                    _G.AE_VILLAIN_ENTER(act)
+                    task.wait(6)
+                end
+            end)
+            if not ok then warn("[Villain] ลูปพัง: " .. tostring(err)) end
+            task.wait(1)
+        end
+        _G.AE_VILLAIN_PLACE_STOP()
+        print("[Villain] ⏹ หยุด FULL AUTO")
+    end)
+end
+_G.AE_VILLAIN_RUN_STOP = function() villainRunning = false end
+
+-- ============================================================
+-- 🎫 เช็ค Battlepass ของ event Villain Invasion (คนละอันกับ BP หลัก)
+-- ============================================================
+_G.AE_VILLAIN_BPDUMP = function()
+    local out = { "===== BATTLEPASS / EVENT DUMP =====" }
+    local function ser(v, depth, seen)
+        depth = depth or 0; seen = seen or {}
+        if type(v) ~= "table" then return tostring(v) end
+        if depth > 4 or seen[v] then return "{...}" end
+        seen[v] = true
+        local parts = {}
+        for k, vv in pairs(v) do
+            parts[#parts+1] = ("%s%s = %s"):format(("  "):rep(depth+1), tostring(k), ser(vv, depth+1, seen))
+        end
+        if #parts == 0 then return "{}" end
+        return "{\n" .. table.concat(parts, "\n") .. "\n" .. ("  "):rep(depth) .. "}"
+    end
+
+    -- 1) PlayerData: BattlepassData + EventData + อะไรที่มีคำว่า battlepass/villain/event
+    local pd
+    for _, rep in pairs(registry or {}) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == "PlayerData" then pd = rep; break end
+    end
+    if pd and pd.Data then
+        out[#out+1] = "\n--- PlayerData.BattlepassData ---"
+        out[#out+1] = ser(pd.Data.BattlepassData, 1)
+        out[#out+1] = "\n--- PlayerData.EventData ---"
+        out[#out+1] = ser(pd.Data.EventData, 1)
+        -- คีย์ระดับบนที่มีคำเกี่ยวข้อง
+        out[#out+1] = "\n--- คีย์ PlayerData ที่เกี่ยวกับ event/villain/pass ---"
+        for k, v in pairs(pd.Data) do
+            local kl = tostring(k):lower()
+            if kl:find("event") or kl:find("villain") or kl:find("pass") or kl:find("crow") or kl:find("season") then
+                out[#out+1] = ("  %s = %s"):format(k, ser(v, 2))
+            end
+        end
+    else
+        out[#out+1] = "❌ ไม่เจอ PlayerData"
+    end
+
+    -- 2) replica อื่นที่ Token มีคำว่า battlepass/event/villain
+    out[#out+1] = "\n--- replica Token ที่เกี่ยวข้อง ---"
+    for id, rep in pairs(registry or {}) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t then
+            local tl = tostring(t):lower()
+            if tl:find("pass") or tl:find("event") or tl:find("villain") or tl:find("crow") then
+                local okd, d = pcall(function() return rep.Data end)
+                out[#out+1] = ("\n  id=%s Token=%s"):format(tostring(id), tostring(t))
+                out[#out+1] = "    " .. (okd and ser(d, 2) or "?")
+            end
+        end
+    end
+
+    local s = table.concat(out, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Villain] 📋 คัดลอกแล้ว — ส่งมาให้ดู")
+end
+
+
+end
+-- ===== [/VILLAIN MODULE] =====
 
 -- ===== [EXPEDITION MODULE] =====
 -- ระบบ Expedition ทั้งชุด (ฝังอัตโนมัติ — แก้ที่ไฟล์ต้นทางแล้ว build ใหม่)
