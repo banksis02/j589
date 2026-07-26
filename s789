@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.23"
+local SCRIPT_VERSION = "v9.24"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5786,8 +5786,8 @@ _G.AE_VILLAIN_ENTER = function(act)
     if not clickText("Events", 6, false, true) then return false end
     task.wait(1.5)
 
-    -- 2) เลือก Villain Invasion (ลิสต์ซ้าย)
-    if not clickText("Villain Invasion", 6) then return false end
+    -- 2) เลือก Villain Invasion (ลิสต์ซ้าย) — ⭐ VIM click จริง (โหลด content event)
+    if not clickText("Villain Invasion", 6, false, true) then return false end
     -- ⭐ v9.22: รอ content ของ event โหลดเสร็จก่อน (ปุ่ม Event Gamemode โผล่หลัง content โหลด)
     --    รอจนเจอปุ่ม Event Gamemode สูงสุด 15 วิ (เกมโหลด require ช้า)
     local ok3 = false
@@ -5801,8 +5801,8 @@ _G.AE_VILLAIN_ENTER = function(act)
         return false
     end
 
-    -- 3) Event Gamemode
-    if not clickText("Event Gamemode", 6) then return false end
+    -- 3) Event Gamemode — ⭐ VIM click จริง (โหลด content หน้า Act)
+    if not clickText("Event Gamemode", 6, false, true) then return false end
     task.wait(2)
 
     -- 4) เลือก Act — จับด้วย "ชื่อ" (Death/Tartaros/Sword ไม่แปลภาษา) + เลื่อนหาถ้าอยู่นอกจอ
