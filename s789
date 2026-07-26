@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.20"
+local SCRIPT_VERSION = "v9.21"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -3242,7 +3242,10 @@ if GAME_ID == "anime_expeditions" then
     end
 
     task.spawn(function()
-        task.wait(6)
+        -- ⭐ v9.21: รอ 1 นาทีก่อนเริ่มรับงาน — ให้เกมโหลด content (event/UI) ให้เสร็จก่อน
+        --    ไม่งั้นสคริปต์รีบเข้าด่านตอน content ยังโหลดไม่เสร็จ → หน้าเลือก Act หาย
+        print("[AE Remote] ⏳ รอเกมโหลดข้อมูลให้เสร็จก่อน 60 วิ ...")
+        task.wait(60)
         print("[AE Remote] 🎛️ รอรับคำสั่งงานจากเว็บ...")
         local lastStatus, lastLabel = nil, nil
         while true do
@@ -5557,8 +5560,8 @@ _G.AE_FUEL_AUTO = function()
     fuelAutoOn = true
     print("[Fuel] ⏰ ออโต้เติมพลังงานทุก 8 ชม. เริ่มทำงาน")
     task.spawn(function()
-        -- เข้าเกมครั้งแรก → เติมเลย 1 รอบ
-        task.wait(3)
+        -- ⭐ v9.21: รอเกมโหลดเสร็จก่อน (65 วิ) แล้วเติมรอบแรก — กันยิง remote ชน content load
+        task.wait(65)
         fuelOnce()
         local nextFuel = tick() + FUEL_INTERVAL
         while fuelAutoOn do
