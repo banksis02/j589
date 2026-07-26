@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.18"
+local SCRIPT_VERSION = "v9.19"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2315,6 +2315,7 @@ if GAME_ID == "anime_expeditions" then
         warn("[AE] ❌ กลับ Lobby ไม่สำเร็จหลังลอง 4 รอบ")
         return false
     end
+    _G.AE_BACK_TO_LOBBY = backToLobby   -- ⭐ ให้โมดูล fuel เรียกกลับล็อบบี้ได้
 
     -- ============================================================
     -- [AE] Auto-Config Settings (เช็ค + ตั้งค่าทุกครั้งที่ script รัน)
@@ -5388,6 +5389,216 @@ task.spawn(function()
     print("Merciless God Fight watcher ready!")
 end)
 
+
+
+-- ===== [FUEL MODULE] =====
+do -- Auto Fuel (เติมพลังงาน Gold Mine + Resource Drill ทุก 8 ชม.)
+-- ============================================================
+-- AE AUTO FUEL — เติมพลังงาน Gold Mine + Resource Drill
+--   _G.AE_FUEL_DUMP()  → หาค่า fuel ปัจจุบัน + จำนวน Fuel Cell (รันก่อน)
+--   _G.AE_FUEL_FILL()  → เติมให้เต็ม (เติม = ช่องว่าง = cap - ปัจจุบัน)
+-- ============================================================
+local player = game:GetService("Players").LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+
+-- ---------- replica registry ----------
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up) == "table" then
+            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
+            if registry then break end
+        end
+    end
+end)
+local function eachRep(token)
+    local out = {}
+    if registry then
+        for id, rep in pairs(registry) do
+            local ok, t = pcall(function() return rep.Token end)
+            if ok and t == token then out[#out+1] = { id = id, rep = rep, data = (function() local o,d=pcall(function() return rep.Data end); return o and d or nil end)() } end
+        end
+    end
+    return out
+end
+
+-- ---------- remote เติมพลังงาน ----------
+local fuelRemote
+pcall(function()
+    fuelRemote = RS:WaitForChild("Nodes"):WaitForChild("Network")
+        :WaitForChild("NetworkEvents"):WaitForChild("_updateNode")
+end)
+local function addFuel(building, amount)
+    if not fuelRemote or amount <= 0 then return end
+    pcall(function()
+        fuelRemote:FireServer({ Type = "Post" }, "EXPEDITION_BUILDING_ADD_FUEL", building, amount)
+    end)
+end
+
+-- ---------- อ่าน Fuel Cell ที่มี (จาก PlayerData.ItemData) ----------
+local function getFuelCellCount()
+    for _, e in ipairs(eachRep("PlayerData")) do
+        local d = e.data
+        if d and type(d.ItemData) == "table" then
+            for k, v in pairs(d.ItemData) do
+                if tostring(k):lower():find("fuel") or tostring(k):lower():find("expeditionfuel") then
+                    if type(v) == "table" then return tonumber(v.Amount) or tonumber(v.Count) or tonumber(v.Quantity) or 0, tostring(k) end
+                    if type(v) == "number" then return v, tostring(k) end
+                end
+            end
+        end
+    end
+    return 0, "?"
+end
+
+-- ---------- อ่านค่า fuel ปัจจุบันของอาคาร (จาก ExpeditionData.Buildings) ----------
+local function getBuildingFuel(name)
+    for _, e in ipairs(eachRep("PlayerData")) do
+        local d = e.data
+        local b = d and d.ExpeditionData and d.ExpeditionData.Buildings
+        if type(b) == "table" then
+            for k, v in pairs(b) do
+                if tostring(k) == name and type(v) == "table" then
+                    return v   -- คืน table ทั้งก้อน ไว้ดู field
+                end
+            end
+        end
+    end
+    return nil
+end
+
+_G.AE_FUEL_DUMP = function()
+    local out = { "===== AE FUEL DUMP =====" }
+    local function ser(v, depth, seen)
+        depth = depth or 0; seen = seen or {}
+        if type(v) ~= "table" then return tostring(v) end
+        if depth > 4 or seen[v] then return "{...}" end
+        seen[v] = true
+        local parts = {}
+        for k, vv in pairs(v) do parts[#parts+1] = ("%s%s = %s"):format(("  "):rep(depth+1), tostring(k), ser(vv, depth+1, seen)) end
+        return #parts == 0 and "{}" or ("{\n"..table.concat(parts,"\n").."\n"..("  "):rep(depth).."}")
+    end
+
+    out[#out+1] = "remote _updateNode: " .. tostring(fuelRemote)
+    local cells, cellKey = getFuelCellCount()
+    out[#out+1] = ("Fuel Cell ที่มี: %d  (key=%s)"):format(cells, cellKey)
+
+    out[#out+1] = "\n--- PlayerData.ExpeditionData.Buildings ---"
+    local found = false
+    for _, e in ipairs(eachRep("PlayerData")) do
+        local d = e.data
+        local b = d and d.ExpeditionData and d.ExpeditionData.Buildings
+        if type(b) == "table" then
+            found = true
+            out[#out+1] = ser(b, 1)
+            break
+        end
+    end
+    if not found then out[#out+1] = "  ❌ ไม่เจอ ExpeditionData.Buildings" end
+
+    -- replica อื่นที่ Token เกี่ยวกับ building/expedition/drill/mine/fuel
+    out[#out+1] = "\n--- replica Token ที่เกี่ยวข้อง ---"
+    for id, rep in pairs(registry or {}) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t then
+            local tl = tostring(t):lower()
+            if tl:find("building") or tl:find("drill") or tl:find("mine") or tl:find("fuel") or tl:find("node") then
+                local okd, d = pcall(function() return rep.Data end)
+                out[#out+1] = ("\n  id=%s Token=%s"):format(tostring(id), tostring(t))
+                out[#out+1] = "    " .. (okd and ser(d, 2) or "?")
+            end
+        end
+    end
+
+    local s = table.concat(out, "\n")
+    print(s); pcall(function() setclipboard(s) end)
+    print("[Fuel] 📋 คัดลอกแล้ว — ส่งมาให้ดู")
+end
+
+-- ---------- เติมให้เต็ม: เติม = cap - Fuel ปัจจุบัน ----------
+local FUEL_CAP = 100
+local FUEL_BUILDINGS = { "GoldMine", "ResourceDrill" }
+
+local function fuelOnce()
+    local cells = getFuelCellCount()
+    print(("[Fuel] 🔋 เติมพลังงาน (มี Fuel Cell %d)"):format(cells))
+    for _, name in ipairs(FUEL_BUILDINGS) do
+        local b = getBuildingFuel(name)
+        local cur = (type(b) == "table" and tonumber(b.Fuel)) or 0
+        local need = math.clamp(FUEL_CAP - cur, 0, cells)
+        if need > 0 then
+            print(("[Fuel] ⛽ %s: %d/%d → เติม %d"):format(name, cur, FUEL_CAP, need))
+            addFuel(name, need)
+            cells = cells - need
+            task.wait(0.6)
+            -- ยืนยัน (อ่านซ้ำ)
+            local b2 = getBuildingFuel(name)
+            local cur2 = (type(b2) == "table" and tonumber(b2.Fuel)) or cur
+            print(("[Fuel]    → ตอนนี้ %s = %d/%d"):format(name, cur2, FUEL_CAP))
+        else
+            print(("[Fuel] ✅ %s เต็มแล้ว (%d/%d)"):format(name, cur, FUEL_CAP))
+        end
+    end
+    print("[Fuel] 🏁 เติมเสร็จ")
+end
+_G.AE_FUEL_FILL = fuelOnce
+
+-- ============================================================
+-- ⏰ ออโต้เติมทุก 8 ชม. — เข้าเกมเติมรอบแรก → นับถอยหลัง → กลับล็อบบี้เติมใหม่
+--   _G.AE_FUEL_AUTO()      เริ่มระบบ (เข้าเกมครั้งแรกเติมเลย)
+--   _G.AE_FUEL_AUTO_STOP()
+--   สั่งจากเว็บ/สคริปต์หลัก: เรียก _G.AE_FUEL_AUTO() ตอนเริ่มงาน
+-- ============================================================
+local FUEL_INTERVAL = 8 * 60 * 60   -- 8 ชั่วโมง (วินาที)
+local fuelAutoOn = false
+
+-- อยู่ล็อบบี้ไหม (มี InteractZones.Crafting)
+local function inLobby()
+    local iz = workspace:FindFirstChild("InteractZones")
+    return iz ~= nil and iz:FindFirstChild("Crafting") ~= nil
+end
+
+_G.AE_FUEL_AUTO = function()
+    if fuelAutoOn then print("[Fuel] ทำงานอยู่แล้ว"); return end
+    fuelAutoOn = true
+    print("[Fuel] ⏰ ออโต้เติมพลังงานทุก 8 ชม. เริ่มทำงาน")
+    task.spawn(function()
+        -- เข้าเกมครั้งแรก → เติมเลย 1 รอบ
+        task.wait(3)
+        fuelOnce()
+        local nextFuel = tick() + FUEL_INTERVAL
+        while fuelAutoOn do
+            task.wait(30)
+            if tick() >= nextFuel then
+                -- ⭐ ถึงเวลา 8 ชม. → ต้องอยู่ล็อบบี้ก่อนเติม (เติมได้เฉพาะล็อบบี้)
+                if not inLobby() and _G.AE_BACK_TO_LOBBY then
+                    print("[Fuel] ⏰ ครบ 8 ชม. → กลับล็อบบี้ไปเติม")
+                    pcall(_G.AE_BACK_TO_LOBBY)
+                    task.wait(5)
+                end
+                if inLobby() then
+                    fuelOnce()
+                    nextFuel = tick() + FUEL_INTERVAL
+                    print(("[Fuel] ⏳ เติมครั้งถัดไปอีก 8 ชม."))
+                else
+                    -- ยังไม่ถึงล็อบบี้ → ลองใหม่อีก 1 นาที
+                    print("[Fuel] ⏳ ยังไม่ถึงล็อบบี้ → รอแล้วลองเติมใหม่")
+                    nextFuel = tick() + 60
+                end
+            end
+        end
+        print("[Fuel] ⏹ หยุดออโต้เติมพลังงาน")
+    end)
+end
+_G.AE_FUEL_AUTO_STOP = function() fuelAutoOn = false end
+
+
+-- ⭐ เริ่มออโต้เติมพลังงานทันทีที่โหลด (ทำงานตลอดที่สคริปต์รัน)
+_G.AE_FUEL_AUTO()
+
+end
+-- ===== [/FUEL MODULE] =====
 
 -- ===== [VILLAIN MODULE] =====
 do -- Villain Invasion (headless)
