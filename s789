@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.14"
+local SCRIPT_VERSION = "v9.15"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2045,9 +2045,9 @@ if GAME_ID == "anime_expeditions" then
         return s and s:FindFirstChild("Frame") ~= nil and #s.Frame:GetChildren() > 1
     end
 
-    -- ⭐ v8.x: เกมเพิ่มปุ่ม "ออกจากด่าน" (ประตู) ข้างเฟือง → สคริปต์เผลอกดโดน
-    --    → เด้งกล่อง "Exit Confirmation" (Return to Lobby / Cancel)
-    --    ห้ามกด Return to Lobby เด็ดขาด — เจอกล่องนี้เมื่อไหร่กด Cancel ทิ้งทันที
+    -- ⭐ กด Cancel ในกล่อง Exit Confirmation — ใช้เฉพาะตอน openSettings เผลอกดโดนปุ่ม Exit
+    --    v9.15: เอา "ตัวเฝ้าตลอดเวลา" ออกแล้ว (มันไปกด Cancel ตัดการกลับล็อบบี้ที่เราตั้งใจ)
+    --    เรียกเฉพาะจาก openSettings เท่านั้น (ตอนนั้นเราไม่ได้ตั้งใจออกด่าน)
     local function dismissExitConfirm()
         for _, g in ipairs(player.PlayerGui:GetChildren()) do
             if g:IsA("ScreenGui") and g.Enabled then
@@ -2091,14 +2091,6 @@ if GAME_ID == "anime_expeditions" then
         return false
     end
     _G.AE_DISMISS_EXIT = dismissExitConfirm
-
-    -- เฝ้าตลอด — เจอกล่อง Exit Confirmation เมื่อไหร่กด Cancel ทันที
-    task.spawn(function()
-        while true do
-            pcall(dismissExitConfirm)
-            task.wait(1)
-        end
-    end)
 
     -- ⭐ เฟือง Settings = ปุ่มที่ "เปิดหน้า Settings ได้จริง" เท่านั้น
     --    เกมเพิ่มปุ่ม Exit ขวาสุด → ต้องจำว่าปุ่มไหนคือ Exit แล้วไม่กดอีก (blacklist)
@@ -2213,11 +2205,44 @@ if GAME_ID == "anime_expeditions" then
     -- ⭐ กลับ Lobby ด้วย remote ตรงๆ — ดักจากการกด Return to Lobby จริง:
     --    ReplicaSignal:FireServer(60, "Lobby") — ยิง opcode 58/59/60 ทั้งชุดแบบ Restart
     --    (UI คลิกไม่เสถียร: Activated:Fire() ปิดกล่องแต่ไม่วาป)
+    -- กดยืนยัน "Return to Lobby" ในกล่อง Exit Confirmation (ถ้าเด้ง)
+    local function confirmReturnToLobby()
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, b in ipairs(g:GetDescendants()) do
+                    if b:IsA("GuiButton") and b.Visible then
+                        local hit = (b:IsA("TextButton") and b.Text == "Return to Lobby")
+                        if not hit then
+                            for _, l in ipairs(b:GetDescendants()) do
+                                if l:IsA("TextLabel") and l.Visible and l.Text == "Return to Lobby" then hit = true; break end
+                            end
+                        end
+                        if hit then
+                            fireButtonConns(b)
+                            pcall(function()
+                                local inset = game:GetService("GuiService"):GetGuiInset()
+                                local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+                                local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset.Y
+                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                                task.wait(0.05)
+                                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                            end)
+                            print("[AE] 🏠 กดยืนยัน Return to Lobby")
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+
     local function backToLobby()
-        print("[AE] 🏠 กลับ Lobby (ยิง remote)...")
+        print("[AE] 🏠 กลับ Lobby...")
         for attempt = 1, 3 do
-            if inLobby() then return true end
-            local ok = pcall(function()
+            if inLobby() then print("[AE] ✅ ถึง Lobby แล้ว"); return true end
+            -- 1) ยิง remote
+            pcall(function()
                 local sig = game:GetService("ReplicatedStorage")
                     :WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
                 local ops = opcodesFor("Lobby", { 60, 58, 59, 61, 62, 63 })
@@ -2228,15 +2253,11 @@ if GAME_ID == "anime_expeditions" then
                 end
                 scriptFiring = false
             end)
-            if not ok then warn("[AE] ⚠️ หา ReplicaSignal ไม่เจอ (รอบ " .. attempt .. ")") end
-
-            -- รอวาปถึง lobby จริง (workspace.InteractZones.Crafting โผล่)
+            -- รอวาป + คอยกดยืนยัน Return to Lobby ถ้ากล่องเด้ง
             local t0 = tick()
             while tick() - t0 < 20 do
-                if inLobby() then
-                    print("[AE] ✅ ถึง Lobby แล้ว")
-                    return true
-                end
+                if inLobby() then print("[AE] ✅ ถึง Lobby แล้ว"); return true end
+                confirmReturnToLobby()   -- เด้งกล่องยืนยัน → กด Return to Lobby
                 task.wait(1)
             end
             warn("[AE] ⚠️ ยังไม่วาป → ยิงใหม่ (รอบ " .. attempt .. ")")
