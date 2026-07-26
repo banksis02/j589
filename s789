@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.16"
+local SCRIPT_VERSION = "v9.17"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1985,26 +1985,60 @@ if GAME_ID == "anime_expeditions" then
         end
         if not itemInvOpen() then return nil end
 
+        -- ⭐ v9.17: อ่านจำนวนแบบทน — รับทั้ง "Nx", "N / M", "Nx / Mx Owned"
+        local function clean(s) return (tostring(s):gsub("<[^>]->", "")) end
+        local function parseQty(t)
+            t = clean(t)
+            -- แบบ "25 / 125" หรือ "25x / 125x Owned" → เอาตัวหน้า
+            local a = t:match("([%d,]+)%s*x?%s*/%s*[%d,]+")
+            if a then return tonumber((a:gsub(",", ""))) end
+            -- แบบ "25x"
+            local b = t:match("^([%d,]+)%s*x$")
+            if b then return tonumber((b:gsub(",", ""))) end
+            return nil
+        end
+
         local result = nil
+        -- 1) จากพาเนลรายละเอียด: หา label "Owned" (เช่น "25x / 125x Owned")
         for _, lbl in ipairs(inv:GetDescendants()) do
-            if lbl:IsA("TextLabel") and lbl.Text == itemName then
-                -- หา label จำนวน "Nx" ใน card เดียวกัน (ไล่ parent ขึ้นทีละชั้น)
-                local card = lbl.Parent
-                for depth = 1, 4 do
-                    if not card then break end
-                    for _, q in ipairs(card:GetDescendants()) do
-                        if q:IsA("TextLabel") and q ~= lbl then
-                            local n = q.Text:match("^([%d,]+)x$")
-                            if n then
-                                result = tonumber((n:gsub(",", "")))
-                                break
+            if lbl:IsA("TextLabel") and lbl.Visible then
+                local t = clean(lbl.Text)
+                if t:find("/", 1, true) and (t:lower():find("owned") or t:match("^[%d,]+%s*x?%s*/%s*[%d,]+")) then
+                    -- ต้องมั่นใจว่าเป็นของ item นี้ (มี label ชื่อ item อยู่ใน gui เดียวกัน)
+                    local q = parseQty(t)
+                    -- เช็คว่ามีชื่อ item อยู่ใกล้ๆ (พาเนลเดียวกัน)
+                    local anc = lbl.Parent
+                    local hasName = false
+                    for _ = 1, 5 do
+                        if not anc then break end
+                        for _, x in ipairs(anc:GetDescendants()) do
+                            if x:IsA("TextLabel") and clean(x.Text):find(itemName, 1, true) then hasName = true; break end
+                        end
+                        if hasName then break end
+                        anc = anc.Parent
+                    end
+                    if q and hasName then result = q; break end
+                end
+            end
+        end
+        -- 2) fallback: จาก card ในกริด (badge "Nx" ใกล้ชื่อ item)
+        if not result then
+            for _, lbl in ipairs(inv:GetDescendants()) do
+                if lbl:IsA("TextLabel") and clean(lbl.Text):find(itemName, 1, true) then
+                    local card = lbl.Parent
+                    for depth = 1, 4 do
+                        if not card then break end
+                        for _, q in ipairs(card:GetDescendants()) do
+                            if q:IsA("TextLabel") and q ~= lbl then
+                                local n = parseQty(q.Text)
+                                if n then result = n; break end
                             end
                         end
+                        if result then break end
+                        card = card.Parent
                     end
                     if result then break end
-                    card = card.Parent
                 end
-                break
             end
         end
         -- ⭐ ปิดกลับถ้าเดิมปิดอยู่ — ยืนยันปิดจริง (คอมช้า กด J ครั้งเดียวอาจไม่ปิด)
@@ -3051,8 +3085,16 @@ if GAME_ID == "anime_expeditions" then
                         while not _G.AE_SETTINGS_DONE and tick() - t0 < 45 do task.wait(1) end
                     end
                     if farmMode == "actM" then
-                        -- ⭐ โหมด M: คราฟเฉพาะตอน Grey เต็ม/ยังไม่เคย sync (ไม่เปิดหน้าคราฟทุกรอบ)
-                        if greyKnown >= CRAFT_GREY_FULL or not greyKnownSynced then
+                        -- ⭐ v9.17: อ่าน Grey จริงจากกระเป๋าก่อน (ไม่ใช้ตัวนับลอยๆ)
+                        --    คราฟเฉพาะตอนเต็ม 125 จริง — ไม่งั้นเข้าด่านต่อ ไม่กลับล็อบบี้เปล่าๆ
+                        local realGrey = readItemCount("Sprite (Grey)")
+                        if realGrey then
+                            greyKnown = realGrey
+                            greyKnownSynced = true
+                            print("[AE Farm] 💿 Grey จริง (กระเป๋า): " .. realGrey .. "/" .. CRAFT_GREY_FULL)
+                        end
+                        if (realGrey or greyKnown) >= CRAFT_GREY_FULL then
+                            print("[AE Farm] 🌈 Grey เต็ม → คราฟ")
                             autoCraftIfFull()
                             task.wait(1)
                         end
@@ -3119,13 +3161,10 @@ if GAME_ID == "anime_expeditions" then
                         end
                         task.wait(0.5)
 
-                        -- ⭐ โหมด M: กลับ Lobby เมื่อ Grey เต็ม หรือยังไม่เคย sync ค่าจริง
-                        if farmMode == "actM" and (greyKnown >= CRAFT_GREY_FULL or not greyKnownSynced) then
-                            if not greyKnownSynced then
-                                print("[AE Farm] 🔄 ยังไม่เคยเช็ค Grey จริง → กลับ Lobby ไป sync + คราฟถ้าเต็ม")
-                            else
-                                print("[AE Farm] 💿 Grey เต็มแล้ว (" .. greyKnown .. ") → กลับ Lobby ไปคราฟ")
-                            end
+                        -- ⭐ v9.17: โหมด M กลับ Lobby "เฉพาะตอน Grey เต็ม 125 จริง" (อ่านจากกระเป๋า)
+                        --    ไม่ใช้เงื่อนไข not greyKnownSynced อีก (มันบังคับกลับทุกรอบ = บัค)
+                        if farmMode == "actM" and greyKnown >= CRAFT_GREY_FULL then
+                            print("[AE Farm] 💿 Grey เต็มแล้ว (" .. greyKnown .. "/" .. CRAFT_GREY_FULL .. ") → กลับ Lobby ไปคราฟ")
                             backToLobby()
                             task.wait(8)  -- รอโหลดกลับ lobby (loop รอบหน้าจะคราฟ + เข้าด่านเอง)
                         else
