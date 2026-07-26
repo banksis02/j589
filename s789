@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.12"
+local SCRIPT_VERSION = "v9.13"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5632,13 +5632,17 @@ local function findActiveLane(lanes)
     return nil
 end
 
--- ⭐ ตัวเงิน (Investor / DPS 0) — วางก่อนเสมอ
+-- ⭐ ตัวเงิน (Investor / DPS 0) — วางก่อน + อัพก่อน
 local MONEY_ASSETS = { "ichiraku", "ramen", "stonealchemist", "stone alchemist", "alchemist", "sankzu", "chefbum" }
-local function isMoneyUnit(asset)
+-- ⭐ ตัวซัพ (บัฟ/ดีบัฟ DPS 0) — วางได้ แต่ห้ามอัพ (เปลืองเงิน)
+local SUPPORT_ASSETS = { "rukia", "utahime", "himmel", "gray", "sugar", "inumaki", "salmon" }
+local function assetIn(asset, list)
     local a = tostring(asset):lower()
-    for _, k in ipairs(MONEY_ASSETS) do if a:find(k, 1, true) then return true end end
+    for _, k in ipairs(list) do if a:find(k, 1, true) then return true end end
     return false
 end
+local function isMoneyUnit(asset)   return assetIn(asset, MONEY_ASSETS)   end
+local function isSupportUnit(asset) return assetIn(asset, SUPPORT_ASSETS) end
 local function slotAsset(id)
     if type(id) ~= "string" then return "" end
     local a = id:match('"Asset"%s*:%s*"([^"]+)"')       -- JSON (ตัวจ้าง)
@@ -5702,6 +5706,81 @@ local function placeAt(path, slot, d)
     end
     return false
 end
+
+-- ============================================================
+-- ⬆️ อัพเกรดเอง — เงินก่อน → ดาเมจ → ข้ามซัพ (ปิด auto-upgrade เกมก่อน)
+-- ============================================================
+-- unit ที่เราวางในสนาม (GameUnit replica) — ข้ามโคลนซัมมอน
+local function getMyUnits()
+    local mine, all = {}, {}
+    if not registry then return mine end
+    for _, rep in pairs(registry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "GameUnit" then
+            local okd, d = pcall(function() return rep.Data end)
+            local isClone = okd and type(d) == "table" and (d.IsClone or d.Unupgradeable or d.HiddenUnitManager)
+            if okd and type(d) == "table" and not isClone then
+                local u = {
+                    id = d.ID or d.Id, owner = tostring(d.Owner or ""),
+                    asset = (d.UnitData and d.UnitData.Asset) or d.Asset or "",
+                    upgrade = tonumber(d.Upgrade) or 0, maxUp = tonumber(d.MaxUpgrade) or 9,
+                    cost = (d.NextStats and tonumber(d.NextStats.Cost)) or nil,
+                }
+                if u.id then
+                    all[#all+1] = u
+                    if u.owner == player.Name then mine[#mine+1] = u end
+                end
+            end
+        end
+    end
+    return #mine > 0 and mine or all
+end
+
+local function getYen()
+    local g = getReplica("GamePlayerData")
+    if g and g.Data then return tonumber(g.Data.Yen) or 0 end
+    return 0
+end
+
+local upgradeOn = false
+_G.AE_VILLAIN_UPGRADE = function()
+    if upgradeOn then return end
+    upgradeOn = true
+    task.spawn(function()
+        print("[Villain] ⬆️ เริ่มลูปอัพเกรด (เงินก่อน → ดาเมจ | ข้ามซัพ)")
+        while upgradeOn do
+            local rep = getReplica("GamePlayerData")
+            local acted = false
+            if rep then
+                local yen = getYen()
+                -- จัดกลุ่ม: เงิน(1) > ดาเมจ(2) — ข้ามซัพ
+                --   เลือกตัวที่ prio ต่ำสุด (เงินก่อน) แล้วขั้นต่ำสุด (เกลี่ยขึ้นพร้อมกัน)
+                local pick, pickPrio
+                for _, u in ipairs(getMyUnits()) do
+                    if u.upgrade < u.maxUp and (u.cost or 0) > 0 and yen >= u.cost
+                       and not isSupportUnit(u.asset) then
+                        local prio = isMoneyUnit(u.asset) and 1 or 2
+                        if not pick or prio < pickPrio
+                           or (prio == pickPrio and u.upgrade < pick.upgrade) then
+                            pick, pickPrio = u, prio
+                        end
+                    end
+                end
+                if pick then
+                    local before = pick.upgrade
+                    pcall(function() rep:FireServer("UpgradeGameUnit", tostring(pick.id)) end)
+                    task.wait(1)
+                    print(("[Villain] ⬆️ อัพ %s %s: %d → ? (จ่าย ¥%d)")
+                        :format(pickPrio == 1 and "💰" or "⚔️", tostring(pick.asset), before, pick.cost or 0))
+                    acted = true
+                end
+            end
+            task.wait(acted and 0.3 or 2.5)
+        end
+        print("[Villain] ⏹️ หยุดลูปอัพเกรด")
+    end)
+end
+_G.AE_VILLAIN_UPGRADE_STOP = function() upgradeOn = false end
 
 local pileOn = false
 _G.AE_VILLAIN_PLACE = function()
@@ -5910,23 +5989,32 @@ _G.AE_VILLAIN_RUN = function(act)
     print(("[Villain] 🚀 FULL AUTO — Act %d"):format(act))
     task.spawn(function()
         local placedThisRun = false
+        local settingsDone = false
         while villainRunning do
             local ok, err = pcall(function()
                 -- จบด่าน → Replay
                 if _G.AE_VILLAIN_ENDOPEN() then
                     print("[Villain] 🏁 จบด่าน → Replay")
                     _G.AE_VILLAIN_PLACE_STOP()
+                    _G.AE_VILLAIN_UPGRADE_STOP()
                     placedThisRun = false
                     _G.AE_VILLAIN_REPLAY()
                     task.wait(5)
                     return
                 end
-                -- ในด่าน → วางตัว (ครั้งเดียวต่อรอบ)
+                -- ในด่าน → ตั้งค่า + วางตัว + อัพเกรด (ครั้งเดียวต่อรอบ)
                 if inVillainStage() then
                     if not placedThisRun then
                         act = tonumber(_G.AE_VILLAIN_ACT) or act   -- อัปเดต act จากเว็บ
-                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัว")
+                        -- ⭐ ปิด auto-upgrade ของเกม (มันอัพมั่วแล้วแพ้) — ครั้งเดียวต่อ session
+                        if not settingsDone and _G.AE_EXP_SETTINGS then
+                            print("[Villain] ⚙️ ปิด Auto-Upgrade/Auto Retry/Auto Next")
+                            pcall(_G.AE_EXP_SETTINGS)
+                            settingsDone = true
+                        end
+                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัว + อัพเกรดเอง")
                         _G.AE_VILLAIN_PLACE()
+                        _G.AE_VILLAIN_UPGRADE()
                         placedThisRun = true
                     end
                     task.wait(3)
@@ -5943,6 +6031,7 @@ _G.AE_VILLAIN_RUN = function(act)
             task.wait(1)
         end
         _G.AE_VILLAIN_PLACE_STOP()
+        _G.AE_VILLAIN_UPGRADE_STOP()
         print("[Villain] ⏹ หยุด FULL AUTO")
     end)
 end
