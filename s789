@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.21"
+local SCRIPT_VERSION = "v9.22"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5642,8 +5642,11 @@ local function fireConns(b)
     if n == 0 then pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire(); n = n + 1 end end) end
     return n
 end
-local function clickHard(b)
-    fireConns(b)
+-- ⭐ v9.22: คลิกพิกัดจริง (VIM) อย่างเดียว — ไม่ยิง connection
+--    ปุ่มเมนู event ที่ต้อง require() โหลด content: ยิง connection = require ใน thread
+--    ของ executor → "Cannot require non-RobloxScript module" → content หาย
+--    คลิกจริงผ่าน VIM → เกม handle native → require ทำงานปกติ
+local function clickVIM(b)
     pcall(function()
         local cx = b.AbsolutePosition.X + b.AbsoluteSize.X / 2
         local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y / 2 + inset.Y
@@ -5651,6 +5654,10 @@ local function clickHard(b)
         task.wait(0.06)
         VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
+end
+local function clickHard(b)
+    fireConns(b)
+    clickVIM(b)
 end
 
 -- ปุ่มที่ "เห็นบนจอจริง" + ข้อความตรง/มีคำ (คืนปุ่มใหญ่สุด)
@@ -5697,11 +5704,12 @@ local function findBtn(needle, exact)
     end
     return best
 end
+-- ⭐ กดปุ่มเมนู event ด้วย VIM อย่างเดียว (ไม่ยิง connection — กัน require พัง)
 local function clickText(needle, timeout, exact)
     local t0 = tick()
     repeat
         local b = findBtn(needle, exact)
-        if b then clickHard(b); print("[Villain] 👆 กด '" .. needle .. "'"); return true end
+        if b then clickVIM(b); print("[Villain] 👆 กด '" .. needle .. "' (VIM)"); return true end
         task.wait(0.4)
     until tick() - t0 > (timeout or 5)
     warn("[Villain] ❌ ไม่เจอปุ่ม '" .. needle .. "'")
@@ -5744,7 +5752,7 @@ local function clickActCard(act)
     for step = 0, 10 do
         local b = findActBtn(act)
         if b and reallyVisible(b) then
-            clickHard(b)
+            clickVIM(b)
             print(("[Villain] 👆 เลือก Act %d (%s)"):format(act, ACT_NAMES[act]))
             return true
         end
@@ -5758,7 +5766,7 @@ local function clickActCard(act)
     end
     -- เลื่อนสุดแล้วยังไม่เจอ → ลองคลิกตัวที่เจอ (แม้ reallyVisible ไม่ผ่าน)
     local b = findActBtn(act)
-    if b then clickHard(b); print("[Villain] 👆 เลือก Act " .. act .. " (หลังเลื่อน)"); return true end
+    if b then clickVIM(b); print("[Villain] 👆 เลือก Act " .. act .. " (หลังเลื่อน)"); return true end
     warn(("[Villain] ❌ ไม่เจอ Act %d (%s)"):format(act, tostring(ACT_NAMES[act])))
     return false
 end
@@ -5776,11 +5784,22 @@ _G.AE_VILLAIN_ENTER = function(act)
 
     -- 2) เลือก Villain Invasion (ลิสต์ซ้าย)
     if not clickText("Villain Invasion", 6) then return false end
-    task.wait(1.2)
+    -- ⭐ v9.22: รอ content ของ event โหลดเสร็จก่อน (ปุ่ม Event Gamemode โผล่หลัง content โหลด)
+    --    รอจนเจอปุ่ม Event Gamemode สูงสุด 15 วิ (เกมโหลด require ช้า)
+    local ok3 = false
+    for _ = 1, 30 do
+        if findBtn("Event Gamemode") then ok3 = true; break end
+        task.wait(0.5)
+    end
+    if not ok3 then
+        warn("[Villain] ⚠️ content event ยังไม่โหลด (ไม่เจอ Event Gamemode) → ดูปุ่ม:")
+        if _G.AE_VILLAIN_DUMP then _G.AE_VILLAIN_DUMP() end
+        return false
+    end
 
     -- 3) Event Gamemode
     if not clickText("Event Gamemode", 6) then return false end
-    task.wait(1.5)
+    task.wait(2)
 
     -- 4) เลือก Act — จับด้วย "ชื่อ" (Death/Tartaros/Sword ไม่แปลภาษา) + เลื่อนหาถ้าอยู่นอกจอ
     if not clickActCard(act) then return false end
@@ -5904,10 +5923,12 @@ local function findActiveLane(lanes)
     return nil
 end
 
--- ⭐ ตัวเงิน (Investor / DPS 0) — วางก่อน + อัพก่อน
-local MONEY_ASSETS = { "ichiraku", "ramen", "stonealchemist", "stone alchemist", "alchemist", "sankzu", "chefbum" }
+-- ⭐ ตัวเงิน — มีแค่ 2 ตัวนี้เท่านั้น (Ichiraku, Ramen Guy) — วางก่อน + อัพก่อน
+local MONEY_ASSETS = { "ichiraku", "ramen" }
 -- ⭐ ตัวซัพ (บัฟ/ดีบัฟ DPS 0) — วางได้ แต่ห้ามอัพ (เปลืองเงิน)
-local SUPPORT_ASSETS = { "rukia", "utahime", "himmel", "gray", "sugar", "inumaki", "salmon" }
+--    Stone Alchemist ก็เป็นซัพ (ไม่ใช่ตัวเงิน)
+local SUPPORT_ASSETS = { "rukia", "utahime", "himmel", "gray", "sugar", "inumaki", "salmon",
+                         "stonealchemist", "alchemist" }
 local function assetIn(asset, list)
     local a = tostring(asset):lower()
     for _, k in ipairs(list) do if a:find(k, 1, true) then return true end end
