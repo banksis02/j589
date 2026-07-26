@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.17"
+local SCRIPT_VERSION = "v9.18"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -1844,41 +1844,30 @@ if GAME_ID == "anime_expeditions" then
     end
 
     autoCraftInner = function()
-        -- ⭐ v8.2: อ่าน Grey จาก "กระเป๋า Items" เป็นหลัก (ป้าย Owned 125x — ชัวร์ที่สุด)
-        --    หน้าคราฟมีตัวเลขหลายชุดปนกัน เดาแล้วหยิบผิด (เคยได้ 25 ทั้งที่มี 125)
-        local grey = 0
-        if _G.AE_READ_ITEM then
-            local real = _G.AE_READ_ITEM("Sprite (Grey)")
-            if real and real > 0 then
-                grey = real
-                print("[AE Craft] 📦 Grey จากกระเป๋า: " .. grey)
-            end
-        end
-
-        print("[AE Craft] 🚪 เปิดหน้าคราฟเช็ค Grey...")
+        -- ⭐ v9.18: เปิดหน้าคราฟ → อ่าน Grey จากหน้าคราฟ → คราฟให้หมด (ไม่ต้องเช็ค 125)
+        --    เรียกตอนล็อบบี้ = คราฟทุกครั้ง (มีเท่าไหร่คราฟให้หมด) ไม่รีบปิด รอโหลดได้
+        print("[AE Craft] 🚪 เปิดหน้าคราฟ...")
         if not openCraftUI() then
             warn("[AE Craft] ❌ เปิดหน้าคราฟไม่ได้")
             return
         end
+        task.wait(1.5)   -- รอหน้าคราฟโหลดเต็ม (เครื่องช้า)
         clickCraftButton(CRAFT_COLORS[1])
         task.wait(1)
 
-        if grey <= 0 then                       -- กระเป๋าอ่านไม่ได้ → ค่อยใช้หน้าคราฟ
-            grey = readGreyRetry(CRAFT_COLORS[1])
-            print("[AE Craft] 🔍 Grey จากหน้าคราฟ: " .. grey
-                  .. " (ถ้าเลขผิด ใช้ _G.AE_CRAFT_DEBUG() ดูรายละเอียด)")
-        end
-
+        local grey = readGreyRetry(CRAFT_COLORS[1])
+        print("[AE Craft] 🔍 Grey จากหน้าคราฟ: " .. grey .. "/" .. CRAFT_GREY_FULL)
         greyKnown = grey
-        greyKnownSynced = true   -- ⭐ sync ค่าจริงแล้ว
-        print("[AE Craft] Grey: " .. grey .. "/" .. CRAFT_GREY_FULL .. " (synced)")
+        greyKnownSynced = true
 
-        if grey >= CRAFT_GREY_FULL then
+        if grey < CRAFT_NORMAL_COST then
+            print("[AE Craft] ℹ️ Grey น้อยเกินคราฟ (" .. grey .. ") — ข้าม")
+        else
+            -- คราฟ Rainbow ถ้าพอ (30) แล้วคราฟสีจนหมด
             if grey >= CRAFT_RAINBOW_COST then
                 print("[AE Craft] 🌈 Rainbow 1 ลูก...")
                 craftOne("Sprite (Rainbow)", CRAFT_RAINBOW_COST)
             end
-            -- ⭐ สุ่มสีคราฟจนหมด — ใช้ตัวนับจากกระเป๋า (แหล่งเดียวกับตอนตัดสินใจออกจากด่าน)
             local fullColors = {}
             local greyLeft, crafted = greyKnown, 0
             while true do
@@ -3078,27 +3067,26 @@ if GAME_ID == "anime_expeditions" then
                     victoryStuck = 0
                     print("[AE Farm] 🚀 ไม่อยู่ในเกม (lobby)")
                     local entered
-                    -- ⭐ v7.8: รอให้ตั้งค่าเสร็จก่อน แล้วค่อยคราฟ แล้วค่อยเข้าด่าน
+                    -- ⭐ v9.18: ทำทีละอย่างให้เสร็จจริงก่อนไปต่อ (ไม่รีบ เน้นถูกต้อง)
+                    --   [1] ตั้งค่าให้เสร็จ → [2] คราฟ Grey ให้หมด → [3] เข้าด่าน
+                    -- [1] รอตั้งค่าเสร็จ
                     if not _G.AE_SETTINGS_DONE then
-                        print("[AE Farm] ⏳ รอตั้งค่าให้เสร็จก่อน...")
+                        print("[AE Farm] ⏳ [1] รอตั้งค่าให้เสร็จก่อน...")
                         local t0 = tick()
-                        while not _G.AE_SETTINGS_DONE and tick() - t0 < 45 do task.wait(1) end
+                        while not _G.AE_SETTINGS_DONE and tick() - t0 < 60 do task.wait(1) end
                     end
                     if farmMode == "actM" then
-                        -- ⭐ v9.17: อ่าน Grey จริงจากกระเป๋าก่อน (ไม่ใช้ตัวนับลอยๆ)
-                        --    คราฟเฉพาะตอนเต็ม 125 จริง — ไม่งั้นเข้าด่านต่อ ไม่กลับล็อบบี้เปล่าๆ
-                        local realGrey = readItemCount("Sprite (Grey)")
-                        if realGrey then
-                            greyKnown = realGrey
-                            greyKnownSynced = true
-                            print("[AE Farm] 💿 Grey จริง (กระเป๋า): " .. realGrey .. "/" .. CRAFT_GREY_FULL)
-                        end
-                        if (realGrey or greyKnown) >= CRAFT_GREY_FULL then
-                            print("[AE Farm] 🌈 Grey เต็ม → คราฟ")
-                            autoCraftIfFull()
-                            task.wait(1)
-                        end
-                        entered = enterStageSequence(farmStage, "M", false)   -- Act M — เกม fix ระดับ
+                        -- [2] เปิดหน้าคราฟ → คราฟ Grey ให้หมด (ไม่รีบปิด เครื่องช้ารอได้)
+                        --     autoCraftIfFull อ่าน Grey จริงจากหน้าคราฟ/กระเป๋า แล้วคราฟจนหมดเอง
+                        print("[AE Farm] 🌈 [2] เปิดหน้าคราฟ → คราฟ Grey ให้หมด...")
+                        pcall(autoCraftIfFull)
+                        greyKnown = 0   -- คราฟหมดแล้ว → รีเซ็ตตัวนับ เริ่มนับใหม่
+                        greyKnownSynced = true
+                        print("[AE Farm] ✅ [2] คราฟเสร็จ → รีเซ็ตตัวนับ Grey = 0")
+                        task.wait(1)
+                        -- [3] เข้าด่าน
+                        print("[AE Farm] ▶️ [3] เข้าด่าน M")
+                        entered = enterStageSequence(farmStage, "M", false)
                     else
                         entered = enterStageSequence(farmStage, "1", true)    -- Act 1 + Hard
                     end
@@ -3130,34 +3118,14 @@ if GAME_ID == "anime_expeditions" then
                                 print("[AE Farm] ⏭️ Skip send (watcher ส่งไปแล้ว)")
                             end
 
-                            -- ⭐ โหมด M: อ่าน Grey จริงจาก Items Inventory (กด J — ใช้ได้ในด่าน)
+                            -- ⭐ v9.18: โหมด M นับเอง — 1 เกม = 5x (ไม่เปิดกระเป๋าในด่าน มันช้า/ต้องเลื่อน)
                             if farmMode == "actM" then
-                                local realGrey = readItemCount("Sprite (Grey)")
-                                if realGrey then
-                                    greyKnown = realGrey
-                                    greyKnownSynced = true
-                                    print("[AE Farm] 💿 Grey จริง (จากกระเป๋า): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
-                                else
-                                    -- fallback: นับจาก reward
-                                    local greyGain = 0
-                                    for _, r in ipairs(s.rewards) do
-                                        local qty = r:match("Sprite %(Grey%) x([%d,]+)")
-                                        if qty then greyGain = tonumber((qty:gsub(",", ""))) or 0 end
-                                    end
-                                    if greyGain == 0 then greyGain = 5 end  -- fallback: ด่าน M ได้ 5/รอบ
-                                    greyKnown = greyKnown + greyGain
-                                    print("[AE Farm] 💿 Grey สะสม (ประมาณ): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
-                                end
+                                greyKnown = greyKnown + 5
+                                print(("[AE Farm] 💿 Grey นับสะสม: %d/%d (+5/เกม)"):format(greyKnown, CRAFT_GREY_FULL))
                             end
                         elseif farmMode == "actM" then
-                            local realGrey = readItemCount("Sprite (Grey)")
-                            if realGrey then
-                                greyKnown = realGrey
-                                greyKnownSynced = true
-                                print("[AE Farm] 💿 Grey จริง (จากกระเป๋า): " .. greyKnown .. "/" .. CRAFT_GREY_FULL)
-                            else
-                                greyKnown = greyKnown + 5  -- อ่าน reward ไม่ได้ก็บวก 5 ไว้ก่อน
-                            end
+                            greyKnown = greyKnown + 5   -- อ่าน endScreen ไม่ได้ก็บวก 5 (จบเกม = ได้ 5)
+                            print(("[AE Farm] 💿 Grey นับสะสม: %d/%d"):format(greyKnown, CRAFT_GREY_FULL))
                         end
                         task.wait(0.5)
 
