@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.24"
+local SCRIPT_VERSION = "v9.25"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5782,12 +5782,18 @@ _G.AE_VILLAIN_ENTER = function(act)
     act = tonumber(act) or 1
     print(("[Villain] ▶️ เข้าด่าน Villain Invasion — Act %d"):format(act))
 
-    -- 1) เปิด Events (เมนูซ้ายในล็อบบี้) — ⭐ VIM click จริงเท่านั้น (กัน require พัง)
-    if not clickText("Events", 6, false, true) then return false end
-    task.wait(1.5)
+    -- 1) เปิด Events (เมนูซ้ายในล็อบบี้) — ⭐ VIM click จริง
+    --    ถ้าอยู่ในเมนู Events อยู่แล้ว (เจอการ์ด Villain Invasion) → ข้าม ไม่ต้องกด Events
+    if not findBtn("Villain Invasion") then
+        if not clickText("Events", 6, false, true) then return false end
+        task.wait(1.5)
+    else
+        print("[Villain] ℹ️ อยู่ในเมนู Events อยู่แล้ว → ข้ามไปกด Villain Invasion")
+    end
 
     -- 2) เลือก Villain Invasion (ลิสต์ซ้าย) — ⭐ VIM click จริง (โหลด content event)
     if not clickText("Villain Invasion", 6, false, true) then return false end
+    task.wait(1.5)
     -- ⭐ v9.22: รอ content ของ event โหลดเสร็จก่อน (ปุ่ม Event Gamemode โผล่หลัง content โหลด)
     --    รอจนเจอปุ่ม Event Gamemode สูงสุด 15 วิ (เกมโหลด require ช้า)
     local ok3 = false
