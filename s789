@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.28"
+local SCRIPT_VERSION = "v9.29"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6235,14 +6235,10 @@ _G.AE_VILLAIN_ENDOPEN = function()
 end
 
 _G.AE_VILLAIN_REPLAY = function()
-    -- ⭐ v9.28: ถ้าเจอปุ่ม "Game Results" (ปุ่มเปิดเมนูผล) → กดก่อนเพื่อเปิดหน้า Repeat
-    if findBtn("Game Results") then
-        clickText("Game Results", 4, false)
-        print("[Villain] 📋 กด Game Results (เปิดเมนูผล)")
-        task.wait(2)
-    end
-    -- แล้วกด Repeat Stage / Replay
-    for _ = 1, 4 do
+    -- ⭐ v9.29: ปุ่ม Repeat Stage ขึ้นตรงๆ บางที / บางทีต้องกด "Game Results" เปิดเมนูก่อน
+    --    วนเช็ค: มี Repeat แล้ว → กดเลย | ยังไม่มี + เจอ Game Results → กดเปิดเมนู
+    for round = 1, 8 do
+        -- มีปุ่ม Repeat/Replay อยู่แล้ว → กดเลย
         for _, name in ipairs({ "Repeat Stage", "Replay", "Repeat" }) do
             if findBtn(name) then
                 clickText(name, 3, false)
@@ -6251,7 +6247,12 @@ _G.AE_VILLAIN_REPLAY = function()
                 return true
             end
         end
-        task.wait(1)
+        -- ยังไม่มี → ถ้าเจอ Game Results กดเปิดเมนูผลก่อน
+        if findBtn("Game Results") then
+            clickText("Game Results", 3, false)
+            print("[Villain] 📋 กด Game Results (เปิดเมนูผล)")
+        end
+        task.wait(1.5)
     end
     warn("[Villain] ❌ ไม่เจอปุ่ม Repeat/Replay")
     return false
