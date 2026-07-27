@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.26"
+local SCRIPT_VERSION = "v9.27"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6482,10 +6482,14 @@ local player = game:GetService("Players").LocalPlayer
 
 -- toggle เปิด = UIGradient เขียว (136,255,0) | ปิด = แดง (255,51,51)
 -- ⭐ Expedition: ปิด auto-upgrade (want=false)  |  เพิ่มตัวอื่นได้ทีหลัง
+-- ⭐ ชื่อ setting: อังกฤษ + ไทย (UI เกมเป็นได้ทั้งสองภาษา) — names = ลิสต์ชื่อที่ยอมรับ
 local EXP_SETTING_PREFS = {
-    { name = "Auto-Upgrade Placed Units",   want = false, tab = "Units"    },
-    { name = "Auto Retry",                  want = false, tab = "Gameplay" },  -- ห้ามรีเกมเอง
-    { name = "Auto Next",                   want = false, tab = "Gameplay" },  -- ห้ามข้ามไปด่านต่อไปเอง
+    { names = { "Auto-Upgrade Placed Units", "อัพเกรดอัตโนมัติของยูนิตที่วางอยู่", "อัพเกรดอัตโนมัติ" },
+      want = false, tab = "Units", tabTH = "หน่วย" },
+    { names = { "Auto Retry", "ลองอีกครั้งโดยอัตโนมัติ" },
+      want = false, tab = "Gameplay", tabTH = "การเล่นเกม" },   -- ห้ามรีเกมเอง
+    { names = { "Auto Next", "อัตโนมัติถัดไป" },
+      want = false, tab = "Gameplay", tabTH = "การเล่นเกม" },   -- ห้ามข้ามไปด่านต่อไปเอง
 }
 
 local function fireBtn(btn)
@@ -6566,33 +6570,51 @@ local function openSettings()
     return settingsOpen()
 end
 
--- คลิกแท็บ (All / Units / ...) เผื่อ toggle อยู่คนละแท็บ
-local function clickTab(tabName)
+-- แปลง pref → ลิสต์ชื่อ (รองรับทั้ง name เดี่ยว และ names ลิสต์)
+local function nameList(pref)
+    if type(pref) == "table" and pref.names then return pref.names end
+    if type(pref) == "table" and pref.name then return { pref.name } end
+    return { tostring(pref) }
+end
+
+-- คลิกแท็บ (รองรับชื่อไทย/อังกฤษ)
+local function clickTab(...)
+    local wants = { ... }
     local s = player.PlayerGui:FindFirstChild("Settings")
     if not s then return false end
     for _, btn in ipairs(s:GetDescendants()) do
         if btn:IsA("TextButton") and btn.Visible then
-            if btn.Text == tabName then fireBtn(btn); task.wait(0.6); return true end
+            local texts = { btn.Text }
             for _, l in ipairs(btn:GetDescendants()) do
-                if l:IsA("TextLabel") and l.Text == tabName then fireBtn(btn); task.wait(0.6); return true end
+                if l:IsA("TextLabel") then texts[#texts+1] = l.Text end
+            end
+            for _, w in ipairs(wants) do
+                for _, t in ipairs(texts) do
+                    if t == w then fireBtn(btn); task.wait(0.6); return true end
+                end
             end
         end
     end
     return false
 end
 
-local function findLabel(name)
+-- หา label (ยอมรับหลายชื่อ) — คืน label + ชื่อที่เจอ
+local function findLabel(names)
     local s = player.PlayerGui:FindFirstChild("Settings")
     if not s then return nil end
     for _, l in ipairs(s:GetDescendants()) do
-        if l:IsA("TextLabel") and l.Visible and l.Text == name then return l end
+        if l:IsA("TextLabel") and l.Visible then
+            for _, nm in ipairs(names) do
+                if l.Text == nm then return l end
+            end
+        end
     end
     return nil
 end
 
--- รายการยาว → ต้องเลื่อนหา (ของที่อยู่นอกจอไม่ถูกสร้าง/มองไม่เห็น)
-local function scrollToLabel(name)
-    if findLabel(name) then return true end
+-- รายการยาว → เลื่อนหา
+local function scrollToLabel(names)
+    if findLabel(names) then return true end
     local s = player.PlayerGui:FindFirstChild("Settings")
     if not s then return false end
     local sf
@@ -6605,22 +6627,33 @@ local function scrollToLabel(name)
     for step = 0, 14 do
         sf.CanvasPosition = Vector2.new(0, step * 150)
         task.wait(0.15)
-        if findLabel(name) then return true end
+        if findLabel(names) then return true end
     end
     sf.CanvasPosition = Vector2.new(0, 0)
     return false
 end
 
-local function findToggleButton(name)
+-- ปุ่ม toggle มี UIGradient (ตัวบอกสีเขียว/แดง) — ใช้จับ ไม่พึ่งขนาดตายตัว
+local function hasGradient(btn)
+    for _, g in ipairs(btn:GetDescendants()) do
+        if g:IsA("UIGradient") then return true end
+    end
+    return false
+end
+
+-- ⭐ หาปุ่ม toggle: อยู่แถวเดียวกับ label ทางขวา + มี UIGradient
+--    ทน UI scale ต่างกัน (ใช้ความสูง label เป็นเกณฑ์ row ไม่ใช่เลขตายตัว 15/40)
+local function findToggleButton(names)
     local s = player.PlayerGui:FindFirstChild("Settings")
     if not s then return nil end
-    local label = findLabel(name)
+    local label = findLabel(names)
     if not label then return nil end
     local lx, ly = label.AbsolutePosition.X, label.AbsolutePosition.Y
+    local rowTol = math.max(label.AbsoluteSize.Y * 2, 22)   -- เกณฑ์แถว = 2 เท่าความสูง label
     local best, bestDx
     for _, btn in ipairs(s:GetDescendants()) do
-        if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40
-           and math.abs(btn.AbsolutePosition.Y - ly) < 15 then
+        if btn:IsA("GuiButton") and btn.Visible and hasGradient(btn)
+           and math.abs(btn.AbsolutePosition.Y - ly) < rowTol then
             local dx = btn.AbsolutePosition.X - lx
             if dx > 0 and (not bestDx or dx < bestDx) then best, bestDx = btn, dx end
         end
@@ -6628,8 +6661,8 @@ local function findToggleButton(name)
     return best
 end
 
-local function getSettingState(name)
-    local btn = findToggleButton(name)
+local function getSettingState(names)
+    local btn = findToggleButton(names)
     if not btn then return nil end
     for _, g in ipairs(btn:GetDescendants()) do
         if g:IsA("UIGradient") then
@@ -6642,34 +6675,38 @@ local function getSettingState(name)
     return nil
 end
 
-local function setSettingState(name, wantOn)
-    local state = getSettingState(name)
+local function setSettingState(names, wantOn)
+    local shown = names[1]
+    local state = getSettingState(names)
     if state == nil then
-        warn("[Exp Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. name)
+        warn("[Exp Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. shown)
         return false
     end
     local wantState = wantOn and "on" or "off"
     if state == wantState then
-        print("[Exp Settings] ✓ " .. name .. " = " .. state .. " (ตรงแล้ว)")
+        print("[Exp Settings] ✓ " .. shown .. " = " .. state .. " (ตรงแล้ว)")
         return true
     end
-    fireBtn(findToggleButton(name))
+    fireBtn(findToggleButton(names))
     task.wait(0.6)
-    local newState = getSettingState(name)
-    print("[Exp Settings] 🔄 " .. name .. ": " .. state .. " → " .. tostring(newState))
+    local newState = getSettingState(names)
+    print("[Exp Settings] 🔄 " .. shown .. ": " .. state .. " → " .. tostring(newState))
     return newState == wantState
 end
 
 local function closeSettings()
     local s = player.PlayerGui:FindFirstChild("Settings")
     if not s or not settingsOpen() then return true end
+    -- ⭐ ปุ่ม X = มุมขวาบนสุด (ทน UI scale — ไม่พึ่งขนาดตายตัว)
+    local best, bestScore
     for _, btn in ipairs(s:GetDescendants()) do
-        if btn:IsA("TextButton") and btn.Visible
-           and btn.AbsoluteSize.X <= 35 and btn.AbsoluteSize.Y <= 35 then
-            fireBtn(btn); task.wait(1)
-            if not settingsOpen() then return true end
+        if btn:IsA("GuiButton") and btn.Visible and btn.AbsoluteSize.X > 8
+           and btn.AbsoluteSize.X < s.AbsoluteSize.X * 0.15 then   -- เล็กกว่า 15% ของกรอบ
+            local score = btn.AbsolutePosition.X - btn.AbsolutePosition.Y   -- ขวาสุด+บนสุด
+            if not bestScore or score > bestScore then best, bestScore = btn, score end
         end
     end
+    if best then fireBtn(best); task.wait(1); if not settingsOpen() then return true end end
     return not settingsOpen()
 end
 
@@ -6680,15 +6717,16 @@ local function run()
 
     local okCount = 0
     for _, pref in ipairs(EXP_SETTING_PREFS) do
-        -- ไปแท็บของมันก่อน (ไม่เจอแท็บก็ใช้ All)
+        local names = nameList(pref)
+        -- ไปแท็บของมันก่อน (ลองทั้งไทย/อังกฤษ ไม่เจอก็ใช้ All/ทั้งหมด)
         if pref.tab then
-            if not clickTab(pref.tab) then clickTab("All") end
+            if not clickTab(pref.tab, pref.tabTH) then clickTab("All", "ทั้งหมด") end
             task.wait(0.5)
         end
-        if not scrollToLabel(pref.name) then
-            clickTab("All"); task.wait(0.5); scrollToLabel(pref.name)
+        if not scrollToLabel(names) then
+            clickTab("All", "ทั้งหมด"); task.wait(0.5); scrollToLabel(names)
         end
-        if setSettingState(pref.name, pref.want) then okCount = okCount + 1 end
+        if setSettingState(names, pref.want) then okCount = okCount + 1 end
         task.wait(0.4)
     end
 
