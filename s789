@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.30"
+local SCRIPT_VERSION = "v9.31"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -3154,6 +3154,19 @@ if GAME_ID == "anime_expeditions" then
                 else
                     -- ⭐ ระบบวางตามเส้นทางใช้ได้ทุกด่าน — ไม่ต้องมี config แล้ว
                     victoryStuck = 0
+                    -- ⭐ v9.31: ตั้งค่าในด่าน "ครั้งเดียวต่อ session" — ปิด Auto Retry/Next
+                    --    (ไม่งั้นเกม auto-repeat เองไม่ผ่านลูปเรา → ไม่วางตัวใหม่ → แพ้)
+                    if not _G.AE_MAIN_SETTINGS_DONE and _G.AE_APPLY_SETTINGS_LIST then
+                        print("[AE Farm] ⚙️ ตั้งค่าในด่าน (ปิด Auto Retry/Next, เปิด Auto Skip)")
+                        pcall(_G.AE_APPLY_SETTINGS_LIST, {
+                            { names={"Auto Retry","ลองอีกครั้งโดยอัตโนมัติ"}, want=false, tab="Gameplay", tabTH="การเล่นเกม" },
+                            { names={"Auto Next","อัตโนมัติถัดไป"},           want=false, tab="Gameplay", tabTH="การเล่นเกม" },
+                            { names={"Auto Skip Waves","ข้ามคลื่นอัตโนมัติ"}, want=true,  tab="Gameplay", tabTH="การเล่นเกม" },
+                            { names={"Auto Vote Start","เริ่มโหวตอัตโนมัติ"}, want=true,  tab="Gameplay", tabTH="การเล่นเกม" },
+                            { names={"Show Match End Rewards","แสดงผลรางวัลการจบการแข่งขัน"}, want=false, tab="Gameplay", tabTH="การเล่นเกม" },
+                        })
+                        _G.AE_MAIN_SETTINGS_DONE = true
+                    end
                     print("[AE Farm] 🎯 อยู่ในด่าน: " .. stage)
                     placeAllForStage(stage, isFarmingActive)
                     print("[AE Farm] ⏳ วางเสร็จ รอ match จบ...")
@@ -6736,15 +6749,16 @@ local function closeSettings()
     return not settingsOpen()
 end
 
-local function run()
+-- ⭐ v9.31: รับ pref list ได้ (ค่าเริ่มต้น = EXP_SETTING_PREFS) — ให้ฟาร์มหลักเรียกใช้ชุดของมันเองได้
+local function run(prefs)
+    prefs = prefs or EXP_SETTING_PREFS
     print("[Exp Settings] ⚙️ เปิด Settings...")
     if not openSettings() then warn("[Exp Settings] ❌ เปิด Settings ไม่ได้"); return end
     task.wait(1.2)
 
     local okCount = 0
-    for _, pref in ipairs(EXP_SETTING_PREFS) do
+    for _, pref in ipairs(prefs) do
         local names = nameList(pref)
-        -- ไปแท็บของมันก่อน (ลองทั้งไทย/อังกฤษ ไม่เจอก็ใช้ All/ทั้งหมด)
         if pref.tab then
             if not clickTab(pref.tab, pref.tabTH) then clickTab("All", "ทั้งหมด") end
             task.wait(0.5)
@@ -6757,10 +6771,11 @@ local function run()
     end
 
     closeSettings()
-    print(("[Exp Settings] ✅ เสร็จ (%d/%d ตั้งค่าเรียบร้อย)"):format(okCount, #EXP_SETTING_PREFS))
+    print(("[Exp Settings] ✅ เสร็จ (%d/%d ตั้งค่าเรียบร้อย)"):format(okCount, #prefs))
 end
 
-_G.AE_EXP_SETTINGS = run
+_G.AE_EXP_SETTINGS = function() run() end          -- Expedition/Villain (ปิด auto-upgrade)
+_G.AE_APPLY_SETTINGS_LIST = run                    -- ฟาร์มหลักเรียกด้วย pref ของมันเอง
 -- run()
 
 end
