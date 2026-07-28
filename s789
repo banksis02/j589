@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.29"
+local SCRIPT_VERSION = "v9.30"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -792,11 +792,17 @@ if GAME_ID == "anime_expeditions" then
 
     local function aeGetReplica(token)
         if not aeReplicaRegistry then return nil end
+        -- ⭐ v9.30: มี replica หลายตัว token เดียวกัน — เอาตัวที่ "ยิงได้" (มี write_lib)
+        --    ก่อน (เหมือน Expedition/Villain) ไม่งั้นได้ตัว read-only → FireServer พัง → fallback opcode
+        local cand
         for _, rep in pairs(aeReplicaRegistry) do
             local ok, t = pcall(function() return rep.Token end)
-            if ok and t == token then return rep end
+            if ok and t == token then
+                if rawget(rep, "write_lib") then return rep end
+                cand = cand or rep
+            end
         end
-        return nil
+        return cand
     end
 
     -- คืน level, bp, wave (0 ถ้าอ่านไม่ได้)
