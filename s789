@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.31"
+local SCRIPT_VERSION = "v9.32"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -8329,15 +8329,12 @@ local function startAutoContinue()
     if contOn then return end
     contOn = true
     task.spawn(function()
-        print("[Exp] 🚚 เริ่มเฝ้ารถจอด — เจอแล้วกด Continue ทันที")
+        -- ⭐ v9.32: เรียบง่าย — เจอปุ่ม Continue = กดเลย เล่นไปเรื่อยๆ
+        --    ไม่เช็คแผนที่/10-10/บอส/Extract (บัคเยอะ) แพ้ค่อย Repeat (ลูป FULL AUTO จัดการ)
+        print("[Exp] 🚚 เริ่มเฝ้ารถจอด — เจอ Continue กดเลย (เล่นต่อเนื่อง)")
         while contOn and MYGEN == _G.AE_SCRIPT_GEN do
             task.wait(2)
-            -- จำไว้ทันทีที่เข้าโหนดบอส (โหนดสุดท้ายของรัน)
-            if not bossSeen and atBossNode() then
-                bossSeen = true
-                print("[Exp] 👹 เข้าโหนดบอสแล้ว — จบโหนดนี้จะกด Extract (ไม่ไปแมพใหม่)")
-            end
-            -- รถจอด = มีปุ่ม Continue โผล่ (พร้อม Extract)
+            -- รถจอด = มีปุ่ม Continue โผล่
             local found = false
             for _, root in ipairs(player.PlayerGui:GetChildren()) do
                 if root:IsA("ScreenGui") and root.Enabled then
@@ -8355,27 +8352,12 @@ local function startAutoContinue()
                 if found then break end
             end
             if found then
-                -- ⭐ ฆ่าบอสแล้ว → จบรัน กด Extract (ใช้ธง bossSeen อย่างเดียว)
-                --    ⚠️ ห้ามเปิดแผนที่เช็ค progress ที่นี่ — มันทำให้ state กระพริบ map↔stage
-                --       แล้ว guard ปิดแผนที่วนไม่จบ Continue กดไม่ติด
-                if bossSeen then
-                    print("[Exp] 🏁 ฆ่าบอสแล้ว → Extract จบรัน")
-                    if pressExtract() then
-                        task.wait(4)
-                        contOn = false
-                        break
-                    end
-                    -- Extract ยังไม่ติด → ไม่ break (กันค้าง) กด Continue เดินต่อไปก่อน
-                    print("[Exp] ⚠️ Extract ไม่ติด → เดินต่อ แล้วลองใหม่ที่จุดจอดถัดไป")
-                end
-
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
                 if _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY then
                     local gs = getReplica("GameState")
                     local status = gs and gs.Data and tostring(gs.Data.Status) or ""
                     if status == "Checkpoint" and not _G.AE_EXP_UPG1_DONE then
-                        print("[Exp] ⏸️ ยังไม่จ้างตัว — รอ " .. EXP_UPGRADES[1].name
-                              .. " ถึงขั้น " .. EXP_UPGRADES[1].target .. " ก่อน")
+                        -- ยังไม่จ้าง (รอ Cursed Student ขั้น 6) → กด Continue เดินต่อเลย
                     elseif status == "Checkpoint" then
                         _G.AE_HIRE_BUSY = true
                         print("[Exp] 🛒 ถึง Checkpoint → จ้างตัวก่อน")
@@ -10363,45 +10345,14 @@ _G.AE_EXP_RUN = function()
                     lastState = state
                 end
 
-                -- ===== 🗺️ อยู่หน้าแผนที่ =====
+                -- ===== 🗺️ แผนที่เปิดค้าง → ปิดทิ้ง (ไม่ใช้แผนที่แล้ว) =====
                 if state == "map" then
-                    -- ⭐ กำลังเล่นอยู่แล้วแผนที่เปิดค้าง → ปิดมัน กลับไปเล่นต่อ
-                    if runActive then
-                        mapOpenSince = mapOpenSince or tick()
-                        local openFor = tick() - mapOpenSince
-                        L(("🛡️ แผนที่เปิดค้าง %ds → ปิดแผนที่"):format(math.floor(openFor)))
-                        if has("AE_EXP_CLOSEMAP") then call("AE_EXP_CLOSEMAP") end
-                        -- เปิดค้างเกิน 30 วิ = ปิดไม่ลงจริง → ยอมแพ้รันนี้ กลับไปเริ่มใหม่
-                        if openFor > 30 then
-                            L("⚠️ แผนที่ปิดไม่ลงเกิน 30 วิ → รีเซ็ตรัน เริ่มใหม่")
-                            stopCombat()
-                            placed, routeDone, runActive = false, false, false
-                            mapOpenSince = nil
-                        end
-                        task.wait(1.5)
-                        return
-                    end
-                    -- ⭐ ไม่เช็ค/ไม่ reroll แล้ว — เจอแมพไหนเล่นแมพนั้นเลย
-                    L("[3] เลือกเส้นทางในแมพนี้ → เริ่มเลย")
-                    uiHide(true)                  -- ซ่อนแผง กันคลิกโดนปุ่มตัวเอง
-                    if call("AE_EXP_TAKEBEST") then
-                        task.wait(1.5)
-                        L("   ▶️ กด Continue เริ่มเดิน")
-                        call("AE_EXP_CONTINUE")
-                        uiHide(false)
-                        routeDone = true
-                        runActive = true          -- ⭐ เริ่มรันแล้ว — ห้ามแตะแผนที่จนกว่าจะจบรัน
-                        task.wait(3)
-                    else
-                        -- ยังอ่านเส้นทางไม่ได้ (แมพโหลดไม่เสร็จ) → รอแล้วลองใหม่
-                        L("   ⏳ ยังอ่านเส้นทางไม่ได้ → รอโหลด")
-                        uiHide(false)
-                        task.wait(2.5)
-                    end
+                    L("🗺️ แผนที่เปิดค้าง → ปิด (ไม่ใช้แผนที่แล้ว)")
+                    if has("AE_EXP_CLOSEMAP") then call("AE_EXP_CLOSEMAP") end
+                    task.wait(1.5)
 
-                -- ===== ⚔️ อยู่ในด่าน =====
+                -- ===== ⚔️ อยู่ในด่าน — วางตัว + เล่นต่อเนื่อง (ไม่เปิดแผนที่/ไม่เช็ค 10/10) =====
                 elseif state == "stage" then
-                    mapOpenSince = nil          -- กลับเข้าด่านแล้ว → รีเซ็ตตัวจับเวลาแผนที่
                     -- [1] ตั้งค่าก่อน: ปิด Auto-Upgrade / Auto Retry / Auto Next
                     if not settingsDone and has("AE_EXP_SETTINGS") then
                         L("[1] ตั้งค่า: ปิด Auto-Upgrade / Auto Retry / Auto Next")
@@ -10409,26 +10360,12 @@ _G.AE_EXP_RUN = function()
                         settingsDone = true
                         task.wait(1)
                     end
-
-                    -- [2] ยังไม่ได้เลือกเส้นทาง → เปิดหน้าแผนที่
-                    if not routeDone then
-                        L("[2] เปิดหน้าแผนที่ (Expedition Map)")
-                        if call("AE_EXP_OPENMAP") then
-                            task.wait(1)          -- รอบหน้าจะเข้าเคส map
-                        else
-                            L("   ⚠️ เปิดแผนที่ไม่ได้ — ถือว่าเดินอยู่แล้ว")
-                            routeDone = true
-                        end
-
-                    -- [4] วางตัว + ระบบในด่าน
-                    elseif not placed then
-                        -- ไม่ดีเลย์: กดเริ่มปุ๊บรถออกเดินทาง มอนมาทันที ต้องวางเลย
+                    -- [2] วางตัว + อัพเกรด + เฝ้ากด Continue (เล่นไปเรื่อยๆ)
+                    if not placed then
                         if has("AE_EXP_RESETRUN") then call("AE_EXP_RESETRUN") end
-                        L("[4] วางตัวละคร (ทันที)...")
+                        L("[2] วางตัวละคร + อัพเกรด + เฝ้ากด Continue")
                         call("AE_EXP_PLACE")
-                        L("   🎯 ตั้ง Priority = Weakest")
                         call("AE_EXP_PRIORITY")
-                        L("   ⬆️ อัพเกรด + 🔁 วางซ้ำจนครบ + 🛒 จ้างตัว/Continue")
                         call("AE_EXP_UPGRADE")
                         call("AE_EXP_AUTOCONT")
                         call("AE_EXP_KEEPER")
