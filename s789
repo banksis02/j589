@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.32"
+local SCRIPT_VERSION = "v9.33"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -3018,10 +3018,26 @@ if GAME_ID == "anime_expeditions" then
         -- ⭐ v8.5: โหมด Expedition → ใช้ระบบ Expedition ทั้งชุด (ไม่ใช้ลูปฟาร์มปกติ)
         --    ความยาก/แมพ สั่งมาจากเว็บผ่าน _G.AE_EXP_DIFF / _G.AE_EXP_MAP
         if farmMode == "expedition" then
+            _G.AE_EXP_ROTATE = false   -- ⭐ งาน expedition ปกติ = แมพเดียว
             if _G.AE_EXP_RUN then
                 print(("[AE Farm] 🧭 Expedition: %s | ความยาก %s")
                     :format(tostring(_G.AE_EXP_MAP or "School Grounds"),
                             tostring(_G.AE_EXP_DIFF or 3)))
+                pcall(_G.AE_EXP_RUN)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Expedition (_G.AE_EXP_RUN)")
+            end
+            return
+        end
+
+        -- ⭐ v9.33 โหมด Expedition วนด่าน → วน School Grounds → Flower Forest → Rose Kingdom ด่านละ 1 ชม.
+        if farmMode == "expedition_rotate" then
+            _G.AE_EXP_ROTATE = true
+            _G.AE_EXP_ROTATE_MIN = tonumber(_G.AE_EXP_ROTATE_MIN) or 60
+            if _G.AE_EXP_RUN then
+                print(("[AE Farm] 🔄 Expedition วนด่าน: %s | ด่านละ %s นาที | ความยาก %s")
+                    :format(table.concat(_G.AE_EXP_ROTATE_MAPS or { "School Grounds", "Flower Forest", "Rose Kingdom" }, " → "),
+                            tostring(_G.AE_EXP_ROTATE_MIN), tostring(_G.AE_EXP_DIFF or 3)))
                 pcall(_G.AE_EXP_RUN)
             else
                 warn("[AE Farm] ❌ ไม่เจอระบบ Expedition (_G.AE_EXP_RUN)")
@@ -3351,6 +3367,14 @@ if GAME_ID == "anime_expeditions" then
                         end
                         _G.AE_EXP_DIFF = newDiff
                         _G.AE_EXP_MAP  = newMap
+                    end
+                    -- ⭐ v9.33: งาน Expedition วนด่าน — รับความยาก 1/2/3 (วน 3 แมพเองด่านละ 1 ชม.)
+                    if wantMode == "expedition_rotate" then
+                        local newDiff = tonumber(job.difficulty) or 3
+                        if _G.AE_EXP_DIFF ~= newDiff then
+                            print(("[AE Remote] 🔄 Expedition วนด่าน: ความยาก %d"):format(newDiff))
+                        end
+                        _G.AE_EXP_DIFF = newDiff
                     end
                     -- ⭐ งาน Villain Invasion — รับ Act 1/2/3 จากเว็บ (job.difficulty = act)
                     if wantMode == "villain" then
@@ -10247,7 +10271,25 @@ local UIS_ui     = game:GetService("UserInputService")
 -- ⭐ ตั้งค่าด่านที่จะฟาร์ม — สั่งจากเว็บ/สคริปต์หลักได้ผ่าน _G
 --    _G.AE_EXP_MAP  = "School Grounds" | "Flower Forest" | "Rose Kingdom"
 --    _G.AE_EXP_DIFF = 1 | 2 | 3
-local function expMap()  return _G.AE_EXP_MAP or "School Grounds" end
+-- ⭐ v9.33 โหมดวนด่าน: _G.AE_EXP_ROTATE = true → วนแมพตามลิสต์ ด่านละ N นาที
+--    _G.AE_EXP_ROTATE_MAPS = {"School Grounds","Flower Forest","Rose Kingdom"} (ไม่ใส่ = ใช้ค่านี้)
+--    _G.AE_EXP_ROTATE_MIN  = 60   (นาทีต่อด่าน — ครบแล้วกลับล็อบบี้เปลี่ยนด่านถัดไป)
+local DEFAULT_ROT_MAPS = { "School Grounds", "Flower Forest", "Rose Kingdom" }
+local rotIdx     = 1        -- ด่านปัจจุบันในลิสต์วน (1-based)
+local rotMapStart = nil     -- tick() ตอนเริ่มเล่นด่านนี้ (nil = ยังไม่เริ่มจับเวลา)
+local function rotMaps()
+    local m = _G.AE_EXP_ROTATE_MAPS
+    if type(m) == "table" and #m > 0 then return m end
+    return DEFAULT_ROT_MAPS
+end
+local function rotMinutes() return tonumber(_G.AE_EXP_ROTATE_MIN) or 60 end
+local function expMap()
+    if _G.AE_EXP_ROTATE then
+        local m = rotMaps()
+        return m[((rotIdx - 1) % #m) + 1]
+    end
+    return _G.AE_EXP_MAP or "School Grounds"
+end
 local function expDiff() return tonumber(_G.AE_EXP_DIFF) or 3 end
 
 local logSink    -- UI จะมาเสียบทีหลัง
@@ -10283,10 +10325,16 @@ end
 
 _G.AE_EXP_RUN_STOP = function()
     running = false
+    rotMapStart = nil
     stopCombat()
     if has("AE_CARD_STOP") then call("AE_CARD_STOP") end
     L("⏹ หยุด FULL AUTO แล้ว")
     print(debug.traceback("[AUTO] ใครสั่งหยุด:", 2))   -- กันโดนกดเองโดยไม่ตั้งใจ
+    -- ⭐ v9.33 ออกจากด่านให้เรียบร้อย (กันค้างที่ checkpoint/Extract หลังจบงาน)
+    task.spawn(function()
+        task.wait(1.5)
+        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+    end)
 end
 
 -- ⭐ ซ่อน/โชว์แผงควบคุม — ตอนสคริปต์คลิกพิกัดจริง (แผนที่/เข้าด่าน)
@@ -10353,6 +10401,29 @@ _G.AE_EXP_RUN = function()
 
                 -- ===== ⚔️ อยู่ในด่าน — วางตัว + เล่นต่อเนื่อง (ไม่เปิดแผนที่/ไม่เช็ค 10/10) =====
                 elseif state == "stage" then
+                    -- ⭐ v9.33 โหมดวนด่าน: เริ่มจับเวลาด่านนี้ (ครั้งแรกที่เข้าด่าน)
+                    if _G.AE_EXP_ROTATE and not rotMapStart then
+                        rotMapStart = tick()
+                        L(("🔄 เริ่มจับเวลาด่าน %s (ครบ %d นาที = เปลี่ยนด่าน)")
+                            :format(expMap(), rotMinutes()))
+                    end
+                    -- ⭐ ครบเวลา → กลับล็อบบี้ เปลี่ยนไปด่านถัดไปในลิสต์
+                    if _G.AE_EXP_ROTATE and rotMapStart
+                       and (tick() - rotMapStart) >= rotMinutes() * 60 then
+                        stopCombat()
+                        local maps = rotMaps()
+                        rotIdx = (rotIdx % #maps) + 1
+                        rotMapStart = nil
+                        placed, routeDone, runActive = false, false, false
+                        L(("🔄 ครบ %d นาที → กลับล็อบบี้ เปลี่ยนไปด่าน %s")
+                            :format(rotMinutes(), maps[((rotIdx - 1) % #maps) + 1]))
+                        uiHide(true)
+                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                        uiHide(false)
+                        otherSince = tick()   -- ให้ลูปล็อบบี้รอ 20 วิ ก่อนเข้าด่านใหม่
+                        task.wait(2)
+                        return
+                    end
                     -- [1] ตั้งค่าก่อน: ปิด Auto-Upgrade / Auto Retry / Auto Next
                     if not settingsDone and has("AE_EXP_SETTINGS") then
                         L("[1] ตั้งค่า: ปิด Auto-Upgrade / Auto Retry / Auto Next")
