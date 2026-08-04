@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.40"
+local SCRIPT_VERSION = "v9.41"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6294,6 +6294,15 @@ _G.AE_VILLAIN_PLACE = function()
             if failN[s.asset] >= 3 then maxedUnit[s.asset] = true end
             return false
         end
+        -- 🔎 v9.41 DIAG: ดัมพ์ช่อง hotbar ทั้งหมด 1 ครั้ง (money/damage + cost)
+        do
+            local slots = gameHotbarSlots()
+            print(("[Villain] 🔎 ช่องทั้งหมด %d ช่อง:"):format(#slots))
+            for _, s in ipairs(slots) do
+                print(("[Villain]    slot%s | %s | %s | cost=%d"):format(
+                    tostring(s.slot), s.money and "💰เงิน" or "⚔️ดาเมจ", tostring(s.asset), s.cost or -1))
+            end
+        end
         for round = 1, 80 do
             if not pileOn then break end
             if round % 5 == 0 then local L = findActiveLane(lanes); if L then lane = L end end
@@ -6322,12 +6331,20 @@ _G.AE_VILLAIN_PLACE = function()
                         if not pileOn then break end
                         if not s.money and not maxedUnit[s.asset] then
                             dmgLeft = true
-                            if s.cost <= yen and tryPlace(s) then
-                                print(("[Villain] ✅ ⚔️ดาเมจ %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                            if s.cost <= yen then
+                                if tryPlace(s) then
+                                    print(("[Villain] ✅ ⚔️ดาเมจ %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                                elseif maxedUnit[s.asset] then
+                                    print(("[Villain] 🔒 ⚔️%s วางไม่ติด 3 ครั้ง → ถือว่าเต็ม"):format(tostring(s.asset)))
+                                else
+                                    print(("[Villain] ⚠️ ⚔️%s วางไม่ติด (yen=%d cost=%d)"):format(tostring(s.asset), yen, s.cost))
+                                end
+                            else
+                                print(("[Villain] ⏳ ⚔️%s รอเงิน (yen=%d < cost=%d)"):format(tostring(s.asset), yen, s.cost))
                             end
                         end
                     end
-                    if not dmgLeft then print("[Villain] 🏁 วางครบทุกตัวแล้ว"); break end
+                    if not dmgLeft then print("[Villain] 🏁 วางครบทุกตัว (ไม่มีดาเมจเหลือในช่อง)"); break end
                 end
                 task.wait(1)
             end
