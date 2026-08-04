@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.44"
+local SCRIPT_VERSION = "v9.45"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5738,25 +5738,20 @@ local RS      = game:GetService("ReplicatedStorage")
 local inset   = game:GetService("GuiService"):GetGuiInset()
 
 -- ---------- replica (วางตัวผ่าน GamePlayerData) ----------
--- ⭐ v9.37: จับ registry (เรียกซ้ำได้ — กัน registry เก่าหลังเปลี่ยนแมตช์)
-local function captureRegistry()
-    local reg
-    pcall(function()
-        local RC = require(RS.Shared.ReplicaClient)
-        for _, up in pairs(debug.getupvalues(RC.FromId)) do
-            if type(up) == "table" then
-                for kk in pairs(up) do if type(kk) == "number" then reg = up; break end end
-                if reg then break end
-            end
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up) == "table" then
+            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
+            if registry then break end
         end
-    end)
-    return reg
-end
-local registry = captureRegistry()
-local function searchReplica(reg, token)
-    if not reg then return nil end
+    end
+end)
+local function getReplica(token)
+    if not registry then return nil end
     local cand
-    for _, rep in pairs(reg) do
+    for _, rep in pairs(registry) do
         local ok, t = pcall(function() return rep.Token end)
         if ok and t == token then
             if rawget(rep, "write_lib") then return rep end
@@ -5764,20 +5759,6 @@ local function searchReplica(reg, token)
         end
     end
     return cand
-end
-local function getReplica(token)
-    local r = searchReplica(registry, token)
-    -- ⭐ v9.37: ไม่เจอตัวยิงได้ (write_lib) → registry เก่าหลังเปลี่ยนแมตช์ → จับใหม่แล้วหาอีก
-    --    แก้ "yen อ่านได้ 0 / วางไม่ได้" ในด่าน Raid/Challenge (GamePlayerData หาไม่เจอ)
-    if not (r and rawget(r, "write_lib")) then
-        local fresh = captureRegistry()
-        if fresh then
-            registry = fresh
-            local r2 = searchReplica(fresh, token)
-            if r2 then return r2 end
-        end
-    end
-    return r
 end
 
 -- ---------- คลิกปุ่มแบบทน (connection + VIM คลิกพิกัดจริง) ----------
@@ -6091,22 +6072,6 @@ local function assetIn(asset, list)
 end
 local function isMoneyUnit(asset)   return assetIn(asset, MONEY_ASSETS)   end
 local function isSupportUnit(asset) return assetIn(asset, SUPPORT_ASSETS) end
--- ⭐ v9.36: ตัวเงิน = มีเทรต "Investor" (ตรวจจากตัวจริง ไม่ผูกชื่อ — แต่ละไอดีตัวเงินคนละตัว)
---    หรืออยู่ในลิสต์ MONEY_ASSETS (เผื่อไม่มีเทรต) — เช่น Senku/Ichiraku ที่มี Investor = ตัวเงินทั้งคู่
-local function unitTraitOf(id)
-    if type(id) ~= "string" then return nil end
-    local pd = getReplica("PlayerData")
-    local ud = pd and pd.Data and pd.Data.UnitData
-    if type(ud) == "table" then
-        local u = ud[id]                                  -- id = "Senku#uuid" ตรงกับคีย์ UnitData
-        if type(u) == "table" and u.Trait then return tostring(u.Trait) end
-    end
-    return nil
-end
-local function isMoneyUnitId(asset, id)
-    if isMoneyUnit(asset) then return true end
-    return unitTraitOf(id) == "Investor"
-end
 local function slotAsset(id)
     if type(id) ~= "string" then return "" end
     local a = id:match('"Asset"%s*:%s*"([^"]+)"')       -- JSON (ตัวจ้าง)
@@ -6140,7 +6105,7 @@ local function gameHotbarSlots()
             if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
                 local asset = slotAsset(v.ID)
                 out[#out+1] = { slot = n, cost = tonumber(v.PlacementCost) or 0,
-                                asset = asset, money = isMoneyUnitId(asset, v.ID) }
+                                asset = asset, money = isMoneyUnit(asset) }
             end
         end
     end
@@ -6207,10 +6172,8 @@ local function getYen()
 end
 
 local upgradeOn = false
-local placingNow = false   -- ⭐ v9.43: true ระหว่างวางตัว — กันไม่ให้อัพเกรดจนกว่าวางครบ
 _G.AE_VILLAIN_UPGRADE = function()
     if upgradeOn then return end
-    if placingNow then print("[Villain] ⏳ ยังวางไม่ครบ — ยังไม่อัพเกรด (รอวางเสร็จก่อน)"); return end
     upgradeOn = true
     task.spawn(function()
         print("[Villain] ⬆️ เริ่มลูปอัพเกรด (เงินก่อน → ดาเมจ | ข้ามซัพ)")
@@ -6252,12 +6215,9 @@ local pileOn = false
 _G.AE_VILLAIN_PLACE = function()
     if pileOn then print("[Villain] วางอยู่แล้ว"); return end
     pileOn = true
-    -- ⭐ v9.43: หยุด upgrade loop เก่า (ถ้าค้าง) + ล็อกห้ามอัพจนกว่าวางครบ
-    placingNow = true
-    upgradeOn = false
     task.spawn(function()
         local lanes = buildAllPaths()
-        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); placingNow = false; pileOn = false; return end
+        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); pileOn = false; return end
 
         -- ⭐ รอมอนโผล่ แล้วหาเลนที่มอนเดินจริง (สูงสุด 20 วิ)
         local lane
@@ -6277,88 +6237,44 @@ _G.AE_VILLAIN_PLACE = function()
             print("[Villain] ⏳ ยังไม่เจอมอน → ใช้เลน '" .. lane.name .. "' ไปก่อน")
         end
 
-        -- ⭐ v9.44: วนวางทุกตัวเร็ว เงินก่อน→ดาเมจ ไม่ค้างที่ตัวเดียว วางครบค่อยอัพเกรด (เงินก่อน)
-        -- ⭐ v9.44: วนวางทุกตัวเร็วๆ (เงินก่อน→ดาเมจ) ไม่ค้างที่ตัวเดียว
-        --    ยิง offset เล็กใกล้ทาง (จุดที่ Senku วางติด) ยืนยันด้วย countAsset
-        --    วางเมื่อเงินพอ (เกม reject ถ้าเงินไม่พอ → ตัวเงินได้ก่อน income โต → ดาเมจตามมา)
-        --    ตัวไหนวางไม่ขึ้นหลายรอบติด = เต็ม/พอแล้ว → ข้าม (เงิน cap เร็ว, ดาเมจใจเย็นกว่า)
-        local settled = {}
-        local failN   = {}
-        local function countAsset(asset)
-            local n, a = 0, tostring(asset):lower()
-            for _, u in ipairs(getMyUnits()) do
-                if tostring(u.asset):lower():find(a, 1, true) then n = n + 1 end
+        -- ⭐ วางทุกช่อง "เกาะกันแน่น" ที่ 55-65% ของเลนเดียว (ด่านยาก รวมพลัง)
+        for round = 1, 40 do
+            if not pileOn then break end
+            -- อัปเดตเลนที่ถูกทุก 5 รอบ (เผื่อรอบแรกเดาผิด)
+            if round % 5 == 0 then
+                local L = findActiveLane(lanes)
+                if L and L ~= lane then
+                    lane = L
+                    print("[Villain] 🔄 เปลี่ยนไปเลนที่มอนเยอะ = '" .. L.name .. "'")
+                end
             end
-            return n
-        end
-        local SMALL_OFFS = { 3, -3, 5, -5, 4, -4, 6, -6 }
-        -- วาง 1 ตัวแบบเร็ว: ลอง offset เล็กหลายจุด คืน true ทันทีที่ตัวจริงเพิ่ม
-        local function fastPlace(slot, asset, frac)
-            local rep = getReplica("GamePlayerData"); if not rep then return false end
-            local hb  = getReplica("HotbarData")
-            local d = lane.total * frac
-            local base, dir = posAt(lane, d), dirAt(lane, d)
-            local perp = Vector3.new(-dir.Z, 0, dir.X)
-            local before = countAsset(asset)
-            for _, off in ipairs(SMALL_OFFS) do
-                if not pileOn then break end
-                local p = base + perp * off
-                if hb then pcall(function() hb:FireServer("SelectSlot", slot) end) end
-                task.wait(0.04)
-                pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-                task.wait(0.28)
-                if countAsset(asset) > before then return true end
-            end
-            return false
-        end
-        -- 🔎 DIAG: ดัมพ์ช่อง hotbar ทั้งหมด 1 ครั้ง (money/damage)
-        do
             local slots = gameHotbarSlots()
-            print(("[Villain] 🔎 ช่องทั้งหมด %d ช่อง:"):format(#slots))
-            for _, s in ipairs(slots) do
-                print(("[Villain]    slot%s | %s | %s"):format(
-                    tostring(s.slot), s.money and "💰เงิน" or "⚔️ดาเมจ", tostring(s.asset)))
-            end
-        end
-        local tEnd = os.clock() + 60   -- วางไม่เกิน 60 วิ (ปกติเสร็จเร็วกว่า)
-        while pileOn and os.clock() < tEnd do
-            local L = findActiveLane(lanes); if L then lane = L end
-            local slots = gameHotbarSlots()
-            if #slots == 0 then task.wait(1)
-            else
-                local active = false
-                for _, s in ipairs(slots) do   -- เรียง money ก่อนแล้ว → เงินได้วางก่อนทุกรอบ
+            if #slots == 0 then task.wait(2); else
+                local yen = 0
+                pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
+                local didPlace = false
+                for _, s in ipairs(slots) do
                     if not pileOn then break end
-                    if not settled[s.asset] then
-                        active = true
-                        local frac = s.money and (0.50 + math.random() * 0.16)
-                                              or  (0.40 + math.random() * 0.32)
-                        if fastPlace(s.slot, s.asset, frac) then
-                            failN[s.asset] = 0
-                            print(("[Villain] ✅ %s %s (มี %d)"):format(
-                                s.money and "💰เงิน" or "⚔️ดาเมจ", tostring(s.asset), countAsset(s.asset)))
-                        else
-                            failN[s.asset] = (failN[s.asset] or 0) + 1
-                            local cap = s.money and 4 or 8   -- เงิน cap เร็ว / ดาเมจให้โอกาสมากกว่า (รอเงิน)
-                            if failN[s.asset] >= cap then
-                                settled[s.asset] = true
-                                print(("[Villain] 🔒 %s พอแล้ว/วางครบ (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
-                            end
+                    if s.cost <= yen then
+                        -- เกาะกัน: จุดกลาง 60% + เยื้องเล็กน้อย (placeAt ลอง offset ให้อยู่แล้ว)
+                        local frac = 0.55 + math.random() * 0.10   -- 55-65%
+                        if placeAt(lane, s.slot, lane.total * frac) then
+                            print(("[Villain] ✅ วาง%s ช่อง %d → เลน '%s' ~%.0f%% (¥%d)")
+                                :format(s.money and "💰เงิน" or "⚔️ตัว", s.slot, lane.name, frac*100, s.cost))
+                            yen = yen - s.cost
+                            didPlace = true
+                            task.wait(0.3)
                         end
                     end
                 end
-                if not active then print("[Villain] 🏁 วางครบทุกตัวแล้ว"); break end
-                task.wait(0.15)
+                if not didPlace then task.wait(2) end
             end
         end
-        -- ⭐ วางครบแล้วค่อยปลดล็อก + เริ่มอัพเกรด (เงินก่อนตัน → ดาเมจ)
-        placingNow = false
-        print("[Villain] ⬆️ วางครบ → เริ่มอัพเกรด (เงินก่อน)")
-        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
+        print("[Villain] 🏁 จบการวาง")
         pileOn = false
     end)
 end
-_G.AE_VILLAIN_PLACE_STOP = function() placingNow = false; pileOn = false end
+_G.AE_VILLAIN_PLACE_STOP = function() pileOn = false end
 
 -- ============================================================
 -- 🏁 จบด่าน → กด Replay (เล่นซ้ำ)
@@ -6538,8 +6454,9 @@ _G.AE_VILLAIN_RUN = function(act)
                             pcall(_G.AE_EXP_SETTINGS)
                             settingsDone = true
                         end
-                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัวให้ครบก่อน แล้วค่อยอัพเกรด")
-                        _G.AE_VILLAIN_PLACE()   -- ⭐ v9.40: PLACE เรียก UPGRADE เองตอนวางครบ (ไม่อัพระหว่างวาง)
+                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัว + อัพเกรดเอง")
+                        _G.AE_VILLAIN_PLACE()
+                        _G.AE_VILLAIN_UPGRADE()
                         placedThisRun = true
                     end
                     -- ⭐ v9.26: มีหน้าต่าง "Start Game" (ต้องวางตัว 50% ก่อนถึงเริ่มได้)
