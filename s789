@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.36"
+local SCRIPT_VERSION = "v9.37"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -5738,20 +5738,25 @@ local RS      = game:GetService("ReplicatedStorage")
 local inset   = game:GetService("GuiService"):GetGuiInset()
 
 -- ---------- replica (วางตัวผ่าน GamePlayerData) ----------
-local registry
-pcall(function()
-    local RC = require(RS.Shared.ReplicaClient)
-    for _, up in pairs(debug.getupvalues(RC.FromId)) do
-        if type(up) == "table" then
-            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
-            if registry then break end
+-- ⭐ v9.37: จับ registry (เรียกซ้ำได้ — กัน registry เก่าหลังเปลี่ยนแมตช์)
+local function captureRegistry()
+    local reg
+    pcall(function()
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up) == "table" then
+                for kk in pairs(up) do if type(kk) == "number" then reg = up; break end end
+                if reg then break end
+            end
         end
-    end
-end)
-local function getReplica(token)
-    if not registry then return nil end
+    end)
+    return reg
+end
+local registry = captureRegistry()
+local function searchReplica(reg, token)
+    if not reg then return nil end
     local cand
-    for _, rep in pairs(registry) do
+    for _, rep in pairs(reg) do
         local ok, t = pcall(function() return rep.Token end)
         if ok and t == token then
             if rawget(rep, "write_lib") then return rep end
@@ -5759,6 +5764,20 @@ local function getReplica(token)
         end
     end
     return cand
+end
+local function getReplica(token)
+    local r = searchReplica(registry, token)
+    -- ⭐ v9.37: ไม่เจอตัวยิงได้ (write_lib) → registry เก่าหลังเปลี่ยนแมตช์ → จับใหม่แล้วหาอีก
+    --    แก้ "yen อ่านได้ 0 / วางไม่ได้" ในด่าน Raid/Challenge (GamePlayerData หาไม่เจอ)
+    if not (r and rawget(r, "write_lib")) then
+        local fresh = captureRegistry()
+        if fresh then
+            registry = fresh
+            local r2 = searchReplica(fresh, token)
+            if r2 then return r2 end
+        end
+    end
+    return r
 end
 
 -- ---------- คลิกปุ่มแบบทน (connection + VIM คลิกพิกัดจริง) ----------
@@ -6279,7 +6298,7 @@ _G.AE_VILLAIN_PLACE = function()
                     if s.money then
                         hasMoney = true
                         if not maxedMoney[s.asset] then
-                            -- ⭐ โฟกัสตัวเงินตัวแรกที่ยังไม่เต็ม — ตัวถัดไปรอตัวนี้เต็มก่อน
+                            -- โฟกัสตัวเงินตัวแรกที่ยังไม่เต็ม — ตัวถัดไปรอตัวนี้เต็มก่อน
                             moneyPending = true
                             if s.cost <= yen then
                                 local frac = 0.55 + math.random() * 0.10
@@ -6287,7 +6306,6 @@ _G.AE_VILLAIN_PLACE = function()
                                     print(("[Villain] ✅ 💰เงิน %s ช่อง %d ~%.0f%% (¥%d)"):format(tostring(s.asset), s.slot, frac*100, s.cost))
                                     yen = yen - s.cost; didPlace = true; moneyFail[s.asset] = 0; task.wait(0.3)
                                 else
-                                    -- วางไม่ติดทั้งที่เงินพอ → อาจเต็ม/ที่ชน — ล้ม 2 ครั้งค่อยตัดสินว่าเต็ม
                                     moneyFail[s.asset] = (moneyFail[s.asset] or 0) + 1
                                     if moneyFail[s.asset] >= 2 then
                                         maxedMoney[s.asset] = true
@@ -6299,7 +6317,7 @@ _G.AE_VILLAIN_PLACE = function()
                         end
                     end
                 end
-                -- ===== เฟส 2: ตัวอื่น — เฉพาะเมื่อตัวเงินเต็มหมด (หรือไม่มีตัวเงิน / ติดนานกัน deadlock) =====
+                -- ===== เฟส 2: ตัวดาเมจ — เฉพาะเมื่อตัวเงินเต็มหมด (หรือไม่มีตัวเงิน / ติดนานกัน deadlock) =====
                 if (not moneyPending) or (not hasMoney) or stuck >= 8 then
                     for _, s in ipairs(slots) do
                         if not pileOn then break end
