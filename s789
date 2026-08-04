@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.41"
+local SCRIPT_VERSION = "v9.42"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6272,9 +6272,9 @@ _G.AE_VILLAIN_PLACE = function()
             print("[Villain] ⏳ ยังไม่เจอมอน → ใช้เลน '" .. lane.name .. "' ไปก่อน")
         end
 
-        -- ⭐ v9.40: วางเมื่อเงินพอ (PlaceGameUnit ต้องมีเงินจริง จองไม่ได้) เรียงตัวเงินก่อนจนเต็ม → ดาเมจ
-        --    ⭐ ไม่อัพเกรดระหว่างวาง (ปล่อยเงินโตไว้วางให้ครบ) → วางครบแล้วค่อยเริ่มอัพเกรด (เงินก่อน)
-        --    เช็ค "เต็ม" จากจำนวนตัวจริงในสนาม (getMyUnits กรอง phantom)
+        -- ⭐ v9.42: วางล่วงหน้าเหมือน Story (Phantom Placing) — ไม่รอเงิน! ยิงเลย เกมจองให้เมื่อเงินมา
+        --    เรียงตัวเงินก่อนจนเต็ม (Senku→Ichiraku→Ramen) → ดาเมจ → วางครบค่อยอัพเกรด (เงินก่อน)
+        --    เช็ค "เต็ม/วางติด" จากจำนวนตัวจริงใน workspace.Units (placeAt/unitCount) — Phantom ก็ขึ้นใน Units
         local maxedUnit = {}   -- asset ที่วางครบแล้ว (ตัวจริงไม่เพิ่ม 3 ครั้ง)
         local failN     = {}
         local function countAsset(asset)
@@ -6312,35 +6312,30 @@ _G.AE_VILLAIN_PLACE = function()
                 local yen = 0
                 pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
                 -- ===== เฟส 1: ตัวเงินทีละตัวจนเต็ม (Senku ครบ → Ichiraku ครบ) =====
+                -- ⭐ v9.42: วางล่วงหน้าเหมือน Story — ไม่รอเงิน (Phantom Placing จองให้เมื่อเงินมา)
                 local moneyPending, hasMoney = false, false
                 for _, s in ipairs(slots) do
                     if not pileOn then break end
                     if s.money and not maxedUnit[s.asset] then
                         hasMoney, moneyPending = true, true
-                        if s.cost <= yen then
-                            if tryPlace(s) then print(("[Villain] ✅ 💰เงิน %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
-                            elseif maxedUnit[s.asset] then print(("[Villain] 🔒 %s เต็ม → ตัวถัดไป"):format(tostring(s.asset))) end
-                        end
+                        if tryPlace(s) then print(("[Villain] ✅ 💰เงิน %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                        elseif maxedUnit[s.asset] then print(("[Villain] 🔒 %s เต็ม → ตัวถัดไป"):format(tostring(s.asset))) end
                         break   -- ตัวเงินทีละตัว
                     elseif s.money then hasMoney = true end
                 end
-                -- ===== เฟส 2: ดาเมจ (หลังตัวเงินเต็มหมด) — วางเมื่อเงินพอ =====
+                -- ===== เฟส 2: ดาเมจ (หลังตัวเงินเต็มหมด) — วางล่วงหน้า ไม่รอเงิน =====
                 if not moneyPending then
                     local dmgLeft = false
                     for _, s in ipairs(slots) do
                         if not pileOn then break end
                         if not s.money and not maxedUnit[s.asset] then
                             dmgLeft = true
-                            if s.cost <= yen then
-                                if tryPlace(s) then
-                                    print(("[Villain] ✅ ⚔️ดาเมจ %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
-                                elseif maxedUnit[s.asset] then
-                                    print(("[Villain] 🔒 ⚔️%s วางไม่ติด 3 ครั้ง → ถือว่าเต็ม"):format(tostring(s.asset)))
-                                else
-                                    print(("[Villain] ⚠️ ⚔️%s วางไม่ติด (yen=%d cost=%d)"):format(tostring(s.asset), yen, s.cost))
-                                end
+                            if tryPlace(s) then
+                                print(("[Villain] ✅ ⚔️ดาเมจ %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                            elseif maxedUnit[s.asset] then
+                                print(("[Villain] 🔒 ⚔️%s วางไม่ติด 3 ครั้ง → ถือว่าเต็ม"):format(tostring(s.asset)))
                             else
-                                print(("[Villain] ⏳ ⚔️%s รอเงิน (yen=%d < cost=%d)"):format(tostring(s.asset), yen, s.cost))
+                                print(("[Villain] ⚠️ ⚔️%s วางไม่ติด (Phantom? รอบหน้าลองใหม่)"):format(tostring(s.asset)))
                             end
                         end
                     end
