@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.39"
+local SCRIPT_VERSION = "v9.40"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6272,43 +6272,69 @@ _G.AE_VILLAIN_PLACE = function()
             print("[Villain] ⏳ ยังไม่เจอมอน → ใช้เลน '" .. lane.name .. "' ไปก่อน")
         end
 
-        -- ⭐ v9.39 (ตาม user): จองวางล่วงหน้า (Phantom Placing) — ไม่เช็คเงิน (จองได้แม้เงินไม่พอ)
-        --    ยิงเรียงตัวเงินก่อน (Senku→Ichiraku) แล้วดาเมจ — แต่ละตัวยิงหลายจุด (เกมแคป max เอง)
-        --    เกมทยอยวางจริงเมื่อเงินมา + auto-upgrade จัดการต่อ
-        -- จอง 1 จุด (SelectSlot + PlaceGameUnit) — ไม่เช็ค unitCount (จองผียังไม่ขึ้นทันที)
-        local function reserveOne(slot, frac, sideOff)
-            local rep = getReplica("GamePlayerData"); if not rep then return end
-            local hb = getReplica("HotbarData")
-            local d = lane.total * frac
-            local base = posAt(lane, d); local dir = dirAt(lane, d)
-            local perp = Vector3.new(-dir.Z, 0, dir.X)
-            local p = base + perp * (sideOff or 0)
-            if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.05) end
-            pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-            task.wait(0.25)
+        -- ⭐ v9.40: วางเมื่อเงินพอ (PlaceGameUnit ต้องมีเงินจริง จองไม่ได้) เรียงตัวเงินก่อนจนเต็ม → ดาเมจ
+        --    ⭐ ไม่อัพเกรดระหว่างวาง (ปล่อยเงินโตไว้วางให้ครบ) → วางครบแล้วค่อยเริ่มอัพเกรด (เงินก่อน)
+        --    เช็ค "เต็ม" จากจำนวนตัวจริงในสนาม (getMyUnits กรอง phantom)
+        local maxedUnit = {}   -- asset ที่วางครบแล้ว (ตัวจริงไม่เพิ่ม 3 ครั้ง)
+        local failN     = {}
+        local function countAsset(asset)
+            local n, a = 0, tostring(asset):lower()
+            for _, u in ipairs(getMyUnits()) do
+                if tostring(u.asset):lower():find(a, 1, true) then n = n + 1 end
+            end
+            return n
         end
-        -- จองทั้งกลุ่ม (money=true/false) — แต่ละตัวยิง tries จุด (คนละตำแหน่ง)
-        local function reserveGroup(wantMoney, tries)
-            for _, s in ipairs(gameHotbarSlots()) do
-                if not pileOn then break end
-                if s.money == wantMoney then
-                    for i = 1, tries do
-                        if not pileOn then break end
-                        reserveOne(s.slot, 0.55 + (i-1)*0.035, ((i-1)%3 - 1) * 7)
-                    end
-                    print(("[Villain] 📌 จอง %s %s x%d"):format(wantMoney and "💰เงิน" or "⚔️ดาเมจ", tostring(s.asset), tries))
+        -- วาง 1 ตัว → คืน true ถ้าตัวจริงเพิ่ม, false ถ้าไม่เพิ่ม (เต็ม/จองผี)
+        local function tryPlace(s)
+            local before = countAsset(s.asset)
+            placeAt(lane, s.slot, lane.total * (0.55 + math.random() * 0.10))
+            task.wait(0.5)
+            if countAsset(s.asset) > before then failN[s.asset] = 0; return true end
+            failN[s.asset] = (failN[s.asset] or 0) + 1
+            if failN[s.asset] >= 3 then maxedUnit[s.asset] = true end
+            return false
+        end
+        for round = 1, 80 do
+            if not pileOn then break end
+            if round % 5 == 0 then local L = findActiveLane(lanes); if L then lane = L end end
+            local slots = gameHotbarSlots()
+            if #slots == 0 then task.wait(2)
+            else
+                local yen = 0
+                pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
+                -- ===== เฟส 1: ตัวเงินทีละตัวจนเต็ม (Senku ครบ → Ichiraku ครบ) =====
+                local moneyPending, hasMoney = false, false
+                for _, s in ipairs(slots) do
+                    if not pileOn then break end
+                    if s.money and not maxedUnit[s.asset] then
+                        hasMoney, moneyPending = true, true
+                        if s.cost <= yen then
+                            if tryPlace(s) then print(("[Villain] ✅ 💰เงิน %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                            elseif maxedUnit[s.asset] then print(("[Villain] 🔒 %s เต็ม → ตัวถัดไป"):format(tostring(s.asset))) end
+                        end
+                        break   -- ตัวเงินทีละตัว
+                    elseif s.money then hasMoney = true end
                 end
+                -- ===== เฟส 2: ดาเมจ (หลังตัวเงินเต็มหมด) — วางเมื่อเงินพอ =====
+                if not moneyPending then
+                    local dmgLeft = false
+                    for _, s in ipairs(slots) do
+                        if not pileOn then break end
+                        if not s.money and not maxedUnit[s.asset] then
+                            dmgLeft = true
+                            if s.cost <= yen and tryPlace(s) then
+                                print(("[Villain] ✅ ⚔️ดาเมจ %s (มี %d)"):format(tostring(s.asset), countAsset(s.asset)))
+                            end
+                        end
+                    end
+                    if not dmgLeft then print("[Villain] 🏁 วางครบทุกตัวแล้ว"); break end
+                end
+                task.wait(1)
             end
         end
-        -- ทำ 3 รอบ (เผื่อรอบแรกยังไม่ติด/เลนเปลี่ยน) — ตัวเงินก่อนทุกรอบ แล้วดาเมจ
-        for round = 1, 3 do
-            if not pileOn then break end
-            local L = findActiveLane(lanes); if L then lane = L end
-            reserveGroup(true, 4)    -- ⭐ ตัวเงินก่อน (ยิง 4 จุด → เกมแคป max เช่น Senku 3, Ichiraku 1)
-            reserveGroup(false, 3)   -- แล้วดาเมจ (ยิง 3 จุด)
-            task.wait(3)
-        end
-        print("[Villain] 🏁 จองวางครบ (Phantom Placing วางจริงเมื่อเงินมา)")
+        -- ⭐ วางครบแล้วค่อยเริ่มอัพเกรด (เงินก่อนตัน → ดาเมจ)
+        print("[Villain] ⬆️ เริ่มอัพเกรด (เงินก่อน)")
+        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
         pileOn = false
     end)
 end
@@ -6492,9 +6518,8 @@ _G.AE_VILLAIN_RUN = function(act)
                             pcall(_G.AE_EXP_SETTINGS)
                             settingsDone = true
                         end
-                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัว + อัพเกรดเอง")
-                        _G.AE_VILLAIN_PLACE()
-                        _G.AE_VILLAIN_UPGRADE()
+                        print("[Villain] ⚔️ อยู่ในด่าน → วางตัวให้ครบก่อน แล้วค่อยอัพเกรด")
+                        _G.AE_VILLAIN_PLACE()   -- ⭐ v9.40: PLACE เรียก UPGRADE เองตอนวางครบ (ไม่อัพระหว่างวาง)
                         placedThisRun = true
                     end
                     -- ⭐ v9.26: มีหน้าต่าง "Start Game" (ต้องวางตัว 50% ก่อนถึงเริ่มได้)
