@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.47"
+local SCRIPT_VERSION = "v9.48"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11354,7 +11354,8 @@ _G.AE_INF_RUN=function(mapName, targetWave)
         end
         if not inGame() then L("⚠️ ไม่เข้าด่านใน 90 วิ"); notify("⚔️ Infinite","ไม่เข้าด่าน",6); running=false; return end
         L("✅ อยู่ในด่านแล้ว → วางตัว (_G.AE_PLACE)")
-        if _G.AE_PLACE then pcall(_G.AE_PLACE) end
+        -- ⭐ v9.48: โหมดเควสวางแบบ Villain (วางทุกตัวที่ใส่ ทุกโหลดเอาต์) — fallback AE_PLACE
+        if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end
         task.wait(3)
         -- เฝ้า wave
         L(("👀 เฝ้า wave → เป้า %d (%s)"):format(targetWave, mapName))
@@ -11371,7 +11372,7 @@ _G.AE_INF_RUN=function(mapName, targetWave)
             end
             -- วางซ้ำทุก ~12 วิ (กันตัวตาย/วางไม่ครบตอนแรก)
             tick2=tick2+1
-            if tick2%4==0 and _G.AE_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_PLACE) end
+            if tick2%4==0 then L("  🔁 วางซ้ำ"); if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end end
             task.wait(3)
         end
         running=false
@@ -11583,7 +11584,8 @@ _G.AE_STORY_RUN=function(mapName, actNum)
         while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
         if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("📖 Story","ไม่เข้าด่าน",6); running=false; return end
         L("✅ อยู่ในด่าน → วางตัว (Story placement)")
-        if _G.AE_PLACE then pcall(_G.AE_PLACE) end
+        -- ⭐ v9.48: โหมดเควสวางแบบ Villain (วางทุกตัวที่ใส่ ทุกโหลดเอาต์) — fallback AE_PLACE
+        if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end
         task.wait(3)
         -- เล่นจนชนะ/แพ้/ออกจากด่าน
         L("👀 รอผลแมตช์ (ชนะ=จบ objective)")
@@ -11599,7 +11601,7 @@ _G.AE_STORY_RUN=function(mapName, actNum)
             end
             if not inGame() and tick()-t0>30 then L("⚠️ ออกจากด่านแล้ว → จบ"); break end
             tick2=tick2+1
-            if tick2%4==0 and _G.AE_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_PLACE) end
+            if tick2%4==0 then L("  🔁 วางซ้ำ"); if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end end
             local ww=0; pcall(function() ww=tonumber(tostring(player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text):match("%d+")) or 0 end)
             L(("  เล่นอยู่... wave %d"):format(ww))
             task.wait(3)
