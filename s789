@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.45"
+local SCRIPT_VERSION = "v9.46"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -3076,6 +3076,17 @@ if GAME_ID == "anime_expeditions" then
             end
             return
         end
+
+        -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
+        if farmMode == "quest" then
+            if _G.AE_QUEST_RUN then
+                print("[AE Farm] 🎯 โหมดทำเควส (Bounty Board)")
+                pcall(_G.AE_QUEST_RUN)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบเควส (_G.AE_QUEST_RUN) — โหลดสคริปต์ยังไม่ครบ")
+            end
+            return
+        end
         -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
         local function isVictoryOpen()
             local prompt = player.PlayerGui:FindFirstChild("Prompt")
@@ -3280,6 +3291,9 @@ if GAME_ID == "anime_expeditions" then
         if farmMode == "villain" and _G.AE_VILLAIN_RUN_STOP then
             pcall(_G.AE_VILLAIN_RUN_STOP)
         end
+        if farmMode == "quest" and _G.AE_QUEST_RUN_STOP then
+            pcall(_G.AE_QUEST_RUN_STOP)
+        end
     end
 
     _G.AE_FARM_START = startFarm
@@ -3404,6 +3418,12 @@ if GAME_ID == "anime_expeditions" then
                             print(("[AE Remote] 😈 Villain Invasion: Act %d"):format(newAct))
                         end
                         _G.AE_VILLAIN_ACT = newAct
+                    end
+                    -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
+                    if wantMode == "quest" then
+                        _G.AE_QUEST_FALLBACK_MODE  = job.fallbackMode or job.fallback or "villain"
+                        _G.AE_QUEST_FALLBACK_STAGE = job.stage or "School Grounds"
+                        _G.AE_QUEST_FALLBACK_ACT   = tonumber(job.difficulty) or 1
                     end
                     if changed then
                         print(("[AE Remote] 📋 งานใหม่: %s | %s | %s (%s/%s)")
@@ -10656,3 +10676,1623 @@ end   -- จบ if ไม่มี UI
 end
 
 -- ===== [/EXPEDITION MODULE] =====
+
+
+-- ============================================================
+-- 🎯🎯🎯 [QUEST/BOUNTY SYSTEM] รวมจากโมดูลที่เทสแล้ว (v9.46) 🎯🎯🎯
+-- reader/reroll + summon + shop + players(inf/story/raid/chal) + orchestrator
+-- ============================================================
+
+-- ===================== [ae_bounty_test] =====================
+-- ============================================================
+-- 🎯 AE BOUNTY BOARD — CORE v2 (กันพลาด: pcall ทั้งไฟล์ + notification + auto-scan)
+--   อ่าน board + จัดหมวด objective + ตัดสินใจ + reroll (ยังไม่รวม "เล่นให้")
+--   ฟังก์ชัน: _G.AE_BOUNTY_SCAN() / _G.AE_BOUNTY_REROLL(id) / _G.AE_BOUNTY_REROLL_SUB()
+-- ============================================================
+local okAll, fatal = pcall(function()
+
+local Players = game:GetService("Players")
+local RS      = game:GetService("ReplicatedStorage")
+local UIS     = game:GetService("UserInputService")
+local SG      = game:GetService("StarterGui")
+local player  = Players.LocalPlayer
+local CLIP    = (setclipboard) or (toclipboard) or nil
+
+-- แจ้งเตือนมุมขวาบน (เชื่อถือได้กว่า UI custom)
+local function notify(title, text, dur)
+    pcall(function() SG:SetCore("SendNotification", { Title=title, Text=text, Duration=dur or 5 }) end)
+end
+notify("🎯 Bounty Core", "กำลังโหลด...", 3)
+
+-- ---------- config โมดูล ----------
+local CFG, cfgErr
+do local ok,e = pcall(function() CFG = require(RS.Shared.Information.Events.BountyBoard) end); if not ok then cfgErr=e end end
+local QUESTS = {}
+pcall(function() QUESTS = CFG:GetEventQuests() end)
+local REROLL_COST = 1000
+pcall(function() REROLL_COST = CFG:GetBountyRerollCost() or 1000 end)
+
+-- ---------- replica PlayerData ----------
+local registry
+pcall(function()
+    local RC = require(RS.Shared.ReplicaClient)
+    for _, up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+    end
+end)
+local function pdata()
+    if not registry then return nil end
+    for _, r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t=="PlayerData" then return r.Data end end
+end
+
+-- ---------- remote _updateNode ----------
+local updateNode
+pcall(function() updateNode = RS.Nodes.Network.NetworkEvents._updateNode end)
+local function fireNode(...)
+    if not updateNode then warn("[BQ] ❌ ไม่เจอ _updateNode"); return false end
+    local a={...}
+    local ok, err = pcall(function() updateNode:FireServer({ Type="Post" }, table.unpack(a)) end)
+    if not ok then warn("[BQ] ❌ fireNode: "..tostring(err)) end
+    return ok
+end
+
+-- ---------- log ----------
+local logSink
+local logBuf = {}
+local function L(s) s=tostring(s); print("[BQ] "..s); table.insert(logBuf,s); if logSink then pcall(logSink,s) end end
+
+-- ---------- rarity ----------
+local RANK = { Common=1, Uncommon=2, Rare=1, Epic=2, Legendary=3, Mythic=4, Godly=5, Divine=6, Secret=7 }
+local DO_THRESHOLD = 3     -- ทำ Legendary(3)+ | ต่ำกว่า reroll
+local function rarityOfId(id) return (tostring(id):gsub("%d+$","")) end
+local function rankOfId(id) return RANK[rarityOfId(id)] or 0 end
+
+local function gold()
+    local d = pdata()
+    local g = d and d.ItemData and d.ItemData.Gold
+    if type(g)=="table" then return tonumber(g.Amount) or 0 end
+    return tonumber(g) or 0
+end
+
+-- ---------- objective → อ่านง่าย ----------
+local function cond(o, name)
+    if type(o.Conditions)~="table" then return nil end
+    for _, c in ipairs(o.Conditions) do if c.ValueName==name then return c.Value end end
+    return nil
+end
+local function parseObjective(o)
+    local t=o.Type
+    if t=="Summon" then return { type="Summon", goal=o.Goal or 1, text=("Summon %d"):format(o.Goal or 1) } end
+    if t=="ClearWave" then
+        local map,diff,wave,gm = cond(o,"MapName"),cond(o,"Difficulty"),cond(o,"Wave"),cond(o,"Gamemode")
+        return { type="ClearWave", gamemode=gm, map=map, difficulty=diff, wave=wave, goal=o.Goal or 1,
+                 text=("%s %s %s w%s"):format(tostring(gm),tostring(map),tostring(diff),tostring(wave)) }
+    end
+    if t=="FinishMap" then
+        local gm,map,diff,act,ch = cond(o,"Gamemode"),cond(o,"MapName"),cond(o,"Difficulty"),cond(o,"ActName"),cond(o,"ChallengeType")
+        local text
+        if gm=="Challenge" then text=("Challenge %s x%d"):format(tostring(ch),o.Goal or 1)
+        elseif gm=="Raid" then text=("Raid %s %s"):format(tostring(map),tostring(act))
+        else text=("%s %s %s"):format(tostring(gm),tostring(map),tostring(diff)) end
+        return { type="FinishMap", gamemode=gm, map=map, difficulty=diff, actName=act, challengeType=ch, goal=o.Goal or 1, text=text }
+    end
+    return { type=tostring(t), goal=o.Goal or 1, text=tostring(t) }
+end
+
+local function readBoard()
+    local d = pdata()
+    local bb = d and d.QuestData and d.QuestData.BountyBoard
+    if type(bb)~="table" or type(bb.QuestOrder)~="table" then return nil,"อ่าน BountyBoard ไม่ได้" end
+    local list={}
+    for _, id in ipairs(bb.QuestOrder) do
+        local def = QUESTS[id]
+        local live = bb.Quests and bb.Quests[id]
+        local e = { id=id, rarity=rarityOfId(id), rank=rankOfId(id),
+                    displayName=def and def.DisplayName or id,
+                    reward=def and def.Rewards and def.Rewards[1],
+                    completed=live and live.Completed or false,
+                    claimed=live and live.Claimed or false, objectives={} }
+        if def and type(def.Objectives)=="table" then
+            local ok={}; for k in pairs(def.Objectives) do ok[#ok+1]=k end; table.sort(ok)
+            for _, k in ipairs(ok) do
+                local po=parseObjective(def.Objectives[k])
+                po.cur=(live and live.ObjectiveProgress and tonumber(live.ObjectiveProgress[k])) or 0
+                po.done=po.cur>=(po.goal or 1)
+                e.objectives[#e.objectives+1]=po
+            end
+        end
+        list[#list+1]=e
+    end
+    return list, bb
+end
+
+function _G.AE_BOUNTY_REROLL(id)
+    if gold()<REROLL_COST then L("💰 Gold ไม่พอ ("..gold().."/"..REROLL_COST..")"); return false end
+    L("🎲 reroll "..tostring(id))
+    return fireNode("BOUNTY_BOARD_REROLL_QUEST", id, false)
+end
+
+function _G.AE_BOUNTY_REROLL_SUB()
+    task.spawn(function()
+        local guard=0
+        while guard<30 do guard=guard+1
+            local board=readBoard(); if not board then L("อ่าน board ไม่ได้"); return end
+            local target
+            for _, b in ipairs(board) do if b.rank<DO_THRESHOLD and not b.claimed and not b.completed then target=b; break end end
+            if not target then L("✅ 3★+ หมดแล้ว"); return end
+            if gold()<REROLL_COST then L("💰 Gold หมด — หยุด"); return end
+            local before=target.id
+            _G.AE_BOUNTY_REROLL(target.id)
+            local t0=tick()
+            repeat task.wait(0.5) until tick()-t0>5 or (function() local nb=readBoard(); if not nb then return false end
+                for _,b in ipairs(nb) do if b.id~=before then return true end end return false end)()
+            task.wait(0.4)
+        end
+    end)
+end
+
+function _G.AE_BOUNTY_SCAN()
+    local board, err = readBoard()
+    if not board then L("❌ "..tostring(err)); return nil end
+    logBuf = {}
+    L("== BOARD ("..#board..") | Gold "..gold().." | reroll "..REROLL_COST.." ==")
+    for i, b in ipairs(board) do
+        local v = b.claimed and "เคลมแล้ว" or b.completed and "✅เสร็จ→เคลม" or (b.rank>=DO_THRESHOLD and "▶ทำ" or "🎲reroll")
+        L(("%d) %s [★%d] +%s → %s"):format(i, b.id, b.rank, b.reward and tostring(b.reward.Amount) or "?", v))
+        for _, o in ipairs(b.objectives) do L(("   • %s (%d/%d)%s"):format(o.text,o.cur,o.goal,o.done and "✓" or "")) end
+    end
+    if CLIP then pcall(CLIP, table.concat(logBuf,"\n")) end
+    notify("🎯 Bounty", "SCAN เสร็จ — "..#board.." อัน (ดูใน UI/clipboard)", 4)
+    return board
+end
+
+-- ⭐ v9.46: เปิดให้ orchestrator ใช้แบบเงียบๆ (ไม่ log/notify)
+_G.AE_BOUNTY_READ  = readBoard                      -- คืน list ของ board (มี .rank/.completed/.objectives[].done)
+_G.AE_BOUNTY_GOLD  = gold                           -- gold ปัจจุบัน
+_G.AE_BOUNTY_DO_THRESHOLD = DO_THRESHOLD            -- 3 = ทำ Legendary+
+_G.AE_BOUNTY_CLAIM = function(id) L("🏆 เคลม "..tostring(id)); return fireNode("BOUNTY_BOARD_CLAIM_QUEST", id, false) end
+
+-- ---------- UI (pcall กันพัง) ----------
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_BOUNTY_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_BOUNTY_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(420,360); main.Position=UDim2.fromOffset(20,80)
+    main.BackgroundColor3=Color3.fromRGB(18,16,26); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    pcall(function() local s=Instance.new("UIStroke",main); s.Color=Color3.fromRGB(200,150,60); s.Thickness=2; s.Transparency=0.3 end)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(160,110,40)
+    head.BorderSizePixel=0; head.Text="  🎯 AE BOUNTY (CORE)"; head.TextXAlignment=Enum.TextXAlignment.Left
+    head.Font=Enum.Font.GothamBold; head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local function mkBtn(txt,x,w,color,cb)
+        local b=Instance.new("TextButton"); b.Size=UDim2.fromOffset(w,30); b.Position=UDim2.fromOffset(x,36)
+        b.BackgroundColor3=color; b.Text=txt; b.Font=Enum.Font.GothamBold; b.TextSize=12; b.TextColor3=Color3.new(1,1,1); b.Parent=main
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,6); b.MouseButton1Click:Connect(function() pcall(cb) end)
+    end
+    mkBtn("🔍 SCAN",8,120,Color3.fromRGB(60,120,190),function() _G.AE_BOUNTY_SCAN() end)
+    mkBtn("🎲 REROLL <3★",134,160,Color3.fromRGB(150,90,40),function() _G.AE_BOUNTY_REROLL_SUB() end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-80); box.Position=UDim2.fromOffset(8,72)
+    box.BackgroundColor3=Color3.fromRGB(26,24,32); box.Text="กด SCAN"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(180,255,190); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}
+    logSink=function(s) table.insert(lines,s); while #lines>17 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+
+-- สถานะโหลด
+local status = ("CFG:%s นิยาม:%s node:%s registry:%s"):format(CFG and "✓" or "✗", next(QUESTS) and "✓" or "✗", updateNode and "✓" or "✗", registry and "✓" or "✗")
+L("พร้อม — "..status)
+if cfgErr then L("cfgErr: "..tostring(cfgErr)) end
+notify("🎯 Bounty Core พร้อม", status, 6)
+
+-- auto-scan ทันที (ให้เห็นผลเลย)
+task.spawn(function() task.wait(0.5); pcall(_G.AE_BOUNTY_SCAN) end)
+
+end)  -- จบ pcall ทั้งไฟล์
+
+if not okAll then
+    warn("[BQ FATAL] "..tostring(fatal))
+    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Bounty Core ERROR", Text=tostring(fatal):sub(1,180), Duration=15}) end)
+    pcall(function() if setclipboard then setclipboard("BQ FATAL: "..tostring(fatal)) end end)
+end
+
+-- ===================== [ae_bounty_summon] =====================
+-- ============================================================
+-- 🎰 AE BOUNTY — SUMMON player v1 (ยิง BANNER_SUMMON ตรง เหมือน fuel)
+--   ใช้ villain coin ก่อน (มีเยอะ) แล้วค่อย gem — 50 currency/สุ่ม
+--   ถ้าเงินไม่พอ + มี _G.AE_VILLAIN_RUN → (orchestrator จะสั่งฟาร์ม villain เติม)
+--   ฟังก์ชัน: _G.AE_BOUNTY_SUMMON(count)  → สุ่ม count ครั้ง (เท่าที่ currency พอ) คืนจำนวนที่สุ่มจริง
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local RS=game:GetService("ReplicatedStorage")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local player=Players.LocalPlayer
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+
+local COST = 50   -- currency ต่อ 1 สุ่ม (ทั้ง gem และ villain coin)
+
+-- banner: key, ItemData currency, batch สูงสุดต่อ call
+local BANNERS = {
+    { key="VillainInvasion", cur="VillainCurrency", batch=50 },   -- villain coin (มีเยอะ → ใช้ก่อน)
+    { key="Standard",        cur="Gem",             batch=10 },   -- gem
+}
+
+local logSink; local function L(s) s=tostring(s); print("[SUMMON] "..s); if logSink then pcall(logSink,s) end end
+
+local registry
+pcall(function()
+    local RC=require(RS.Shared.ReplicaClient)
+    for _,up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+    end
+end)
+local function pdata()
+    if not registry then return nil end
+    for _,r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t=="PlayerData" then return r.Data end end
+end
+local function cur(name)
+    local d=pdata(); local c=d and d.ItemData and d.ItemData[name]
+    if type(c)=="table" then return tonumber(c.Amount) or 0 end
+    return tonumber(c) or 0
+end
+local function summonCount(banner)
+    local d=pdata(); local b=d and d.BannerData and d.BannerData[banner]
+    return b and tonumber(b.SummonCount) or 0
+end
+
+local updateNode
+pcall(function() updateNode = RS.Nodes.Network.NetworkEvents._updateNode end)
+local function fireSummon(bannerKey, n)
+    if not updateNode then L("❌ ไม่เจอ _updateNode"); return false end
+    local ok,err = pcall(function() updateNode:FireServer({Type="Post"}, "BANNER_SUMMON", bannerKey, n) end)
+    if not ok then L("❌ summon error: "..tostring(err)) end
+    return ok
+end
+
+-- สุ่ม count ครั้ง (เท่าที่ currency พอ) — คืนจำนวนที่สุ่มจริง
+function _G.AE_BOUNTY_SUMMON(count)
+    count = tonumber(count) or 0
+    if count <= 0 then L("count ต้อง > 0"); return 0 end
+    L(("🎰 ต้องสุ่ม %d | villain %d, gem %d"):format(count, cur("VillainCurrency"), cur("Gem")))
+    local done = 0
+    for _, b in ipairs(BANNERS) do
+        while done < count do
+            local have = cur(b.cur)
+            local canByCur = math.floor(have / COST)
+            if canByCur <= 0 then break end                       -- currency หมดของ banner นี้
+            local n = math.min(b.batch, count - done, canByCur)   -- ยิงเป็นก้อน
+            if n <= 0 then break end
+            if not fireSummon(b.key, n) then break end
+            done = done + n
+            L(("  ✅ %s x%d (%s เหลือ %d) รวม %d/%d"):format(b.key, n, b.cur, cur(b.cur), done, count))
+            task.wait(0.6)   -- รอ server ประมวลผล + currency อัปเดต
+        end
+        if done >= count then break end
+    end
+    if done < count then
+        L(("⚠️ สุ่มได้ %d/%d — currency หมด (ต้องฟาร์ม villain เติม)"):format(done, count))
+    else
+        L(("✅ สุ่มครบ %d"):format(done))
+    end
+    notify("🎰 Summon", ("สุ่ม %d/%d"):format(done, count), 5)
+    return done
+end
+
+-- ---------- UI เทส ----------
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_SUMMON_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_SUMMON_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(360,260); main.Position=UDim2.fromOffset(20,100)
+    main.BackgroundColor3=Color3.fromRGB(22,14,26); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(150,60,180)
+    head.BorderSizePixel=0; head.Text="  🎰 BOUNTY SUMMON"; head.TextXAlignment=Enum.TextXAlignment.Left
+    head.Font=Enum.Font.GothamBold; head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local function mk(txt,x,w,cb) local b=Instance.new("TextButton"); b.Size=UDim2.fromOffset(w,30); b.Position=UDim2.fromOffset(x,36)
+        b.BackgroundColor3=Color3.fromRGB(110,60,160); b.Text=txt; b.Font=Enum.Font.GothamBold; b.TextSize=12; b.TextColor3=Color3.new(1,1,1); b.Parent=main
+        Instance.new("UICorner",b).CornerRadius=UDim.new(0,6); b.MouseButton1Click:Connect(function() pcall(cb) end) end
+    mk("สุ่ม 1 (เทส)",8,105,function() _G.AE_BOUNTY_SUMMON(1) end)
+    mk("สุ่ม 10",119,80,function() _G.AE_BOUNTY_SUMMON(10) end)
+    mk("สุ่ม 50",205,80,function() _G.AE_BOUNTY_SUMMON(50) end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-78); box.Position=UDim2.fromOffset(8,74)
+    box.BackgroundColor3=Color3.fromRGB(30,22,34); box.Text="กดปุ่มเพื่อทดสอบสุ่ม"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(230,190,255); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}
+    logSink=function(s) table.insert(lines,s); while #lines>11 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+
+L("พร้อม — node:"..(updateNode and "✓" or "✗").." | villain "..cur("VillainCurrency").." gem "..cur("Gem"))
+notify("🎰 Summon พร้อม", "villain "..cur("VillainCurrency").." / gem "..cur("Gem"), 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Summon ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [ae_shop_buy] =====================
+-- ============================================================
+-- 🛒 AE GOLD SHOP — AUTO-BUY v1 (ยิง remote ตรง เหมือน fuel)
+--   ซื้อทุกไอเท็มใน Gold Shop ที่ยัง in-stock — เก็บ reserve 500k gold
+--   buy remote: RS.RemoteEvents.ReplicaSignal:FireServer(<shopId>,"PurchaseItem","GoldShop1",<index>,<qty>)
+--   ฟังก์ชัน: _G.AE_SHOP_BUY()   (คืน true ถ้าซื้อครบ/ไม่มีอะไรให้ซื้อ)
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local RS=game:GetService("ReplicatedStorage")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local player=Players.LocalPlayer; local CLIP=(setclipboard) or (toclipboard) or nil
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+
+local RESERVE   = 500000        -- ⭐ เก็บ gold ขั้นต่ำ (ซื้อได้ถ้าซื้อแล้วยังเหลือ > นี้)
+local SHOP_KEY  = "GoldShop1"   -- key ร้านทองใน Shops
+local SHOP_DATAKEY = "GoldShop" -- DataKey ของ replica ShopData ร้านทอง
+
+local logSink
+local logBuf = {}
+local function L(s) s=tostring(s); print("[SHOP] "..s); table.insert(logBuf,s); if logSink then pcall(logSink,s) end end
+
+-- registry (คงคีย์ = id)
+local registry
+pcall(function()
+    local RC=require(RS.Shared.ReplicaClient)
+    for _,up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+    end
+end)
+
+local ReplicaSignal
+pcall(function() ReplicaSignal = RS.RemoteEvents.ReplicaSignal end)
+
+local function pdata()
+    if not registry then return nil end
+    for _,r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t=="PlayerData" then return r.Data end end
+end
+local function gold()
+    local d=pdata(); local g=d and d.ItemData and d.ItemData.Gold
+    if type(g)=="table" then return tonumber(g.Amount) or 0 end
+    return tonumber(g) or 0
+end
+
+-- หา replica ร้านทอง → คืน id + ตาราง Items
+local function findShop()
+    if not registry then return nil end
+    for id,rep in pairs(registry) do
+        local ok,t=pcall(function() return rep.Token end)
+        if ok and t=="ShopData" then
+            local okd,d=pcall(function() return rep.Data end)
+            if okd and type(d)=="table" and d.DataKey==SHOP_DATAKEY then
+                local shop = d.Shops and d.Shops[SHOP_KEY]
+                if shop and type(shop.Items)=="table" then return id, shop.Items end
+            end
+        end
+    end
+    return nil
+end
+
+-- จำนวนที่ซื้อไปแล้ว restock นี้ (PurchaseHistory.GoldShop.GoldShop1[Name])
+local function boughtCount(name)
+    local d=pdata()
+    local ph = d and d.ShopData and d.ShopData.PurchaseHistory
+    ph = ph and ph[SHOP_DATAKEY] and ph[SHOP_DATAKEY][SHOP_KEY]
+    return (ph and tonumber(ph[name])) or 0
+end
+
+local function buy(shopId, index, qty)
+    if not ReplicaSignal then L("❌ ไม่เจอ ReplicaSignal"); return false end
+    local ok,err = pcall(function() ReplicaSignal:FireServer(shopId, "PurchaseItem", SHOP_KEY, index, qty) end)
+    if not ok then L("❌ buy error: "..tostring(err)) end
+    return ok
+end
+
+function _G.AE_SHOP_BUY()
+    local shopId, items = findShop()
+    if not shopId then L("❌ ไม่เจอร้าน Gold Shop"); return false end
+    L(("🛒 Gold Shop (id %s) | Gold %d | reserve %d"):format(tostring(shopId), gold(), RESERVE))
+
+    -- เรียง index (1..N)
+    local idxs = {}
+    for k in pairs(items) do idxs[#idxs+1]=k end
+    table.sort(idxs, function(a,b) return tonumber(a) < tonumber(b) end)
+
+    local boughtAny, spent = 0, 0
+    for _, idx in ipairs(idxs) do
+        local it = items[idx]
+        local name, price = it.Name, tonumber(it.Price) or 0
+        local stock = tonumber(it.Stock)            -- nil = ไม่จำกัด (แต่ร้านทองมี Stock ทุกตัว)
+        if stock then
+            local remain = stock - boughtCount(name)
+            if remain > 0 and price >= 0 then
+                -- ซื้อได้กี่ชิ้นโดยยังเหลือ > RESERVE
+                local affordable = price > 0 and math.floor((gold() - RESERVE) / price) or remain
+                local qty = math.min(remain, math.max(0, affordable))
+                if qty > 0 then
+                    if buy(shopId, idx, qty) then
+                        boughtAny = boughtAny + 1; spent = spent + qty*price
+                        L(("  ✅ #%s %s x%d (-%d)"):format(tostring(idx), tostring(name), qty, qty*price))
+                        task.wait(0.35)
+                    end
+                elseif remain > 0 then
+                    L(("  💰 ข้าม %s (gold ไม่พอ/ติด reserve)"):format(tostring(name)))
+                end
+            end
+        end
+    end
+    L(("🛒 เสร็จ — ซื้อ %d รายการ ใช้ %d gold (เหลือ %d)"):format(boughtAny, spent, gold()))
+    notify("🛒 Gold Shop", ("ซื้อ %d รายการ (-%d) เหลือ %d"):format(boughtAny, spent, gold()), 6)
+    return true
+end
+
+-- ---------- UI เทส ----------
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_SHOP_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_SHOP_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(360,280); main.Position=UDim2.fromOffset(20,90)
+    main.BackgroundColor3=Color3.fromRGB(20,18,14); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(180,140,40)
+    head.BorderSizePixel=0; head.Text="  🛒 GOLD SHOP AUTO-BUY"; head.TextXAlignment=Enum.TextXAlignment.Left
+    head.Font=Enum.Font.GothamBold; head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local btn=Instance.new("TextButton"); btn.Size=UDim2.new(1,-16,0,32); btn.Position=UDim2.fromOffset(8,36)
+    btn.BackgroundColor3=Color3.fromRGB(60,160,90); btn.Text="🛒 ซื้อทั้งหมด (เก็บ 500k)"; btn.Font=Enum.Font.GothamBold
+    btn.TextSize=13; btn.TextColor3=Color3.new(1,1,1); btn.Parent=main
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6); btn.MouseButton1Click:Connect(function() pcall(_G.AE_SHOP_BUY) end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-78); box.Position=UDim2.fromOffset(8,74)
+    box.BackgroundColor3=Color3.fromRGB(28,26,20); box.Text="กดปุ่มเพื่อซื้อ"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(255,230,150); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}
+    logSink=function(s) table.insert(lines,s); while #lines>12 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+
+L("พร้อม — reg:"..(registry and "✓" or "✗").." signal:"..(ReplicaSignal and "✓" or "✗").." | Gold "..gold())
+local sid = (findShop())
+L(sid and ("เจอร้าน id "..tostring(sid)) or "❌ ยังไม่เจอร้าน (ต้องอยู่ล็อบบี้?)")
+notify("🛒 Shop Auto-Buy พร้อม", "กดปุ่มในแผง หรือ _G.AE_SHOP_BUY()", 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Shop Buy ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [ae_infinite_play] =====================
+-- ============================================================
+-- ⚔️ AE INFINITE — FULL player v1 (เข้า + วางตัว + เฝ้า wave + ออกเมื่อถึงเป้า)
+--   ⚠️ ต้องรันสคริปต์หลัก v9.33 ก่อน (ใช้ _G.AE_PLACE / _G.AE_BACK_TO_LOBBY / _G.AE_APPLY_SETTINGS)
+--   ฟังก์ชัน: _G.AE_INF_RUN("School Grounds", 15)   -- แมพ UI + wave เป้า
+--             _G.AE_INF_STOP()
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local GuiService=game:GetService("GuiService")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local VIM=game:GetService("VirtualInputManager"); local RS=game:GetService("ReplicatedStorage")
+local player=Players.LocalPlayer
+local MYGEN=_G.AE_SCRIPT_GEN
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+local logSink; local function L(s) s=tostring(s); print("[INF] "..s); if logSink then pcall(logSink,s) end end
+
+-- ===== replica GameState → อ่าน Wave =====
+local registry
+pcall(function()
+    local RC=require(RS.Shared.ReplicaClient)
+    for _,up in pairs(debug.getupvalues(RC.FromId)) do
+        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+    end
+end)
+local function repByToken(tok) if registry then for _,r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t==tok then return r end end end end
+-- หา TextLabel เลข wave บน HUD (ตรงกับที่โชว์บนจอ) — ทนหลายพาธ
+local function waveFromHUD()
+    -- 1) พาธตรง (จากสคริปต์หลัก)
+    local ok,w = pcall(function()
+        local n = player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave
+        return tostring(n.Text):match("%d+")
+    end)
+    if ok and w then return tonumber(w) end
+    -- 2) หา label ที่พ่อ/ปู่ชื่อมีคำว่า Wave แล้วข้อความเป็นเลขล้วนๆ
+    local best
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled and (g.Name=="GameUI" or g.Name=="HUD") then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local num = tostring(l.Text):match("^%s*(%d+)%s*$")
+                    if num then
+                        local p=l.Parent
+                        for _=1,4 do if p and tostring(p.Name):lower():find("wave") then best=tonumber(num); break end; p=p and p.Parent end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+local function curWave()
+    local hud = waveFromHUD()
+    if hud and hud>0 then return hud end
+    local gs=repByToken("GameState"); local d=gs and gs.Data
+    return d and tonumber(d.Wave) or 0
+end
+local function inStage()
+    -- มีเลข wave บน HUD = อยู่ในด่าน
+    if waveFromHUD() then return true end
+    local gs=repByToken("GameState"); local d=gs and gs.Data
+    if type(d)=="table" and (d.Active==true or tostring(d.CurrentGameState)=="InProgress" or (type(d.Parameters)=="table" and d.Parameters.MapName)) then return true end
+    return false
+end
+
+-- ===== คลิกทน + หา/เลื่อน (จากตัวเทส enter ที่ผ่านแล้ว) =====
+local function fireConns(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+local function vimClick(b) pcall(function()
+    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+local function findBtn(needle, exact) needle=tostring(needle)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do if g:IsA("ScreenGui") and g.Enabled then
+        for _,b in ipairs(g:GetDescendants()) do if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then
+            local ts={}; if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
+            for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
+            for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then return b end end
+        end end
+    end end return nil end
+local function clickText(needle, exact, timeout) local t0=tick()
+    repeat local b=findBtn(needle,exact); if b then clickBtn(b); L("  ✅ กด '"..needle.."'"); return true end; task.wait(0.5)
+    until tick()-t0>(timeout or 6); L("  ❌ ไม่เจอ '"..needle.."'"); return false end
+local function tryClickLabel(mapName)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do if g:IsA("ScreenGui") and g.Enabled then
+        for _,l in ipairs(g:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text==mapName then
+            local p=l.Parent; while p and p~=g do if p:IsA("TextButton") or p:IsA("ImageButton") then clickBtn(p); L("  ✅ กดแมพ '"..mapName.."'"); return true end; p=p.Parent end
+        end end
+    end end return false end
+local function clickStage(mapName)
+    if tryClickLabel(mapName) then return true end
+    local sfs={}; for _,g in ipairs(player.PlayerGui:GetDescendants()) do if g:IsA("ScrollingFrame") and g.Visible and g.AbsoluteSize.X>250 then sfs[#sfs+1]=g end end
+    for _,sf in ipairs(sfs) do local maxX=math.max(sf.AbsoluteCanvasSize.X, sf.CanvasSize.X.Offset)
+        for step=0,14 do pcall(function() sf.CanvasPosition=Vector2.new(step*220,sf.CanvasPosition.Y) end); task.wait(0.22)
+            if tryClickLabel(mapName) then return true end; if step*220>maxX+300 then break end end
+        pcall(function() sf.CanvasPosition=Vector2.new(0,sf.CanvasPosition.Y) end) end
+    for _=1,6 do local nx=findBtn(">",true) or findBtn("Next",false); if not nx then break end; clickBtn(nx); task.wait(0.4); if tryClickLabel(mapName) then return true end end
+    L("  ❌ ไม่เจอแมพ '"..mapName.."'"); return false end
+-- วนหาปุ่มทุกอันใน PlayerGui (callback คืน true = หยุด)
+local function eachBtn(fn)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then
+                    if fn(b) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+local function hasLabel(b, txt)
+    if b:IsA("TextButton") and b.Text==txt then return true end
+    for _,l in ipairs(b:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text==txt then return true end
+    end
+    return false
+end
+local function clickInfinite()
+    -- หา M
+    local mBtn
+    eachBtn(function(b) if b.AbsoluteSize.X<=80 and hasLabel(b,"M") then mBtn=b; return true end end)
+    if not mBtn then L("  ❌ ไม่เจอ M"); return false end
+    local mx,my = mBtn.AbsolutePosition.X, mBtn.AbsolutePosition.Y
+    -- ปุ่มเหนือ M ในคอลัมน์เดียวกัน ใกล้สุด = Infinite
+    local best,bestY
+    eachBtn(function(b)
+        if b~=mBtn and b.AbsoluteSize.X<=90 then
+            local bx,by = b.AbsolutePosition.X, b.AbsolutePosition.Y
+            if math.abs(bx-mx)<45 and by<my-3 and (not bestY or by>bestY) then best,bestY=b,by end
+        end
+    end)
+    if not best then L("  ❌ ไม่เจอปุ่ม Infinite"); return false end
+    clickBtn(best); L("  ✅ กด Infinite"); return true
+end
+
+local function enterInfinite(mapName)
+    L("⚔️ เข้า Infinite: "..mapName)
+    clickText("Play",true,5); task.wait(1.5)
+    clickText("Story",true,5); task.wait(1.5)
+    if not clickStage(mapName) then return false end; task.wait(1.5)
+    if not clickInfinite() then return false end; task.wait(1.2)
+    clickText("Hard",false,6); task.wait(1)
+    if not clickText("Select Stage",false,8) then return false end; task.wait(3)
+    if not clickText("Start",false,12) then clickText("Select Stage",false,5); task.wait(2); if not clickText("Start",false,10) then return false end end
+    return true
+end
+
+-- ===== RUN เต็ม =====
+local running=false
+_G.AE_INF_STOP=function() running=false; L("⏹ หยุด Infinite") end
+_G.AE_INF_RUN=function(mapName, targetWave)
+    mapName=mapName or "School Grounds"; targetWave=tonumber(targetWave) or 15
+    if running then L("กำลังทำงานอยู่"); return end
+    running=true
+    -- ตัวเช็ค "อยู่ในด่าน" — ใช้ของสคริปต์หลักก่อน (แม่นสุด) แล้ว fallback ตัวเอง
+    local function inGame()
+        if inStage() then return true end   -- HUD wave = อยู่ในด่าน (แม่นสุดสำหรับ Infinite)
+        if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+        return false
+    end
+    task.spawn(function()
+        -- ตั้งค่า (auto-skip/vote/upgrade เปิด) ครั้งเดียว
+        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า auto-skip/vote/upgrade"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        -- เข้าด่าน (best-effort — ไม่หยุดถ้า enter คืน false เพราะบางทีเข้าได้แต่ log ไม่ครบ)
+        if not inGame() then enterInfinite(mapName) end
+        -- รอเข้าด่านจริง (poll _G.AE_IN_GAME) — log ทุก 3 วิ
+        local t0=tick()
+        while running and not inGame() and tick()-t0<90 do
+            L(("  ⏳ รอเข้าด่าน... %ds"):format(math.floor(tick()-t0))); task.wait(3)
+        end
+        if not inGame() then L("⚠️ ไม่เข้าด่านใน 90 วิ"); notify("⚔️ Infinite","ไม่เข้าด่าน",6); running=false; return end
+        L("✅ อยู่ในด่านแล้ว → วางตัว (_G.AE_PLACE)")
+        if _G.AE_PLACE then pcall(_G.AE_PLACE) end
+        task.wait(3)
+        -- เฝ้า wave
+        L(("👀 เฝ้า wave → เป้า %d (%s)"):format(targetWave, mapName))
+        local tick2=0
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            if not inGame() then L("⚠️ ออกจากด่านแล้ว (แพ้?) → จบ"); notify("⚔️ Infinite","ออกจากด่าน (แพ้?)",6); break end
+            local w=curWave()
+            L(("  wave %d/%d"):format(w,targetWave))
+            if w>=targetWave then
+                L(("🏁 ถึง wave %d → ออกกลับล็อบบี้"):format(w))
+                if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                notify("⚔️ Infinite","✅ สำเร็จ! wave "..w.." "..mapName,6)
+                break
+            end
+            -- วางซ้ำทุก ~12 วิ (กันตัวตาย/วางไม่ครบตอนแรก)
+            tick2=tick2+1
+            if tick2%4==0 and _G.AE_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_PLACE) end
+            task.wait(3)
+        end
+        running=false
+    end)
+end
+
+-- UI
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_INFP_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_INFP_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,320); main.Position=UDim2.fromOffset(20,80)
+    main.BackgroundColor3=Color3.fromRGB(14,20,26); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(40,120,160)
+    head.Text="  ⚔️ INFINITE PLAYER"; head.TextXAlignment=Enum.TextXAlignment.Left; head.Font=Enum.Font.GothamBold
+    head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local maps={"School Grounds","Flower Forest","Rose Kingdom","Fairy King Forest","King's Tomb"}
+    local sel={m="School Grounds"}
+    local mb=Instance.new("TextButton"); mb.Size=UDim2.new(1,-16,0,26); mb.Position=UDim2.fromOffset(8,34)
+    mb.BackgroundColor3=Color3.fromRGB(40,90,130); mb.Text="แมพ: School Grounds (กดเปลี่ยน)"; mb.Font=Enum.Font.GothamBold; mb.TextSize=12; mb.TextColor3=Color3.new(1,1,1); mb.Parent=main
+    Instance.new("UICorner",mb).CornerRadius=UDim.new(0,6)
+    local mi=1; mb.MouseButton1Click:Connect(function() mi=mi%#maps+1; sel.m=maps[mi]; mb.Text="แมพ: "..sel.m.." (กดเปลี่ยน)" end)
+    local waves={15,30,45,60}; local wsel={w=15}
+    local wb=Instance.new("TextButton"); wb.Size=UDim2.new(1,-16,0,26); wb.Position=UDim2.fromOffset(8,64)
+    wb.BackgroundColor3=Color3.fromRGB(40,90,130); wb.Text="wave เป้า: 15 (กดเปลี่ยน)"; wb.Font=Enum.Font.GothamBold; wb.TextSize=12; wb.TextColor3=Color3.new(1,1,1); wb.Parent=main
+    Instance.new("UICorner",wb).CornerRadius=UDim.new(0,6)
+    local wi=1; wb.MouseButton1Click:Connect(function() wi=wi%#waves+1; wsel.w=waves[wi]; wb.Text="wave เป้า: "..wsel.w.." (กดเปลี่ยน)" end)
+    local run=Instance.new("TextButton"); run.Size=UDim2.new(1,-16,0,30); run.Position=UDim2.fromOffset(8,94)
+    run.BackgroundColor3=Color3.fromRGB(60,160,90); run.Text="▶ เริ่ม Infinite"; run.Font=Enum.Font.GothamBold; run.TextSize=13; run.TextColor3=Color3.new(1,1,1); run.Parent=main
+    Instance.new("UICorner",run).CornerRadius=UDim.new(0,6); run.MouseButton1Click:Connect(function() _G.AE_INF_RUN(sel.m, wsel.w) end)
+    local stop=Instance.new("TextButton"); stop.Size=UDim2.new(1,-16,0,24); stop.Position=UDim2.fromOffset(8,128)
+    stop.BackgroundColor3=Color3.fromRGB(150,60,60); stop.Text="⏹ หยุด"; stop.Font=Enum.Font.GothamBold; stop.TextSize=12; stop.TextColor3=Color3.new(1,1,1); stop.Parent=main
+    Instance.new("UICorner",stop).CornerRadius=UDim.new(0,6); stop.MouseButton1Click:Connect(function() _G.AE_INF_STOP() end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-166); box.Position=UDim2.fromOffset(8,160)
+    box.BackgroundColor3=Color3.fromRGB(22,28,34); box.Text="เลือกแมพ+wave แล้วกดเริ่ม"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(170,230,255); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}; logSink=function(s) table.insert(lines,s); while #lines>7 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+L("พร้อม — place:"..(_G.AE_PLACE and "✓" or "✗").." lobby:"..(_G.AE_BACK_TO_LOBBY and "✓" or "✗").." (ต้องรันสคริปต์หลักก่อน)")
+notify("⚔️ Infinite Player พร้อม", (_G.AE_PLACE and "OK" or "⚠️ ยังไม่เจอ _G.AE_PLACE (รันสคริปต์หลักก่อน)"), 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Infinite ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [ae_story_play] =====================
+-- ============================================================
+-- 📖 AE STORY — player v1 (เข้า + วางตัว + เล่นให้ชนะ + ออก)
+--   objective bounty: Complete <map> on Hard (IsVictory) → เข้า Story <map> Act <n> Hard แล้วชนะ
+--   ⚠️ ต้องรันสคริปต์หลัก v9.34 ก่อน (ใช้ _G.AE_PLACE / _G.AE_BACK_TO_LOBBY / _G.AE_APPLY_SETTINGS / _G.AE_IN_GAME)
+--   ฟังก์ชัน: _G.AE_STORY_RUN("School Grounds", 1)   -- แมพ UI + Act (default 1)
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local GuiService=game:GetService("GuiService")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local VIM=game:GetService("VirtualInputManager"); local RS=game:GetService("ReplicatedStorage")
+local player=Players.LocalPlayer
+local MYGEN=_G.AE_SCRIPT_GEN
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+local logSink; local function L(s) s=tostring(s); print("[STORY] "..s); if logSink then pcall(logSink,s) end end
+
+-- ===== คลิกทน + หา/เลื่อน =====
+local function fireConns(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+local function vimClick(b) pcall(function()
+    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+local function eachBtn(fn)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then
+                    if fn(b) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+local function hasLabel(b, txt)
+    if b:IsA("TextButton") and b.Text==txt then return true end
+    for _,l in ipairs(b:GetDescendants()) do
+        if l:IsA("TextLabel") and l.Visible and l.Text==txt then return true end
+    end
+    return false
+end
+local function findBtn(needle, exact)
+    needle=tostring(needle)
+    local found
+    eachBtn(function(b)
+        local ts={}
+        if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
+        for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
+        for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then found=b; return true end end
+    end)
+    return found
+end
+local function clickText(needle, exact, timeout)
+    local t0=tick()
+    repeat
+        local b=findBtn(needle,exact)
+        if b then clickBtn(b); L("  ✅ กด '"..needle.."'"); return true end
+        task.wait(0.5)
+    until tick()-t0>(timeout or 6)
+    L("  ❌ ไม่เจอ '"..needle.."'"); return false
+end
+local function tryClickLabel(mapName)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text==mapName then
+                    local p=l.Parent
+                    while p and p~=g do
+                        if p:IsA("TextButton") or p:IsA("ImageButton") then clickBtn(p); L("  ✅ กดแมพ '"..mapName.."'"); return true end
+                        p=p.Parent
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+local function clickStage(mapName)
+    if tryClickLabel(mapName) then return true end
+    local sfs={}
+    for _,g in ipairs(player.PlayerGui:GetDescendants()) do if g:IsA("ScrollingFrame") and g.Visible and g.AbsoluteSize.X>250 then sfs[#sfs+1]=g end end
+    for _,sf in ipairs(sfs) do
+        local maxX=math.max(sf.AbsoluteCanvasSize.X, sf.CanvasSize.X.Offset)
+        for step=0,14 do
+            pcall(function() sf.CanvasPosition=Vector2.new(step*220,sf.CanvasPosition.Y) end); task.wait(0.22)
+            if tryClickLabel(mapName) then return true end
+            if step*220>maxX+300 then break end
+        end
+        pcall(function() sf.CanvasPosition=Vector2.new(0,sf.CanvasPosition.Y) end)
+    end
+    L("  ❌ ไม่เจอแมพ '"..mapName.."'"); return false
+end
+-- คลิกปุ่ม Act ตามเลข (ปุ่มเล็กในคอลัมน์ ข้อความ=เลข)
+local function clickAct(actNum)
+    actNum=tostring(actNum)
+    local b
+    eachBtn(function(x) if x.AbsoluteSize.X<=80 and hasLabel(x,actNum) then b=x; return true end end)
+    if not b then L("  ❌ ไม่เจอปุ่ม Act "..actNum); return false end
+    clickBtn(b); L("  ✅ กด Act "..actNum); return true
+end
+
+-- ===== in-game + win/lose detection =====
+local function inGame()
+    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+    -- HUD wave present = in stage
+    local has=false
+    pcall(function() if player.PlayerGui.GameUI.HUD.Upper.WaveInformations then has=true end end)
+    return has
+end
+-- หา Victory/Defeat บนจอ → คืน "win"/"lose"/nil
+local function matchResult()
+    local res
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if t=="Victory" then res="win"; return res end
+                    if t=="Defeat" then res="lose" end
+                end
+            end
+        end
+    end
+    return res
+end
+
+local function enterStory(mapName, actNum)
+    L(("📖 เข้า Story: %s Act %s Hard"):format(mapName, tostring(actNum)))
+    clickText("Play",true,5); task.wait(1.5)
+    clickText("Story",true,5); task.wait(1.5)
+    if not clickStage(mapName) then return false end; task.wait(1.5)
+    if not clickAct(actNum) then return false end; task.wait(1.2)
+    clickText("Hard",false,6); task.wait(1)
+    if not clickText("Select Stage",false,8) then return false end; task.wait(3)
+    if not clickText("Start",false,12) then clickText("Select Stage",false,5); task.wait(2); if not clickText("Start",false,10) then return false end end
+    return true
+end
+
+local running=false
+_G.AE_STORY_STOP=function() running=false; L("⏹ หยุด Story") end
+_G.AE_STORY_RUN=function(mapName, actNum)
+    mapName=mapName or "School Grounds"; actNum=actNum or 1
+    if running then L("กำลังทำงานอยู่"); return end
+    running=true
+    task.spawn(function()
+        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        if not inGame() then enterStory(mapName, actNum) end
+        -- รอเข้าด่าน
+        local t0=tick()
+        while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
+        if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("📖 Story","ไม่เข้าด่าน",6); running=false; return end
+        L("✅ อยู่ในด่าน → วางตัว (Story placement)")
+        if _G.AE_PLACE then pcall(_G.AE_PLACE) end
+        task.wait(3)
+        -- เล่นจนชนะ/แพ้/ออกจากด่าน
+        L("👀 รอผลแมตช์ (ชนะ=จบ objective)")
+        local tick2=0
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            local r=matchResult()
+            if r=="win" then
+                L("🏆 ชนะ! → ออกกลับล็อบบี้"); notify("📖 Story","✅ ชนะ "..mapName,6)
+                task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break
+            elseif r=="lose" then
+                L("💀 แพ้ → ออก (ลองใหม่รอบหน้า)"); notify("📖 Story","💀 แพ้ "..mapName,6)
+                task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break
+            end
+            if not inGame() and tick()-t0>30 then L("⚠️ ออกจากด่านแล้ว → จบ"); break end
+            tick2=tick2+1
+            if tick2%4==0 and _G.AE_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_PLACE) end
+            local ww=0; pcall(function() ww=tonumber(tostring(player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text):match("%d+")) or 0 end)
+            L(("  เล่นอยู่... wave %d"):format(ww))
+            task.wait(3)
+        end
+        running=false
+    end)
+end
+
+-- UI
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_STORY_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_STORY_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,320); main.Position=UDim2.fromOffset(20,80)
+    main.BackgroundColor3=Color3.fromRGB(26,20,14); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(160,110,50)
+    head.Text="  📖 STORY PLAYER"; head.TextXAlignment=Enum.TextXAlignment.Left; head.Font=Enum.Font.GothamBold
+    head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local maps={"School Grounds","Flower Forest","Rose Kingdom","Fairy King Forest","King's Tomb"}; local sel={m="School Grounds"}
+    local mb=Instance.new("TextButton"); mb.Size=UDim2.new(1,-16,0,26); mb.Position=UDim2.fromOffset(8,34)
+    mb.BackgroundColor3=Color3.fromRGB(120,80,40); mb.Text="แมพ: School Grounds (กดเปลี่ยน)"; mb.Font=Enum.Font.GothamBold; mb.TextSize=12; mb.TextColor3=Color3.new(1,1,1); mb.Parent=main
+    Instance.new("UICorner",mb).CornerRadius=UDim.new(0,6)
+    local mi=1; mb.MouseButton1Click:Connect(function() mi=mi%#maps+1; sel.m=maps[mi]; mb.Text="แมพ: "..sel.m.." (กดเปลี่ยน)" end)
+    local acts={1,2,3,4,5}; local asel={a=1}
+    local ab=Instance.new("TextButton"); ab.Size=UDim2.new(1,-16,0,26); ab.Position=UDim2.fromOffset(8,64)
+    ab.BackgroundColor3=Color3.fromRGB(120,80,40); ab.Text="Act: 1 (กดเปลี่ยน)"; ab.Font=Enum.Font.GothamBold; ab.TextSize=12; ab.TextColor3=Color3.new(1,1,1); ab.Parent=main
+    Instance.new("UICorner",ab).CornerRadius=UDim.new(0,6)
+    local ai=1; ab.MouseButton1Click:Connect(function() ai=ai%#acts+1; asel.a=acts[ai]; ab.Text="Act: "..asel.a.." (กดเปลี่ยน)" end)
+    local run=Instance.new("TextButton"); run.Size=UDim2.new(1,-16,0,30); run.Position=UDim2.fromOffset(8,94)
+    run.BackgroundColor3=Color3.fromRGB(60,160,90); run.Text="▶ เริ่ม Story"; run.Font=Enum.Font.GothamBold; run.TextSize=13; run.TextColor3=Color3.new(1,1,1); run.Parent=main
+    Instance.new("UICorner",run).CornerRadius=UDim.new(0,6); run.MouseButton1Click:Connect(function() _G.AE_STORY_RUN(sel.m, asel.a) end)
+    local stop=Instance.new("TextButton"); stop.Size=UDim2.new(1,-16,0,24); stop.Position=UDim2.fromOffset(8,128)
+    stop.BackgroundColor3=Color3.fromRGB(150,60,60); stop.Text="⏹ หยุด"; stop.Font=Enum.Font.GothamBold; stop.TextSize=12; stop.TextColor3=Color3.new(1,1,1); stop.Parent=main
+    Instance.new("UICorner",stop).CornerRadius=UDim.new(0,6); stop.MouseButton1Click:Connect(function() _G.AE_STORY_STOP() end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-166); box.Position=UDim2.fromOffset(8,160)
+    box.BackgroundColor3=Color3.fromRGB(34,28,22); box.Text="เลือกแมพ+Act แล้วกดเริ่ม"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(255,220,170); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}; logSink=function(s) table.insert(lines,s); while #lines>7 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+L("พร้อม — place:"..(_G.AE_PLACE and "✓" or "✗").." lobby:"..(_G.AE_BACK_TO_LOBBY and "✓" or "✗"))
+notify("📖 Story Player พร้อม", (_G.AE_PLACE and "OK" or "⚠️ รันสคริปต์หลักก่อน"), 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Story ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [ae_raid_play] =====================
+-- ============================================================
+-- ⚔️ AE RAID — player v1 (Play→Raid→Spirit City→Act → วางแบบ Villain → ชนะ → ออก)
+--   objective bounty: Complete Act 1 of SpiritCity (IsVictory)
+--   ⚠️ ต้องรันสคริปต์หลัก v9.34 ก่อน (_G.AE_VILLAIN_PLACE / _G.AE_BACK_TO_LOBBY / _G.AE_APPLY_SETTINGS / _G.AE_IN_GAME)
+--   ฟังก์ชัน: _G.AE_RAID_RUN("Spirit City", 1)
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local GuiService=game:GetService("GuiService")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local VIM=game:GetService("VirtualInputManager"); local RS=game:GetService("ReplicatedStorage")
+local player=Players.LocalPlayer
+local MYGEN=_G.AE_SCRIPT_GEN
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+local logSink; local function L(s) s=tostring(s); print("[RAID] "..s); if logSink then pcall(logSink,s) end end
+
+local function fireConns(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+local function vimClick(b) pcall(function()
+    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+local function eachBtn(fn)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then if fn(b) then return true end end
+            end
+        end
+    end
+    return false
+end
+local function hasLabel(b, txt)
+    if b:IsA("TextButton") and b.Text==txt then return true end
+    for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text==txt then return true end end
+    return false
+end
+local function findBtn(needle, exact)
+    needle=tostring(needle); local found
+    eachBtn(function(b)
+        local ts={}
+        if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
+        for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
+        for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then found=b; return true end end
+    end)
+    return found
+end
+local function clickText(needle, exact, timeout)
+    local t0=tick()
+    repeat local b=findBtn(needle,exact); if b then clickBtn(b); L("  ✅ กด '"..needle.."'"); return true end; task.wait(0.5)
+    until tick()-t0>(timeout or 6)
+    L("  ❌ ไม่เจอ '"..needle.."'"); return false
+end
+local function tryClickLabel(mapName)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text==mapName then
+                    local p=l.Parent
+                    while p and p~=g do if p:IsA("TextButton") or p:IsA("ImageButton") then clickBtn(p); L("  ✅ กดเกาะ '"..mapName.."'"); return true end; p=p.Parent end
+                end
+            end
+        end
+    end
+    return false
+end
+local function clickStage(mapName)
+    if tryClickLabel(mapName) then return true end
+    local sfs={}
+    for _,g in ipairs(player.PlayerGui:GetDescendants()) do if g:IsA("ScrollingFrame") and g.Visible and g.AbsoluteSize.X>250 then sfs[#sfs+1]=g end end
+    for _,sf in ipairs(sfs) do
+        local maxX=math.max(sf.AbsoluteCanvasSize.X, sf.CanvasSize.X.Offset)
+        for step=0,14 do pcall(function() sf.CanvasPosition=Vector2.new(step*220,sf.CanvasPosition.Y) end); task.wait(0.22); if tryClickLabel(mapName) then return true end; if step*220>maxX+300 then break end end
+        pcall(function() sf.CanvasPosition=Vector2.new(0,sf.CanvasPosition.Y) end)
+    end
+    L("  ❌ ไม่เจอเกาะ '"..mapName.."'"); return false
+end
+local function clickAct(actNum)
+    actNum=tostring(actNum); local b
+    eachBtn(function(x) if x.AbsoluteSize.X<=80 and hasLabel(x,actNum) then b=x; return true end end)
+    if not b then L("  ❌ ไม่เจอปุ่ม Act "..actNum); return false end
+    clickBtn(b); L("  ✅ กด Act "..actNum); return true
+end
+local function inGame()
+    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+    local has=false; pcall(function() if player.PlayerGui.GameUI.HUD.Upper.WaveInformations then has=true end end); return has
+end
+local function matchResult()
+    local res
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if t=="Victory" then return "win" end
+                    if t=="Defeat" then res="lose" end
+                end
+            end
+        end
+    end
+    return res
+end
+
+local function enterRaid(mapName, actNum)
+    L(("⚔️ เข้า Raid: %s Act %s"):format(mapName, tostring(actNum)))
+    clickText("Play",true,5); task.wait(1.5)
+    clickText("Raid",true,5); task.wait(1.5)
+    if not clickStage(mapName) then return false end; task.wait(1.5)
+    if not clickAct(actNum) then return false end; task.wait(1.2)
+    clickText("Hard",false,3)   -- Raid มักเป็น Hard อยู่แล้ว — กดถ้ามี
+    task.wait(0.6)
+    if not clickText("Select Stage",false,8) then return false end; task.wait(3)
+    if not clickText("Start",false,12) then clickText("Select Stage",false,5); task.wait(2); if not clickText("Start",false,10) then return false end end
+    return true
+end
+
+local running=false
+_G.AE_RAID_STOP=function() running=false; if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end; if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end; L("⏹ หยุด Raid") end
+_G.AE_RAID_RUN=function(mapName, actNum)
+    mapName=mapName or "Spirit City"; actNum=actNum or 1
+    if running then L("กำลังทำงานอยู่"); return end
+    running=true
+    task.spawn(function()
+        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า (skip/vote on)"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        if _G.AE_EXP_SETTINGS then L("⚙️ ปิด auto-upgrade เกม"); pcall(_G.AE_EXP_SETTINGS); task.wait(1) end
+        if not inGame() then enterRaid(mapName, actNum) end
+        local t0=tick()
+        while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
+        if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("⚔️ Raid","ไม่เข้าด่าน",6); running=false; return end
+        L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
+        if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
+        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
+        task.wait(3)
+        L("👀 รอผลแมตช์")
+        local tick2=0
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            local r=matchResult()
+            if r=="win" then L("🏆 ชนะ! → ออก"); notify("⚔️ Raid","✅ ชนะ "..mapName,6); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+            if r=="lose" then L("💀 แพ้ → ออก"); notify("⚔️ Raid","💀 แพ้ "..mapName,6); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+            if not inGame() and tick()-t0>30 then L("⚠️ ออกจากด่านแล้ว → จบ"); break end
+            tick2=tick2+1
+            if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
+            local ww=0; pcall(function() ww=tonumber(tostring(player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text):match("%d+")) or 0 end)
+            L(("  เล่นอยู่... wave %d"):format(ww))
+            task.wait(3)
+        end
+        if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+        if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
+        running=false
+    end)
+end
+
+-- UI
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_RAID_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_RAID_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,290); main.Position=UDim2.fromOffset(20,80)
+    main.BackgroundColor3=Color3.fromRGB(28,14,14); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(170,50,50)
+    head.Text="  ⚔️ RAID PLAYER"; head.TextXAlignment=Enum.TextXAlignment.Left; head.Font=Enum.Font.GothamBold
+    head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local acts={1,2,3}; local asel={a=1}
+    local ab=Instance.new("TextButton"); ab.Size=UDim2.new(1,-16,0,26); ab.Position=UDim2.fromOffset(8,34)
+    ab.BackgroundColor3=Color3.fromRGB(120,40,40); ab.Text="Spirit City — Act: 1 (กดเปลี่ยน)"; ab.Font=Enum.Font.GothamBold; ab.TextSize=12; ab.TextColor3=Color3.new(1,1,1); ab.Parent=main
+    Instance.new("UICorner",ab).CornerRadius=UDim.new(0,6)
+    local ai=1; ab.MouseButton1Click:Connect(function() ai=ai%#acts+1; asel.a=acts[ai]; ab.Text="Spirit City — Act: "..asel.a.." (กดเปลี่ยน)" end)
+    local run=Instance.new("TextButton"); run.Size=UDim2.new(1,-16,0,30); run.Position=UDim2.fromOffset(8,64)
+    run.BackgroundColor3=Color3.fromRGB(60,160,90); run.Text="▶ เริ่ม Raid"; run.Font=Enum.Font.GothamBold; run.TextSize=13; run.TextColor3=Color3.new(1,1,1); run.Parent=main
+    Instance.new("UICorner",run).CornerRadius=UDim.new(0,6); run.MouseButton1Click:Connect(function() _G.AE_RAID_RUN("Spirit City", asel.a) end)
+    local stop=Instance.new("TextButton"); stop.Size=UDim2.new(1,-16,0,24); stop.Position=UDim2.fromOffset(8,98)
+    stop.BackgroundColor3=Color3.fromRGB(150,60,60); stop.Text="⏹ หยุด"; stop.Font=Enum.Font.GothamBold; stop.TextSize=12; stop.TextColor3=Color3.new(1,1,1); stop.Parent=main
+    Instance.new("UICorner",stop).CornerRadius=UDim.new(0,6); stop.MouseButton1Click:Connect(function() _G.AE_RAID_STOP() end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-136); box.Position=UDim2.fromOffset(8,130)
+    box.BackgroundColor3=Color3.fromRGB(36,20,20); box.Text="เลือก Act แล้วกดเริ่ม"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(255,180,170); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}; logSink=function(s) table.insert(lines,s); while #lines>7 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+L("พร้อม — villainPlace:"..(_G.AE_VILLAIN_PLACE and "✓" or "✗").." lobby:"..(_G.AE_BACK_TO_LOBBY and "✓" or "✗"))
+notify("⚔️ Raid Player พร้อม", (_G.AE_VILLAIN_PLACE and "OK" or "⚠️ รันสคริปต์หลักก่อน"), 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Raid ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [ae_challenge_play] =====================
+-- ============================================================
+-- 🏅 AE CHALLENGE — player v1 (Play→Challenge→เลือกแท็บ→เลือกด่าน → วาง Villain → ชนะ → ออก)
+--   objective bounty: Complete any Regular Challenge N times  |  งานหลังเควส: ลง Challenge ทั้งหมด
+--   ⚠️ ต้องรันสคริปต์หลัก v9.36 ก่อน (_G.AE_VILLAIN_PLACE / _G.AE_BACK_TO_LOBBY / _G.AE_APPLY_SETTINGS / _G.AE_IN_GAME)
+--   ฟังก์ชัน: _G.AE_CHAL_RUN("Regular", 1)   -- ประเภท(Regular/Daily/Weekly) + ลำดับด่าน (1/2/3)
+-- ============================================================
+local okAll, fatal = pcall(function()
+local Players=game:GetService("Players"); local GuiService=game:GetService("GuiService")
+local UIS=game:GetService("UserInputService"); local SG=game:GetService("StarterGui")
+local VIM=game:GetService("VirtualInputManager")
+local player=Players.LocalPlayer
+local MYGEN=_G.AE_SCRIPT_GEN
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+local logSink; local function L(s) s=tostring(s); print("[CHAL] "..s); if logSink then pcall(logSink,s) end end
+
+local function fireConns(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+local function vimClick(b) pcall(function()
+    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+local function eachBtn(fn)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then if fn(b) then return true end end
+            end
+        end
+    end
+    return false
+end
+local function findBtn(needle, exact)
+    needle=tostring(needle); local found
+    eachBtn(function(b)
+        local ts={}
+        if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
+        for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
+        for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then found=b; return true end end
+    end)
+    return found
+end
+local function clickText(needle, exact, timeout)
+    local t0=tick()
+    repeat local b=findBtn(needle,exact); if b then clickBtn(b); L("  ✅ กด '"..needle.."'"); return true end; task.wait(0.5)
+    until tick()-t0>(timeout or 6)
+    L("  ❌ ไม่เจอ '"..needle.."'"); return false
+end
+-- คลิกเข้าด่าน challenge #idx — คลิกที่ "ชื่อด่าน" (มี "Act") บนการ์ด (เลี่ยงไอคอนรางวัล/ลูกศร)
+local function clickChallengeRow(kind, idx)
+    local target = "#"..tostring(idx)
+    -- 1) หา Y ของแถว จาก label "Challenge #idx"
+    local ry
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if t:find("Challenge",1,true) and t:find(target,1,true) then ry=l.AbsolutePosition.Y; break end
+                end
+            end
+        end
+        if ry then break end
+    end
+    if not ry then L("  ❌ ไม่เจอแถว Challenge "..target); return false end
+    -- 2) หา label "ชื่อด่าน" (มี " Act") ในแถวเดียวกัน (Y ใกล้) แล้ว VIM คลิกตรงนั้น = เข้าด่าน
+    local nameLbl
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if math.abs(l.AbsolutePosition.Y - ry) < 60 and t:find("Act",1,true)
+                       and not t:find("Challenge",1,true) and not t:find("Mode",1,true) then
+                        nameLbl=l; break
+                    end
+                end
+            end
+        end
+        if nameLbl then break end
+    end
+    if nameLbl then
+        vimClick(nameLbl)   -- คลิกที่ชื่อด่าน (บนการ์ด → เข้าด่าน)
+        L(("  ✅ คลิกชื่อด่าน '%s' (#%s)"):format(tostring(nameLbl.Text):sub(1,24), tostring(idx)))
+        return true
+    end
+    L("  ❌ ไม่เจอชื่อด่านในแถว #"..tostring(idx)); return false
+end
+
+local function inGame()
+    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+    local has=false; pcall(function() if player.PlayerGui.GameUI.HUD.Upper.WaveInformations then has=true end end); return has
+end
+local function matchResult()
+    local res
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if t=="Victory" then return "win" end
+                    if t=="Defeat" then res="lose" end
+                end
+            end
+        end
+    end
+    return res
+end
+
+local function enterChallenge(kind, idx)
+    L(("🏅 เข้า Challenge: %s #%s"):format(tostring(kind), tostring(idx)))
+    clickText("Play",true,5); task.wait(1.5)
+    clickText("Challenge",true,5); task.wait(1.8)
+    -- เลือกแท็บ (Regular/Daily/Weekly Challenge)
+    if not clickText(kind.." Challenge",false,5) then clickText(kind,false,4) end
+    task.wait(1.2)
+    if not clickChallengeRow(kind, idx) then return false end
+    task.wait(1.5)
+    -- อาจเข้าเลย หรือมี Select Stage / Start / Enter
+    clickText("Select Stage",false,4); task.wait(1.5)
+    if not clickText("Start",false,8) then
+        clickText("Enter",false,4); task.wait(2)
+        if not clickText("Start",false,8) then L("  ⚠️ ไม่เจอ Start (อาจเข้าด่านตรงๆ)") end
+    end
+    return true
+end
+
+local running=false
+_G.AE_CHAL_STOP=function() running=false; if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end; if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end; L("⏹ หยุด Challenge") end
+_G.AE_CHAL_RUN=function(kind, idx)
+    kind=kind or "Regular"; idx=idx or 1
+    if running then L("กำลังทำงานอยู่"); return end
+    running=true
+    task.spawn(function()
+        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า (skip/vote on)"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        if _G.AE_EXP_SETTINGS then L("⚙️ ปิด auto-upgrade เกม"); pcall(_G.AE_EXP_SETTINGS); task.wait(1) end
+        if not inGame() then enterChallenge(kind, idx) end
+        local t0=tick()
+        while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
+        if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("🏅 Challenge","ไม่เข้าด่าน",6); running=false; return end
+        L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
+        if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
+        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
+        task.wait(3)
+        L("👀 รอผลแมตช์")
+        local tick2=0
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            local r=matchResult()
+            if r=="win" then L("🏆 ชนะ! → ออก"); notify("🏅 Challenge","✅ ชนะ",6); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+            if r=="lose" then L("💀 แพ้ → ออก"); notify("🏅 Challenge","💀 แพ้",6); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+            if not inGame() and tick()-t0>30 then L("⚠️ ออกจากด่านแล้ว → จบ"); break end
+            tick2=tick2+1
+            if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
+            local ww=0; pcall(function() ww=tonumber(tostring(player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text):match("%d+")) or 0 end)
+            L(("  เล่นอยู่... wave %d"):format(ww))
+            task.wait(3)
+        end
+        if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+        if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
+        running=false
+    end)
+end
+
+-- UI
+pcall(function()
+    local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_CHAL_UI"); if old then old:Destroy() end
+    local gui=Instance.new("ScreenGui"); gui.Name="AE_CHAL_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
+    pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
+    local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,300); main.Position=UDim2.fromOffset(430,80)
+    main.BackgroundColor3=Color3.fromRGB(16,22,16); main.Active=true; main.Parent=gui
+    Instance.new("UICorner",main).CornerRadius=UDim.new(0,10)
+    local head=Instance.new("TextButton"); head.Size=UDim2.new(1,0,0,30); head.BackgroundColor3=Color3.fromRGB(60,150,60)
+    head.Text="  🏅 CHALLENGE PLAYER"; head.TextXAlignment=Enum.TextXAlignment.Left; head.Font=Enum.Font.GothamBold
+    head.TextSize=13; head.TextColor3=Color3.new(1,1,1); head.AutoButtonColor=false; head.Parent=main
+    Instance.new("UICorner",head).CornerRadius=UDim.new(0,10)
+    local kinds={"Regular","Daily"}; local ksel={k="Regular"}
+    local kb=Instance.new("TextButton"); kb.Size=UDim2.new(1,-16,0,26); kb.Position=UDim2.fromOffset(8,34)
+    kb.BackgroundColor3=Color3.fromRGB(40,110,40); kb.Text="ประเภท: Regular (กดเปลี่ยน)"; kb.Font=Enum.Font.GothamBold; kb.TextSize=12; kb.TextColor3=Color3.new(1,1,1); kb.Parent=main
+    Instance.new("UICorner",kb).CornerRadius=UDim.new(0,6)
+    local ki=1; kb.MouseButton1Click:Connect(function() ki=ki%#kinds+1; ksel.k=kinds[ki]; kb.Text="ประเภท: "..ksel.k.." (กดเปลี่ยน)" end)
+    local idxs={1,2,3}; local isel={i=1}
+    local ib=Instance.new("TextButton"); ib.Size=UDim2.new(1,-16,0,26); ib.Position=UDim2.fromOffset(8,64)
+    ib.BackgroundColor3=Color3.fromRGB(40,110,40); ib.Text="ด่าน: #1 (กดเปลี่ยน)"; ib.Font=Enum.Font.GothamBold; ib.TextSize=12; ib.TextColor3=Color3.new(1,1,1); ib.Parent=main
+    Instance.new("UICorner",ib).CornerRadius=UDim.new(0,6)
+    local ii=1; ib.MouseButton1Click:Connect(function() ii=ii%#idxs+1; isel.i=idxs[ii]; ib.Text="ด่าน: #"..isel.i.." (กดเปลี่ยน)" end)
+    local run=Instance.new("TextButton"); run.Size=UDim2.new(1,-16,0,30); run.Position=UDim2.fromOffset(8,94)
+    run.BackgroundColor3=Color3.fromRGB(60,160,90); run.Text="▶ เริ่ม Challenge"; run.Font=Enum.Font.GothamBold; run.TextSize=13; run.TextColor3=Color3.new(1,1,1); run.Parent=main
+    Instance.new("UICorner",run).CornerRadius=UDim.new(0,6); run.MouseButton1Click:Connect(function() _G.AE_CHAL_RUN(ksel.k, isel.i) end)
+    local stop=Instance.new("TextButton"); stop.Size=UDim2.new(1,-16,0,24); stop.Position=UDim2.fromOffset(8,128)
+    stop.BackgroundColor3=Color3.fromRGB(150,60,60); stop.Text="⏹ หยุด"; stop.Font=Enum.Font.GothamBold; stop.TextSize=12; stop.TextColor3=Color3.new(1,1,1); stop.Parent=main
+    Instance.new("UICorner",stop).CornerRadius=UDim.new(0,6); stop.MouseButton1Click:Connect(function() _G.AE_CHAL_STOP() end)
+    local box=Instance.new("TextLabel"); box.Size=UDim2.new(1,-16,1,-166); box.Position=UDim2.fromOffset(8,160)
+    box.BackgroundColor3=Color3.fromRGB(22,30,22); box.Text="เลือกประเภท+ด่าน แล้วกดเริ่ม"; box.Font=Enum.Font.Code
+    box.TextSize=11; box.TextColor3=Color3.fromRGB(180,255,180); box.TextXAlignment=Enum.TextXAlignment.Left
+    box.TextYAlignment=Enum.TextYAlignment.Top; box.TextWrapped=true; box.Parent=main
+    Instance.new("UICorner",box).CornerRadius=UDim.new(0,6)
+    local pad=Instance.new("UIPadding",box); pad.PaddingLeft=UDim.new(0,6); pad.PaddingTop=UDim.new(0,4)
+    local lines={}; logSink=function(s) table.insert(lines,s); while #lines>7 do table.remove(lines,1) end; box.Text=table.concat(lines,"\n") end
+    local drag,ds,sp
+    head.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag,ds,sp=true,i.Position,main.Position end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; main.Position=UDim2.fromOffset(sp.X.Offset+d.X,sp.Y.Offset+d.Y) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+end)
+L("พร้อม — villainPlace:"..(_G.AE_VILLAIN_PLACE and "✓" or "✗"))
+notify("🏅 Challenge Player พร้อม", (_G.AE_VILLAIN_PLACE and "OK" or "⚠️ รันสคริปต์หลักก่อน"), 6)
+end)
+if not okAll then pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Challenge ERROR",Text=tostring(fatal):sub(1,160),Duration=12}) end) end
+
+-- ===================== [QUEST ORCHESTRATOR] =====================
+-- 🎯 _G.AE_QUEST_RUN — reroll<3★ → ทำ Legendary/Mythic ทุกอัน → เคลม
+--    → Challenge ทั้งหมด (Regular 3×10, Daily 1) → ซื้อ Gold Shop → fallback farm
+--    ใช้โมดูลที่เทสแล้ว: AE_BOUNTY_* / AE_INF_RUN / AE_STORY_RUN / AE_RAID_RUN / AE_CHAL_RUN / AE_SHOP_BUY
+local okQ, fatalQ = pcall(function()
+local Players = game:GetService("Players")
+local SG      = game:GetService("StarterGui")
+local player  = Players.LocalPlayer
+local MYGEN   = _G.AE_SCRIPT_GEN
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+local function QL(s) s=tostring(s); print("[QUEST] "..s) end
+
+local running = false
+
+-- ---------- helpers ----------
+-- config map name → UI display name (Dressrosa = Rose Kingdom ในเกม)
+local MAP_UI = {
+    SchoolGrounds="School Grounds", FlowerForest="Flower Forest",
+    FairyKingForest="Fairy King Forest", KingsTomb="King's Tomb",
+    Dressrosa="Rose Kingdom", RoseKingdom="Rose Kingdom", SpiritCity="Spirit City",
+}
+local function uiMap(m)
+    m = tostring(m or "")
+    return MAP_UI[m] or (m:gsub("(%l)(%u)", "%1 %2"))   -- CamelCase → "Camel Case"
+end
+local function actNum(a) local n = tostring(a or ""):match("%d+"); return tonumber(n) or 1 end
+
+local function inGame()
+    if _G.AE_IN_GAME then local ok,r = pcall(_G.AE_IN_GAME); if ok then return r end end
+    return false
+end
+
+-- รอเข้าด่าน (สูงสุด enterT) แล้วรอกลับล็อบบี้ (สูงสุด playT) — คืน true ถ้าเข้าด่าน+จบครบ
+local function waitStageCycle(enterT, playT)
+    local t0 = tick()
+    while running and not inGame() and tick()-t0 < enterT do task.wait(2) end
+    if not inGame() then QL("  ⚠️ ไม่เข้าด่านใน "..enterT.."s (ข้าม)"); return false end
+    QL("  ▶ เข้าด่านแล้ว — เล่นจนจบ...")
+    t0 = tick()
+    while running and inGame() and tick()-t0 < playT do task.wait(3) end
+    task.wait(2)
+    return true
+end
+
+local function readBoard() return _G.AE_BOUNTY_READ and _G.AE_BOUNTY_READ() or nil end
+local function bountyById(id)
+    local board = readBoard(); if not board then return nil end
+    for _,b in ipairs(board) do if b.id==id then return b end end
+    return nil
+end
+
+-- ---------- ทำ 1 objective ----------
+local function doObjective(o)
+    if o.type == "Summon" then
+        local need = tonumber(o.goal) or 1
+        for attempt=1,6 do
+            if not running then break end
+            local done = 0
+            if _G.AE_BOUNTY_SUMMON then local ok,r = pcall(_G.AE_BOUNTY_SUMMON, need); if ok then done = tonumber(r) or 0 end end
+            QL(("  🎰 Summon %d/%d (รอบ %d)"):format(done, need, attempt))
+            if done >= need then break end
+            -- currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ ~4 นาที แล้วกลับมาสุ่มต่อ
+            QL("  🪙 currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ 4 นาที")
+            if _G.AE_VILLAIN_RUN then pcall(_G.AE_VILLAIN_RUN, 1) end
+            local t0=tick(); while running and tick()-t0<240 do task.wait(5) end
+            if _G.AE_VILLAIN_RUN_STOP then pcall(_G.AE_VILLAIN_RUN_STOP) end
+            task.wait(3)
+            if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+            task.wait(6)
+        end
+        return true
+
+    elseif o.type == "ClearWave" then
+        local m = uiMap(o.map); local w = tonumber(o.wave) or 15
+        QL(("  ⚔️ Infinite %s → wave %d"):format(m, w))
+        if _G.AE_INF_RUN then pcall(_G.AE_INF_RUN, m, w) end
+        waitStageCycle(100, 900)
+        return true
+
+    elseif o.type == "FinishMap" then
+        local gm = tostring(o.gamemode)
+        if gm == "Raid" then
+            local m, a = uiMap(o.map), actNum(o.actName)
+            QL(("  🐉 Raid %s Act %d"):format(m, a))
+            if _G.AE_RAID_RUN then pcall(_G.AE_RAID_RUN, m, a) end
+            waitStageCycle(100, 600)
+        elseif gm == "Challenge" then
+            local kind = (tostring(o.challengeType)=="Daily") and "Daily" or "Regular"
+            QL(("  🏆 Challenge %s"):format(kind))
+            if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, 1) end
+            waitStageCycle(100, 600)
+        else  -- Story
+            local m = uiMap(o.map)
+            QL(("  📖 Story %s (%s)"):format(m, tostring(o.difficulty)))
+            if _G.AE_STORY_RUN then pcall(_G.AE_STORY_RUN, m, 1) end
+            waitStageCycle(100, 600)
+        end
+        return true
+    end
+    QL("  ❓ objective ไม่รู้จัก: "..tostring(o.type))
+    return false
+end
+
+-- ---------- ทำ 1 bounty (ทุก objective + เคลม) ----------
+local function doBounty(b)
+    QL(("🎯 ทำเควส %s [★%d] %s"):format(b.id, b.rank, tostring(b.displayName)))
+    for pass=1,8 do
+        if not running then return end
+        local cur = bountyById(b.id); if not cur then return end
+        if cur.completed or cur.claimed then break end
+        local pending
+        for _,o in ipairs(cur.objectives) do if not o.done then pending=o; break end end
+        if not pending then QL("  (objective ครบแล้ว รอ completed flag)"); break end
+        doObjective(pending)
+        task.wait(2)
+    end
+    local cur = bountyById(b.id)
+    if cur and cur.completed and not cur.claimed then
+        if _G.AE_BOUNTY_CLAIM then pcall(_G.AE_BOUNTY_CLAIM, b.id); task.wait(2) end
+    end
+end
+
+-- ---------- 1 รอบเควส: reroll<3★ → ทำ 3★+ ทุกอัน ----------
+local function questCycle()
+    -- reroll ตัวต่ำกว่า 3★
+    QL("🎲 reroll เควสต่ำกว่า 3★...")
+    if _G.AE_BOUNTY_REROLL_SUB then pcall(_G.AE_BOUNTY_REROLL_SUB) end
+    local t0 = tick()
+    while running and tick()-t0 < 40 do
+        local board = readBoard(); local hasSub = false
+        if board then for _,b in ipairs(board) do
+            if b.rank<3 and not b.claimed and not b.completed then hasSub=true; break end
+        end end
+        if not hasSub then break end
+        task.wait(2)
+    end
+    -- ทำแต่ละ 3★+
+    local board = readBoard()
+    if not board then QL("❌ อ่าน board ไม่ได้"); return false end
+    local didAny = false
+    for _,b in ipairs(board) do
+        if not running then break end
+        if b.rank >= 3 and not b.claimed then
+            if b.completed then
+                if _G.AE_BOUNTY_CLAIM then pcall(_G.AE_BOUNTY_CLAIM, b.id); task.wait(2) end
+            else
+                doBounty(b); didAny = true
+            end
+        end
+    end
+    return didAny
+end
+
+-- ---------- Challenge ทั้งหมด (Regular 3×10, Daily 1) ----------
+local function runAllChallenges()
+    for idx=1,3 do
+        for run=1,10 do
+            if not running then return end
+            QL(("  🏆 Regular #%d รอบ %d/10"):format(idx, run))
+            if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", idx) end
+            if not waitStageCycle(60, 600) then
+                QL(("  Regular #%d เข้าไม่ได้ (ครบ limit?) → ข้าม"):format(idx)); break
+            end
+            task.wait(3)
+        end
+    end
+    if not running then return end
+    QL("  🏆 Daily x1")
+    if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Daily", 1) end
+    waitStageCycle(60, 600)
+end
+
+-- ---------- fallback farm ----------
+local function runFallback(fb)
+    fb = tostring(fb or "villain")
+    if fb=="villain" and _G.AE_VILLAIN_RUN then
+        pcall(_G.AE_VILLAIN_RUN, tonumber(_G.AE_QUEST_FALLBACK_ACT) or 1)
+    elseif fb=="expedition" and _G.AE_EXP_RUN then
+        _G.AE_EXP_MAP = _G.AE_QUEST_FALLBACK_STAGE or "School Grounds"; _G.AE_EXP_DIFF = 3
+        pcall(_G.AE_EXP_RUN)
+    elseif fb=="story" and _G.AE_STORY_RUN then
+        pcall(_G.AE_STORY_RUN, _G.AE_QUEST_FALLBACK_STAGE or "School Grounds", 1)
+    else
+        QL("⚠️ fallback ไม่รู้จัก/ไม่พร้อม: "..fb)
+    end
+end
+
+-- ---------- STOP ----------
+_G.AE_QUEST_RUN_STOP = function()
+    running = false; QL("⏹ หยุดโหมดทำเควส")
+    for _,fn in ipairs({ "AE_INF_STOP","AE_STORY_STOP","AE_RAID_STOP","AE_CHAL_STOP","AE_VILLAIN_RUN_STOP" }) do
+        if _G[fn] then pcall(_G[fn]) end
+    end
+end
+
+-- ---------- RUN ----------
+_G.AE_QUEST_RUN = function()
+    if running then QL("กำลังทำงานอยู่"); return end
+    running = true
+    task.spawn(function()
+        QL("🎯🎯 เริ่มโหมดทำเควส (Bounty Board)")
+        notify("🎯 ทำเควส", "เริ่มทำเควสรายวัน", 5)
+        -- เฟส 1: เควสรายวัน 3★+
+        for cycle=1,25 do
+            if not running or MYGEN ~= _G.AE_SCRIPT_GEN then break end
+            local did = questCycle()
+            local board = readBoard(); local left = 0
+            if board then for _,b in ipairs(board) do if b.rank>=3 and not b.claimed then left=left+1 end end end
+            QL(("📊 รอบ %d — เควส 3★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, left))
+            if left == 0 then QL("✅ เควส 3★+ ครบทุกอันแล้ว"); break end
+            if not did then task.wait(10) end
+        end
+        if not running then return end
+        -- เฟส 2: Challenge ทั้งหมด
+        QL("🏆 เฟส 2: ทำ Challenge ทั้งหมด (Regular 3×10, Daily 1)")
+        runAllChallenges()
+        if not running then return end
+        -- เฟส 3: ซื้อ Gold Shop
+        QL("🛒 เฟส 3: ซื้อ Gold Shop (เก็บ 500k)")
+        if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
+        if not running then return end
+        -- เฟส 4: fallback farm
+        local fb = _G.AE_QUEST_FALLBACK_MODE or "villain"
+        QL("🌾 เฟส 4: fallback farm = "..tostring(fb))
+        notify("🎯 ทำเควส", "เควสครบ → fallback "..tostring(fb), 6)
+        runFallback(fb)
+        running = false
+    end)
+end
+
+QL("พร้อม — _G.AE_QUEST_RUN() | reader:"..(_G.AE_BOUNTY_READ and "✓" or "✗")
+   .." inf:"..(_G.AE_INF_RUN and "✓" or "✗").." story:"..(_G.AE_STORY_RUN and "✓" or "✗")
+   .." raid:"..(_G.AE_RAID_RUN and "✓" or "✗").." chal:"..(_G.AE_CHAL_RUN and "✓" or "✗")
+   .." shop:"..(_G.AE_SHOP_BUY and "✓" or "✗").." summon:"..(_G.AE_BOUNTY_SUMMON and "✓" or "✗"))
+notify("🎯 Quest Orchestrator พร้อม", "_G.AE_QUEST_RUN()", 6)
+end)  -- จบ pcall
+if not okQ then
+    warn("[QUEST FATAL] "..tostring(fatalQ))
+    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title="❌ Quest ERROR", Text=tostring(fatalQ):sub(1,180), Duration=15}) end)
+end
