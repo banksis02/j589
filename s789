@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.35"
+local SCRIPT_VERSION = "v9.36"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6072,6 +6072,22 @@ local function assetIn(asset, list)
 end
 local function isMoneyUnit(asset)   return assetIn(asset, MONEY_ASSETS)   end
 local function isSupportUnit(asset) return assetIn(asset, SUPPORT_ASSETS) end
+-- ⭐ v9.36: ตัวเงิน = มีเทรต "Investor" (ตรวจจากตัวจริง ไม่ผูกชื่อ — แต่ละไอดีตัวเงินคนละตัว)
+--    หรืออยู่ในลิสต์ MONEY_ASSETS (เผื่อไม่มีเทรต) — เช่น Senku/Ichiraku ที่มี Investor = ตัวเงินทั้งคู่
+local function unitTraitOf(id)
+    if type(id) ~= "string" then return nil end
+    local pd = getReplica("PlayerData")
+    local ud = pd and pd.Data and pd.Data.UnitData
+    if type(ud) == "table" then
+        local u = ud[id]                                  -- id = "Senku#uuid" ตรงกับคีย์ UnitData
+        if type(u) == "table" and u.Trait then return tostring(u.Trait) end
+    end
+    return nil
+end
+local function isMoneyUnitId(asset, id)
+    if isMoneyUnit(asset) then return true end
+    return unitTraitOf(id) == "Investor"
+end
 local function slotAsset(id)
     if type(id) ~= "string" then return "" end
     local a = id:match('"Asset"%s*:%s*"([^"]+)"')       -- JSON (ตัวจ้าง)
@@ -6105,7 +6121,7 @@ local function gameHotbarSlots()
             if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
                 local asset = slotAsset(v.ID)
                 out[#out+1] = { slot = n, cost = tonumber(v.PlacementCost) or 0,
-                                asset = asset, money = isMoneyUnit(asset) }
+                                asset = asset, money = isMoneyUnitId(asset, v.ID) }
             end
         end
     end
@@ -6240,7 +6256,8 @@ _G.AE_VILLAIN_PLACE = function()
         -- ⭐ v9.35 โลจิค (ตาม user): วางตัวเงินให้ "ครบทุกตัว/จนเต็ม" ก่อน แล้วค่อยวางตัวอื่น
         --    ตัวเงินสร้างเงิน → รอเงินโตแล้ววางตัวเงินตัวถัดไป/ซ้ำจนเต็ม (เช่น Stone Alchemist 3)
         --    เกาะกันแน่นที่ 55-65% ของเลน active
-        local maxedMoney = {}   -- asset ตัวเงินที่วางจนเต็มแล้ว (placeAt ล้มเหลวทั้งที่เงินพอ = เต็ม)
+        local maxedMoney = {}   -- asset ตัวเงินที่วางจนเต็มแล้ว (วางไม่ได้ 2 ครั้งทั้งที่เงินพอ = เต็ม)
+        local moneyFail  = {}   -- นับครั้งวางตัวเงินไม่ติด (กันตัดสินว่าเต็มเพราะที่ชนชั่วคราว)
         local stuck = 0         -- รอบที่วางอะไรไม่ได้ติดกัน (กัน deadlock ถ้าเงินไม่พอวางเงินเลย)
         for round = 1, 60 do
             if not pileOn then break end
@@ -6254,7 +6271,7 @@ _G.AE_VILLAIN_PLACE = function()
                 local yen = 0
                 pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
                 local didPlace = false
-                -- ===== เฟส 1: ตัวเงิน — วางให้ครบ/จนเต็มก่อน =====
+                -- ===== เฟส 1: ตัวเงิน — วางทีละตัวจนเต็ม (ตัวแรกในลำดับก่อน: Senku ครบ 3 → Ichiraku 1) =====
                 local moneyPending = false   -- ยังมีตัวเงินที่ยังไม่เต็ม (วางได้/รอเงิน)
                 local hasMoney = false
                 for _, s in ipairs(slots) do
@@ -6262,18 +6279,23 @@ _G.AE_VILLAIN_PLACE = function()
                     if s.money then
                         hasMoney = true
                         if not maxedMoney[s.asset] then
+                            -- ⭐ โฟกัสตัวเงินตัวแรกที่ยังไม่เต็ม — ตัวถัดไปรอตัวนี้เต็มก่อน
+                            moneyPending = true
                             if s.cost <= yen then
                                 local frac = 0.55 + math.random() * 0.10
                                 if placeAt(lane, s.slot, lane.total * frac) then
                                     print(("[Villain] ✅ 💰เงิน %s ช่อง %d ~%.0f%% (¥%d)"):format(tostring(s.asset), s.slot, frac*100, s.cost))
-                                    yen = yen - s.cost; didPlace = true; moneyPending = true; task.wait(0.3)
+                                    yen = yen - s.cost; didPlace = true; moneyFail[s.asset] = 0; task.wait(0.3)
                                 else
-                                    maxedMoney[s.asset] = true   -- เงินพอแต่วางไม่ได้ = เต็ม
-                                    print(("[Villain] 🔒 ตัวเงิน %s เต็มแล้ว"):format(tostring(s.asset)))
+                                    -- วางไม่ติดทั้งที่เงินพอ → อาจเต็ม/ที่ชน — ล้ม 2 ครั้งค่อยตัดสินว่าเต็ม
+                                    moneyFail[s.asset] = (moneyFail[s.asset] or 0) + 1
+                                    if moneyFail[s.asset] >= 2 then
+                                        maxedMoney[s.asset] = true
+                                        print(("[Villain] 🔒 ตัวเงิน %s เต็มแล้ว"):format(tostring(s.asset)))
+                                    end
                                 end
-                            else
-                                moneyPending = true   -- เงินไม่พอตอนนี้ → รอเงินโตก่อน
                             end
+                            break   -- ⭐ วางตัวเงินทีละตัว (ตัวนี้ยังไม่เต็ม → ยังไม่แตะตัวอื่น)
                         end
                     end
                 end
