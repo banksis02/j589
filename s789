@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.38"
+local SCRIPT_VERSION = "v9.39"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6272,82 +6272,43 @@ _G.AE_VILLAIN_PLACE = function()
             print("[Villain] ⏳ ยังไม่เจอมอน → ใช้เลน '" .. lane.name .. "' ไปก่อน")
         end
 
-        -- ⭐ v9.35 โลจิค (ตาม user): วางตัวเงินให้ "ครบทุกตัว/จนเต็ม" ก่อน แล้วค่อยวางตัวอื่น
-        --    ตัวเงินสร้างเงิน → รอเงินโตแล้ววางตัวเงินตัวถัดไป/ซ้ำจนเต็ม (เช่น Stone Alchemist 3)
-        --    เกาะกันแน่นที่ 55-65% ของเลน active
-        local maxedMoney = {}   -- asset ตัวเงินที่วางจนเต็มแล้ว
-        local moneyFail  = {}   -- นับครั้งวางตัวเงินแล้วตัวจริงไม่เพิ่ม
-        local stuck = 0         -- รอบที่วางอะไรไม่ได้ติดกัน (กัน deadlock)
-        -- ⭐ v9.38: นับตัวจริงของ asset ในสนาม (getMyUnits กรอง phantom/clone) — เช็ค "เต็มจริง"
-        --    เพราะ Phantom Placing ทำให้ placeAt "วางติด" (จองผี) เรื่อยๆ → มาร์คเต็มไม่ได้
-        local function countAsset(asset)
-            local n, a = 0, tostring(asset):lower()
-            for _, u in ipairs(getMyUnits()) do
-                if tostring(u.asset):lower():find(a, 1, true) then n = n + 1 end
-            end
-            return n
+        -- ⭐ v9.39 (ตาม user): จองวางล่วงหน้า (Phantom Placing) — ไม่เช็คเงิน (จองได้แม้เงินไม่พอ)
+        --    ยิงเรียงตัวเงินก่อน (Senku→Ichiraku) แล้วดาเมจ — แต่ละตัวยิงหลายจุด (เกมแคป max เอง)
+        --    เกมทยอยวางจริงเมื่อเงินมา + auto-upgrade จัดการต่อ
+        -- จอง 1 จุด (SelectSlot + PlaceGameUnit) — ไม่เช็ค unitCount (จองผียังไม่ขึ้นทันที)
+        local function reserveOne(slot, frac, sideOff)
+            local rep = getReplica("GamePlayerData"); if not rep then return end
+            local hb = getReplica("HotbarData")
+            local d = lane.total * frac
+            local base = posAt(lane, d); local dir = dirAt(lane, d)
+            local perp = Vector3.new(-dir.Z, 0, dir.X)
+            local p = base + perp * (sideOff or 0)
+            if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.05) end
+            pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
+            task.wait(0.25)
         end
-        for round = 1, 60 do
-            if not pileOn then break end
-            if round % 5 == 0 then
-                local L = findActiveLane(lanes)
-                if L and L ~= lane then lane = L; print("[Villain] 🔄 เปลี่ยนเลน = '" .. L.name .. "'") end
-            end
-            local slots = gameHotbarSlots()
-            if #slots == 0 then task.wait(2)
-            else
-                local yen = 0
-                pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
-                local didPlace = false
-                -- ===== เฟส 1: ตัวเงิน — วางทีละตัวจนเต็ม (ตัวแรกในลำดับก่อน: Senku ครบ 3 → Ichiraku 1) =====
-                local moneyPending = false   -- ยังมีตัวเงินที่ยังไม่เต็ม (วางได้/รอเงิน)
-                local hasMoney = false
-                for _, s in ipairs(slots) do
-                    if not pileOn then break end
-                    if s.money then
-                        hasMoney = true
-                        if not maxedMoney[s.asset] then
-                            -- โฟกัสตัวเงินตัวแรกที่ยังไม่เต็ม — ตัวถัดไปรอตัวนี้เต็มก่อน
-                            moneyPending = true
-                            if s.cost <= yen then
-                                local before = countAsset(s.asset)   -- ⭐ v9.38: นับตัวจริงก่อนวาง
-                                local frac = 0.55 + math.random() * 0.10
-                                placeAt(lane, s.slot, lane.total * frac)
-                                task.wait(0.5)
-                                local after = countAsset(s.asset)
-                                if after > before then
-                                    print(("[Villain] ✅ 💰เงิน %s (มี %d ตัวในสนาม)"):format(tostring(s.asset), after))
-                                    yen = yen - s.cost; didPlace = true; moneyFail[s.asset] = 0
-                                else
-                                    -- วางแล้วตัวจริงไม่เพิ่ม = เต็ม (หรือจองผี) — ล้ม 2 ครั้งค่อยมาร์คเต็ม
-                                    moneyFail[s.asset] = (moneyFail[s.asset] or 0) + 1
-                                    if moneyFail[s.asset] >= 2 then
-                                        maxedMoney[s.asset] = true
-                                        print(("[Villain] 🔒 ตัวเงิน %s เต็มแล้ว (มี %d ตัว) → ไปวางดาเมจ"):format(tostring(s.asset), after))
-                                    end
-                                end
-                            end
-                            break   -- ⭐ วางตัวเงินทีละตัว (ตัวนี้ยังไม่เต็ม → ยังไม่แตะตัวอื่น)
-                        end
-                    end
-                end
-                -- ===== เฟส 2: ตัวดาเมจ — เฉพาะเมื่อตัวเงินเต็มหมด (หรือไม่มีตัวเงิน / ติดนานกัน deadlock) =====
-                if (not moneyPending) or (not hasMoney) or stuck >= 8 then
-                    for _, s in ipairs(slots) do
+        -- จองทั้งกลุ่ม (money=true/false) — แต่ละตัวยิง tries จุด (คนละตำแหน่ง)
+        local function reserveGroup(wantMoney, tries)
+            for _, s in ipairs(gameHotbarSlots()) do
+                if not pileOn then break end
+                if s.money == wantMoney then
+                    for i = 1, tries do
                         if not pileOn then break end
-                        if not s.money and s.cost <= yen then
-                            local frac = 0.55 + math.random() * 0.10
-                            if placeAt(lane, s.slot, lane.total * frac) then
-                                print(("[Villain] ✅ ⚔️ตัว %s ช่อง %d ~%.0f%% (¥%d)"):format(tostring(s.asset), s.slot, frac*100, s.cost))
-                                yen = yen - s.cost; didPlace = true; task.wait(0.3)
-                            end
-                        end
+                        reserveOne(s.slot, 0.55 + (i-1)*0.035, ((i-1)%3 - 1) * 7)
                     end
+                    print(("[Villain] 📌 จอง %s %s x%d"):format(wantMoney and "💰เงิน" or "⚔️ดาเมจ", tostring(s.asset), tries))
                 end
-                if didPlace then stuck = 0 else stuck = stuck + 1; task.wait(1.5) end
             end
         end
-        print("[Villain] 🏁 จบการวาง")
+        -- ทำ 3 รอบ (เผื่อรอบแรกยังไม่ติด/เลนเปลี่ยน) — ตัวเงินก่อนทุกรอบ แล้วดาเมจ
+        for round = 1, 3 do
+            if not pileOn then break end
+            local L = findActiveLane(lanes); if L then lane = L end
+            reserveGroup(true, 4)    -- ⭐ ตัวเงินก่อน (ยิง 4 จุด → เกมแคป max เช่น Senku 3, Ichiraku 1)
+            reserveGroup(false, 3)   -- แล้วดาเมจ (ยิง 3 จุด)
+            task.wait(3)
+        end
+        print("[Villain] 🏁 จองวางครบ (Phantom Placing วางจริงเมื่อเงินมา)")
         pileOn = false
     end)
 end
