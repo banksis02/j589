@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.42"
+local SCRIPT_VERSION = "v9.43"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6207,8 +6207,10 @@ local function getYen()
 end
 
 local upgradeOn = false
+local placingNow = false   -- ⭐ v9.43: true ระหว่างวางตัว — กันไม่ให้อัพเกรดจนกว่าวางครบ
 _G.AE_VILLAIN_UPGRADE = function()
     if upgradeOn then return end
+    if placingNow then print("[Villain] ⏳ ยังวางไม่ครบ — ยังไม่อัพเกรด (รอวางเสร็จก่อน)"); return end
     upgradeOn = true
     task.spawn(function()
         print("[Villain] ⬆️ เริ่มลูปอัพเกรด (เงินก่อน → ดาเมจ | ข้ามซัพ)")
@@ -6250,9 +6252,12 @@ local pileOn = false
 _G.AE_VILLAIN_PLACE = function()
     if pileOn then print("[Villain] วางอยู่แล้ว"); return end
     pileOn = true
+    -- ⭐ v9.43: หยุด upgrade loop เก่า (ถ้าค้าง) + ล็อกห้ามอัพจนกว่าวางครบ
+    placingNow = true
+    upgradeOn = false
     task.spawn(function()
         local lanes = buildAllPaths()
-        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); pileOn = false; return end
+        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); placingNow = false; pileOn = false; return end
 
         -- ⭐ รอมอนโผล่ แล้วหาเลนที่มอนเดินจริง (สูงสุด 20 วิ)
         local lane
@@ -6344,13 +6349,14 @@ _G.AE_VILLAIN_PLACE = function()
                 task.wait(1)
             end
         end
-        -- ⭐ วางครบแล้วค่อยเริ่มอัพเกรด (เงินก่อนตัน → ดาเมจ)
-        print("[Villain] ⬆️ เริ่มอัพเกรด (เงินก่อน)")
+        -- ⭐ วางครบแล้วค่อยปลดล็อก + เริ่มอัพเกรด (เงินก่อนตัน → ดาเมจ)
+        placingNow = false
+        print("[Villain] ⬆️ วางครบ → เริ่มอัพเกรด (เงินก่อน)")
         if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
         pileOn = false
     end)
 end
-_G.AE_VILLAIN_PLACE_STOP = function() pileOn = false end
+_G.AE_VILLAIN_PLACE_STOP = function() placingNow = false; pileOn = false end
 
 -- ============================================================
 -- 🏁 จบด่าน → กด Replay (เล่นซ้ำ)
