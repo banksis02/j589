@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.37"
+local SCRIPT_VERSION = "v9.38"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6275,9 +6275,18 @@ _G.AE_VILLAIN_PLACE = function()
         -- ⭐ v9.35 โลจิค (ตาม user): วางตัวเงินให้ "ครบทุกตัว/จนเต็ม" ก่อน แล้วค่อยวางตัวอื่น
         --    ตัวเงินสร้างเงิน → รอเงินโตแล้ววางตัวเงินตัวถัดไป/ซ้ำจนเต็ม (เช่น Stone Alchemist 3)
         --    เกาะกันแน่นที่ 55-65% ของเลน active
-        local maxedMoney = {}   -- asset ตัวเงินที่วางจนเต็มแล้ว (วางไม่ได้ 2 ครั้งทั้งที่เงินพอ = เต็ม)
-        local moneyFail  = {}   -- นับครั้งวางตัวเงินไม่ติด (กันตัดสินว่าเต็มเพราะที่ชนชั่วคราว)
-        local stuck = 0         -- รอบที่วางอะไรไม่ได้ติดกัน (กัน deadlock ถ้าเงินไม่พอวางเงินเลย)
+        local maxedMoney = {}   -- asset ตัวเงินที่วางจนเต็มแล้ว
+        local moneyFail  = {}   -- นับครั้งวางตัวเงินแล้วตัวจริงไม่เพิ่ม
+        local stuck = 0         -- รอบที่วางอะไรไม่ได้ติดกัน (กัน deadlock)
+        -- ⭐ v9.38: นับตัวจริงของ asset ในสนาม (getMyUnits กรอง phantom/clone) — เช็ค "เต็มจริง"
+        --    เพราะ Phantom Placing ทำให้ placeAt "วางติด" (จองผี) เรื่อยๆ → มาร์คเต็มไม่ได้
+        local function countAsset(asset)
+            local n, a = 0, tostring(asset):lower()
+            for _, u in ipairs(getMyUnits()) do
+                if tostring(u.asset):lower():find(a, 1, true) then n = n + 1 end
+            end
+            return n
+        end
         for round = 1, 60 do
             if not pileOn then break end
             if round % 5 == 0 then
@@ -6301,15 +6310,20 @@ _G.AE_VILLAIN_PLACE = function()
                             -- โฟกัสตัวเงินตัวแรกที่ยังไม่เต็ม — ตัวถัดไปรอตัวนี้เต็มก่อน
                             moneyPending = true
                             if s.cost <= yen then
+                                local before = countAsset(s.asset)   -- ⭐ v9.38: นับตัวจริงก่อนวาง
                                 local frac = 0.55 + math.random() * 0.10
-                                if placeAt(lane, s.slot, lane.total * frac) then
-                                    print(("[Villain] ✅ 💰เงิน %s ช่อง %d ~%.0f%% (¥%d)"):format(tostring(s.asset), s.slot, frac*100, s.cost))
-                                    yen = yen - s.cost; didPlace = true; moneyFail[s.asset] = 0; task.wait(0.3)
+                                placeAt(lane, s.slot, lane.total * frac)
+                                task.wait(0.5)
+                                local after = countAsset(s.asset)
+                                if after > before then
+                                    print(("[Villain] ✅ 💰เงิน %s (มี %d ตัวในสนาม)"):format(tostring(s.asset), after))
+                                    yen = yen - s.cost; didPlace = true; moneyFail[s.asset] = 0
                                 else
+                                    -- วางแล้วตัวจริงไม่เพิ่ม = เต็ม (หรือจองผี) — ล้ม 2 ครั้งค่อยมาร์คเต็ม
                                     moneyFail[s.asset] = (moneyFail[s.asset] or 0) + 1
                                     if moneyFail[s.asset] >= 2 then
                                         maxedMoney[s.asset] = true
-                                        print(("[Villain] 🔒 ตัวเงิน %s เต็มแล้ว"):format(tostring(s.asset)))
+                                        print(("[Villain] 🔒 ตัวเงิน %s เต็มแล้ว (มี %d ตัว) → ไปวางดาเมจ"):format(tostring(s.asset), after))
                                     end
                                 end
                             end
