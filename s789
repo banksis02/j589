@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.33"
+local SCRIPT_VERSION = "v9.34"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -778,31 +778,52 @@ if GAME_ID == "anime_expeditions" then
     --   Wave = GameState.Wave
     -- ============================================================
     local aeReplicaRegistry = nil
-    pcall(function()
-        local RC = require(game:GetService("ReplicatedStorage").Shared.ReplicaClient)
-        for _, up in pairs(debug.getupvalues(RC.FromId)) do
-            if type(up) == "table" then
-                for kk in pairs(up) do
-                    if type(kk) == "number" then aeReplicaRegistry = up; break end
+    -- ⭐ v9.34: จับ registry (แยกเป็นฟังก์ชัน — เรียกซ้ำได้เมื่อ registry เก่า/หาไม่เจอ)
+    local function aeCaptureRegistry()
+        local reg
+        pcall(function()
+            local RC = require(game:GetService("ReplicatedStorage").Shared.ReplicaClient)
+            for _, up in pairs(debug.getupvalues(RC.FromId)) do
+                if type(up) == "table" then
+                    for kk in pairs(up) do
+                        if type(kk) == "number" then reg = up; break end
+                    end
+                    if reg then break end
                 end
-                if aeReplicaRegistry then break end
             end
-        end
-    end)
+        end)
+        return reg
+    end
+    aeReplicaRegistry = aeCaptureRegistry()
 
-    local function aeGetReplica(token)
-        if not aeReplicaRegistry then return nil end
-        -- ⭐ v9.30: มี replica หลายตัว token เดียวกัน — เอาตัวที่ "ยิงได้" (มี write_lib)
-        --    ก่อน (เหมือน Expedition/Villain) ไม่งั้นได้ตัว read-only → FireServer พัง → fallback opcode
+    -- ค้นหา token ใน registry ที่ให้มา — เอาตัวมี write_lib ก่อน (ยิงได้)
+    local function aeSearchReplica(reg, token)
+        if not reg then return nil end
         local cand
-        for _, rep in pairs(aeReplicaRegistry) do
+        for _, rep in pairs(reg) do
             local ok, t = pcall(function() return rep.Token end)
             if ok and t == token then
-                if rawget(rep, "write_lib") then return rep end
+                if rawget(rep, "write_lib") then return rep end   -- ตัวเขียนได้ = ดีสุด
                 cand = cand or rep
             end
         end
         return cand
+    end
+
+    local function aeGetReplica(token)
+        -- ⭐ v9.30: เอาตัวที่ "ยิงได้" (write_lib) ไม่งั้นได้ read-only → FireServer พัง → fallback
+        local r = aeSearchReplica(aeReplicaRegistry, token)
+        -- ⭐ v9.34: ถ้าไม่เจอ "ตัวยิงได้" (write_lib) → registry อาจเก่าหลังเปลี่ยนแมตช์
+        --    → จับ registry ใหม่แล้วหาอีกที (แก้ "บางไอดีไม่วางตัว" ตกไปใช้ opcode)
+        if not (r and rawget(r, "write_lib")) then
+            local fresh = aeCaptureRegistry()
+            if fresh then
+                aeReplicaRegistry = fresh
+                local r2 = aeSearchReplica(fresh, token)
+                if r2 then return r2 end
+            end
+        end
+        return r
     end
 
     -- คืน level, bp, wave (0 ถ้าอ่านไม่ได้)
