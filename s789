@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.46"
+local SCRIPT_VERSION = "v9.47"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10743,7 +10743,7 @@ local function L(s) s=tostring(s); print("[BQ] "..s); table.insert(logBuf,s); if
 
 -- ---------- rarity ----------
 local RANK = { Common=1, Uncommon=2, Rare=1, Epic=2, Legendary=3, Mythic=4, Godly=5, Divine=6, Secret=7 }
-local DO_THRESHOLD = 3     -- ทำ Legendary(3)+ | ต่ำกว่า reroll
+local DO_THRESHOLD = 4     -- ⭐ v9.47: ทำแค่ 4★ (Mythic) เท่านั้น | ต่ำกว่า reroll ทิ้ง
 local function rarityOfId(id) return (tostring(id):gsub("%d+$","")) end
 local function rankOfId(id) return RANK[rarityOfId(id)] or 0 end
 
@@ -10855,6 +10855,7 @@ _G.AE_BOUNTY_CLAIM = function(id) L("🏆 เคลม "..tostring(id)); return 
 -- ---------- UI (pcall กันพัง) ----------
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_BOUNTY_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_BOUNTY_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(420,360); main.Position=UDim2.fromOffset(20,80)
@@ -10988,6 +10989,7 @@ end
 -- ---------- UI เทส ----------
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_SUMMON_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_SUMMON_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(360,260); main.Position=UDim2.fromOffset(20,100)
@@ -11111,7 +11113,10 @@ function _G.AE_SHOP_BUY()
         local it = items[idx]
         local name, price = it.Name, tonumber(it.Price) or 0
         local stock = tonumber(it.Stock)            -- nil = ไม่จำกัด (แต่ร้านทองมี Stock ทุกตัว)
-        if stock then
+        -- ⭐ v9.47 (user): ซื้อ "แค่ Trait Crystal" เท่านั้น (25/วัน = stock) ข้ามที่เหลือ
+        if not tostring(name):lower():find("trait") then
+            -- ข้ามไอเท็มอื่น
+        elseif stock then
             local remain = stock - boughtCount(name)
             if remain > 0 and price >= 0 then
                 -- ซื้อได้กี่ชิ้นโดยยังเหลือ > RESERVE
@@ -11137,6 +11142,7 @@ end
 -- ---------- UI เทส ----------
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_SHOP_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_SHOP_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(360,280); main.Position=UDim2.fromOffset(20,90)
@@ -11375,6 +11381,7 @@ end
 -- UI
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_INFP_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_INFP_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,320); main.Position=UDim2.fromOffset(20,80)
@@ -11604,6 +11611,7 @@ end
 -- UI
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_STORY_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_STORY_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,320); main.Position=UDim2.fromOffset(20,80)
@@ -11806,6 +11814,7 @@ end
 -- UI
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_RAID_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_RAID_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,290); main.Position=UDim2.fromOffset(20,80)
@@ -12014,6 +12023,7 @@ end
 -- UI
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_CHAL_UI"); if old then old:Destroy() end
+    if not _G.AE_QUEST_UI then return end   -- v9.47: ซ่อน UI เทส (ใช้จริง headless)
     local gui=Instance.new("ScreenGui"); gui.Name="AE_CHAL_UI"; gui.ResetOnSpawn=false; gui.DisplayOrder=99998
     pcall(function() gui.Parent=(gethui and gethui()) or player.PlayerGui end); if not gui.Parent then gui.Parent=player.PlayerGui end
     local main=Instance.new("Frame"); main.Size=UDim2.fromOffset(380,300); main.Position=UDim2.fromOffset(430,80)
