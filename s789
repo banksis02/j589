@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.69"
+local SCRIPT_VERSION = "v9.70"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11431,7 +11431,7 @@ _G.AE_INF_RUN=function(mapName, targetWave)
     end
     task.spawn(function()
         -- ตั้งค่า (auto-skip/vote/upgrade เปิด) ครั้งเดียว
-        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า auto-skip/vote/upgrade"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า auto-skip/vote/upgrade"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         -- เข้าด่าน (best-effort — ไม่หยุดถ้า enter คืน false เพราะบางทีเข้าได้แต่ log ไม่ครบ)
         if not inGame() then enterInfinite(mapName) end
         -- รอเข้าด่านจริง (poll _G.AE_IN_GAME) — log ทุก 3 วิ
@@ -11664,7 +11664,7 @@ _G.AE_STORY_RUN=function(mapName, actNum)
     if running then L("กำลังทำงานอยู่"); return end
     running=true
     task.spawn(function()
-        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         if not inGame() then enterStory(mapName, actNum) end
         -- รอเข้าด่าน
         local t0=tick()
@@ -11871,15 +11871,15 @@ _G.AE_RAID_RUN=function(mapName, actNum)
     if running then L("กำลังทำงานอยู่"); return end
     running=true
     task.spawn(function()
-        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า (skip/vote on)"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
-        if _G.AE_EXP_SETTINGS then L("⚙️ ปิด auto-upgrade เกม"); pcall(_G.AE_EXP_SETTINGS); task.wait(1) end
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade on)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        -- ⭐ v9.70: เอา EXP_SETTINGS ออก (ขัดกับ APPLY + เปิดตั้งค่า 2 รอบ) → ใช้ auto-upgrade เกมเหมือน Infinite/Story
         if not inGame() then enterRaid(mapName, actNum) end
         local t0=tick()
         while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
         if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("⚔️ Raid","ไม่เข้าด่าน",6); running=false; return end
         L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
         if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
-        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
+        -- ⭐ v9.70: เอา VILLAIN_UPGRADE ออก → ใช้ auto-upgrade ของเกม (APPLY เปิดไว้) เหมือน Infinite/Story
         task.wait(3)
         L("👀 รอผลแมตช์")
         local tick2=0
@@ -12080,15 +12080,15 @@ _G.AE_CHAL_RUN=function(kind, idx)
     if running then L("กำลังทำงานอยู่"); return end
     running=true
     task.spawn(function()
-        if _G.AE_APPLY_SETTINGS then L("⚙️ ตั้งค่า (skip/vote on)"); pcall(_G.AE_APPLY_SETTINGS); task.wait(1) end
-        if _G.AE_EXP_SETTINGS then L("⚙️ ปิด auto-upgrade เกม"); pcall(_G.AE_EXP_SETTINGS); task.wait(1) end
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade on)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        -- ⭐ v9.70: เอา EXP_SETTINGS ออก (ขัดกับ APPLY + เปิดตั้งค่า 2 รอบ) → ใช้ auto-upgrade เกมเหมือน Infinite/Story
         if not inGame() then enterChallenge(kind, idx) end
         local t0=tick()
         while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
         if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("🏅 Challenge","ไม่เข้าด่าน",6); running=false; return end
         L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
         if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
-        if _G.AE_VILLAIN_UPGRADE then pcall(_G.AE_VILLAIN_UPGRADE) end
+        -- ⭐ v9.70: เอา VILLAIN_UPGRADE ออก → ใช้ auto-upgrade ของเกม (APPLY เปิดไว้) เหมือน Infinite/Story
         task.wait(3)
         L("👀 รอผลแมตช์")
         local tick2=0
@@ -12486,6 +12486,7 @@ end
 _G.AE_QUEST_RUN = function()
     if running then QL("กำลังทำงานอยู่"); return end
     running = true
+    _G.AE_QUEST_SET_DONE = false   -- ⭐ v9.70: ตั้งค่าเกมครั้งเดียวต่อ session (ไม่เปิดหน้าตั้งค่าซ้ำทุกด่าน)
     task.spawn(function()
         QL("🎯🎯 เริ่มโหมดทำเควส (Bounty Board)")
         notify("🎯 ทำเควส", "เริ่มทำเควสรายวัน", 5)
