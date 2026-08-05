@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.59"
+local SCRIPT_VERSION = "v9.60"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12280,6 +12280,7 @@ end
 -- ⭐ v9.54: ObjectiveProgress ไม่น่าเชื่อถือ (นับสะสม → done หลอก) → ห้ามข้ามเพราะ done
 --    กลยุทธ์: มี objective ที่ยัง "ไม่ done" → ทำมัน | ถ้าทุกตัวรายงาน done → ลองเคลม
 --    ถ้าเคลมไม่ผ่าน (done หลอก จริงยังไม่เสร็จ) → ลงมือทำ objective จริงทุกตัว
+local gaveUp = {}   -- ⭐ v9.60: เควสที่ทำครบทุก objective แล้วยังเคลมไม่ได้ (route ไม่ตรง/done หลอกที่ทำไม่ได้) → เลิกวนซ้ำ
 local function tryClaim(id)
     if not _G.AE_BOUNTY_CLAIM then return false end
     pcall(_G.AE_BOUNTY_CLAIM, id); task.wait(2)
@@ -12287,7 +12288,14 @@ local function tryClaim(id)
     return (not c) or c.claimed
 end
 local function doBounty(b)
-    QL(("🎯 ทำเควส %s [★%d] %s"):format(b.id, b.rank, tostring(b.displayName)))
+    -- 🔎 v9.60 DIAG: โชว์ objective ทั้งหมดของเควสนี้ (type/cur/goal/done) — ดูว่าตัวไหน done หลอก
+    local c0 = bountyById(b.id) or b
+    local od = {}
+    for _, o in ipairs(c0.objectives or {}) do
+        od[#od+1] = ("%s %s(%s/%s)%s"):format(tostring(o.type), tostring(o.map or o.challengeType or ""),
+            tostring(o.cur), tostring(o.goal), o.done and "✓" or "✗")
+    end
+    QL(("🎯 ทำเควส %s [★%d] — objective[%d]: %s"):format(b.id, b.rank, #(c0.objectives or {}), table.concat(od, " | ")))
     local didFull = false   -- ลงมือทำ objective จริงทุกตัวไปแล้วรอบนึงหรือยัง (กันวนแพง)
     for pass = 1, 6 do
         if not running then return end
@@ -12306,7 +12314,8 @@ local function doBounty(b)
             QL("  🏆 objective รายงานครบ → ลองเคลม")
             if tryClaim(b.id) then QL("  ✅ เคลมสำเร็จ"); return end
             if didFull then
-                QL("  ⚠️ ทำครบทุก objective แล้วยังไม่เสร็จ (route อาจไม่ตรง) → ข้ามไปก่อน"); return
+                QL("  ⚠️ ทำครบทุก objective แล้วยังเคลมไม่ได้ → เลิกทำเควสนี้ (ไม่วนซ้ำอีก)")
+                gaveUp[b.id] = true; return
             end
             -- เคลมไม่ผ่าน = done หลอก → ลงมือทำ objective จริงทุกตัว (ครั้งเดียว)
             QL("  ⚠️ เคลมไม่ผ่าน (done หลอก) → ลงมือทำ objective จริงทุกตัว")
@@ -12340,7 +12349,7 @@ local function questCycle()
     local didAny = false
     for _,b in ipairs(board) do
         if not running then break end
-        if b.rank >= TH and not b.claimed then
+        if b.rank >= TH and not b.claimed and not gaveUp[b.id] then   -- ⭐ ข้ามเควสที่เลิกทำแล้ว
             if b.completed then
                 if _G.AE_BOUNTY_CLAIM then pcall(_G.AE_BOUNTY_CLAIM, b.id); task.wait(2) end
             else
