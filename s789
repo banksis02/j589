@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.52"
+local SCRIPT_VERSION = "v9.53"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11139,6 +11139,19 @@ function _G.AE_SHOP_BUY()
     return true
 end
 
+-- ⭐ v9.53: Trait Crystal เหลือให้ซื้ออีกกี่ชิ้นวันนี้ (25/วัน - ที่ซื้อไปแล้ว) | -1 = อ่านไม่ได้ (ไม่อยู่ล็อบบี้)
+_G.AE_SHOP_TRAIT_REMAIN = function()
+    local _, items = findShop()
+    if not items then return -1 end
+    for _, it in pairs(items) do
+        if tostring(it.Name):lower():find("trait") then
+            local stock = tonumber(it.Stock) or 0
+            return math.max(0, stock - boughtCount(it.Name))
+        end
+    end
+    return 0
+end
+
 -- ---------- UI เทส ----------
 pcall(function()
     local old=(gethui and gethui() or player.PlayerGui):FindFirstChild("AE_SHOP_UI"); if old then old:Destroy() end
@@ -12183,8 +12196,7 @@ local function doObjective(o)
         local m = uiMap(o.map); local w = tonumber(o.wave) or 15
         QL(("  ⚔️ Infinite %s → wave %d"):format(m, w))
         if _G.AE_INF_RUN then pcall(_G.AE_INF_RUN, m, w) end
-        waitStageCycle(100, 900)
-        return true
+        return waitStageCycle(100, 900)   -- false = เข้าด่านไม่ได้
 
     elseif o.type == "FinishMap" then
         local gm = tostring(o.gamemode)
@@ -12192,19 +12204,18 @@ local function doObjective(o)
             local m, a = uiMap(o.map), actNum(o.actName)
             QL(("  🐉 Raid %s Act %d"):format(m, a))
             if _G.AE_RAID_RUN then pcall(_G.AE_RAID_RUN, m, a) end
-            waitStageCycle(100, 600)
+            return waitStageCycle(100, 600)
         elseif gm == "Challenge" then
             local kind = (tostring(o.challengeType)=="Daily") and "Daily" or "Regular"
             QL(("  🏆 Challenge %s"):format(kind))
             if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, 1) end
-            waitStageCycle(100, 600)
+            return waitStageCycle(100, 600)   -- ⭐ false = ติด cooldown/เข้าไม่ได้ → ข้ามเควสนี้
         else  -- Story
             local m = uiMap(o.map)
             QL(("  📖 Story %s (%s)"):format(m, tostring(o.difficulty)))
             if _G.AE_STORY_RUN then pcall(_G.AE_STORY_RUN, m, 1) end
-            waitStageCycle(100, 600)
+            return waitStageCycle(100, 600)
         end
-        return true
     end
     QL("  ❓ objective ไม่รู้จัก: "..tostring(o.type))
     return false
@@ -12220,7 +12231,12 @@ local function doBounty(b)
         local pending
         for _,o in ipairs(cur.objectives) do if not o.done then pending=o; break end end
         if not pending then QL("  (objective ครบแล้ว รอ completed flag)"); break end
-        doObjective(pending)
+        -- ⭐ v9.53: ถ้าเข้าด่าน/ทำ objective ไม่ได้ (เช่น Challenge ติด cooldown)
+        --    → ข้ามเควสนี้ไปทำอันอื่นก่อน (รอบ questCycle ถัดไปจะกลับมาลองใหม่ตอน cooldown หมด)
+        if not doObjective(pending) then
+            QL("  ⏭ objective นี้ยังทำไม่ได้ (cooldown/เข้าไม่ได้) → ข้ามเควสนี้ ไปทำอันอื่นก่อน")
+            return
+        end
         task.wait(2)
     end
     local cur = bountyById(b.id)
@@ -12333,21 +12349,20 @@ _G.AE_QUEST_RUN = function()
             if not did then task.wait(10) end
         end
         if not running then return end
-        -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อของ (ทุก ~1 ชม.) → ฟาม fallback ~10 นาที"
+        -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อ Trait Crystal (จนครบ 25/วัน) → ฟาม fallback ~10 นาที"
         --    Challenge มี cooldown ~10 นาที/รอบ + ครบ 10/วัน → ทยอยทำเองทุกช่วง จนหมดเวลาจ้าง
-        QL("🔁 เฟส 2: วน Challenge (cooldown ~10 นาที) + ซื้อของ + ฟาม fallback สลับกัน")
+        QL("🔁 เฟส 2: วน Challenge (cooldown ~10 นาที) + ซื้อ Trait Crystal + ฟาม fallback")
         notify("🎯 ทำเควส", "เควสรายวันครบ → วน Challenge + ฟาม", 6)
-        local shopT = 0   -- ซื้อของครั้งล่าสุด (0 = ยังไม่เคย → ซื้อรอบแรกเลย)
         while running and MYGEN == _G.AE_SCRIPT_GEN do
-            -- 1) ลอง challenge ทุกตัว (ตัวที่พ้น cooldown/ยังไม่ครบ = เข้าเล่น)
+            -- 1) ลอง challenge ทุกตัว (ตัวที่พ้น cooldown/ยังไม่ครบ = เข้าเล่น) — จบแล้วอยู่ล็อบบี้
             tryChallengesOnce()
             if not running then break end
-            -- 2) ซื้อ Trait Crystal ทุก ~1 ชม. (restock รายวัน — เช็คบ่อยไม่เสียหาย)
-            if tick()-shopT > 3600 then
-                stopAllGameplay()
-                if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY); task.wait(5) end
+            stopAllGameplay()   -- กลับล็อบบี้ (จำเป็นสำหรับอ่าน/ซื้อร้าน)
+            -- 2) ซื้อ Trait Crystal — ซื้อเฉพาะเมื่อยังเหลือโควต้าวันนี้ (25/วัน) ไม่ใช่ทุกชั่วโมง
+            local rem = _G.AE_SHOP_TRAIT_REMAIN and _G.AE_SHOP_TRAIT_REMAIN() or 0
+            if rem and rem > 0 then
+                QL(("🛒 ซื้อ Trait Crystal (เหลือโควต้าวันนี้ %d ชิ้น)"):format(rem))
                 if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
-                shopT = tick()
             end
             if not running then break end
             -- 3) ฟาม fallback ~10 นาที (ให้ challenge cooldown หมดพอดี) แล้ววนกลับไปลองใหม่
