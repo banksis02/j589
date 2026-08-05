@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.49"
+local SCRIPT_VERSION = "v9.50"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12121,8 +12121,18 @@ local function bountyById(id)
     return nil
 end
 
+-- ⭐ v9.50: หยุดทุกระบบเล่นก่อนเริ่มอันใหม่ (กันทับกัน — player เก่า + villain place/upgrade ค้าง)
+local function stopAllGameplay()
+    for _,fn in ipairs({ "AE_INF_STOP","AE_STORY_STOP","AE_RAID_STOP","AE_CHAL_STOP",
+                         "AE_VILLAIN_RUN_STOP","AE_VILLAIN_PLACE_STOP","AE_VILLAIN_UPGRADE_STOP" }) do
+        if _G[fn] then pcall(_G[fn]) end
+    end
+    task.wait(0.6)
+end
+
 -- ---------- ทำ 1 objective ----------
 local function doObjective(o)
+    stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อนเสมอ
     if o.type == "Summon" then
         local need = tonumber(o.goal) or 1
         for attempt=1,6 do
@@ -12194,25 +12204,26 @@ end
 
 -- ---------- 1 รอบเควส: reroll<3★ → ทำ 3★+ ทุกอัน ----------
 local function questCycle()
-    -- reroll ตัวต่ำกว่า 3★
-    QL("🎲 reroll เควสต่ำกว่า 3★...")
+    local TH = tonumber(_G.AE_BOUNTY_DO_THRESHOLD) or 4   -- ⭐ ทำแค่ 4★ (Mythic)
+    -- reroll ตัวต่ำกว่าเกณฑ์
+    QL(("🎲 reroll เควสต่ำกว่า %d★..."):format(TH))
     if _G.AE_BOUNTY_REROLL_SUB then pcall(_G.AE_BOUNTY_REROLL_SUB) end
     local t0 = tick()
     while running and tick()-t0 < 40 do
         local board = readBoard(); local hasSub = false
         if board then for _,b in ipairs(board) do
-            if b.rank<3 and not b.claimed and not b.completed then hasSub=true; break end
+            if b.rank<TH and not b.claimed and not b.completed then hasSub=true; break end
         end end
         if not hasSub then break end
         task.wait(2)
     end
-    -- ทำแต่ละ 3★+
+    -- ทำแต่ละ TH★+
     local board = readBoard()
     if not board then QL("❌ อ่าน board ไม่ได้"); return false end
     local didAny = false
     for _,b in ipairs(board) do
         if not running then break end
-        if b.rank >= 3 and not b.claimed then
+        if b.rank >= TH and not b.claimed then
             if b.completed then
                 if _G.AE_BOUNTY_CLAIM then pcall(_G.AE_BOUNTY_CLAIM, b.id); task.wait(2) end
             else
@@ -12229,6 +12240,7 @@ local function runAllChallenges()
         for run=1,10 do
             if not running then return end
             QL(("  🏆 Regular #%d รอบ %d/10"):format(idx, run))
+            stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อน
             if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", idx) end
             if not waitStageCycle(60, 600) then
                 QL(("  Regular #%d เข้าไม่ได้ (ครบ limit?) → ข้าม"):format(idx)); break
@@ -12238,12 +12250,14 @@ local function runAllChallenges()
     end
     if not running then return end
     QL("  🏆 Daily x1")
+    stopAllGameplay()
     if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Daily", 1) end
     waitStageCycle(60, 600)
 end
 
 -- ---------- fallback farm ----------
 local function runFallback(fb)
+    stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อนเข้า fallback
     fb = tostring(fb or "villain")
     if fb=="villain" and _G.AE_VILLAIN_RUN then
         pcall(_G.AE_VILLAIN_RUN, tonumber(_G.AE_QUEST_FALLBACK_ACT) or 1)
@@ -12277,9 +12291,10 @@ _G.AE_QUEST_RUN = function()
             if not running or MYGEN ~= _G.AE_SCRIPT_GEN then break end
             local did = questCycle()
             local board = readBoard(); local left = 0
-            if board then for _,b in ipairs(board) do if b.rank>=3 and not b.claimed then left=left+1 end end end
-            QL(("📊 รอบ %d — เควส 3★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, left))
-            if left == 0 then QL("✅ เควส 3★+ ครบทุกอันแล้ว"); break end
+            local TH = tonumber(_G.AE_BOUNTY_DO_THRESHOLD) or 4
+            if board then for _,b in ipairs(board) do if b.rank>=TH and not b.claimed then left=left+1 end end end
+            QL(("📊 รอบ %d — เควส %d★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, TH, left))
+            if left == 0 then QL("✅ เควสครบทุกอันแล้ว"); break end
             if not did then task.wait(10) end
         end
         if not running then return end
@@ -12287,8 +12302,10 @@ _G.AE_QUEST_RUN = function()
         QL("🏆 เฟส 2: ทำ Challenge ทั้งหมด (Regular 3×10, Daily 1)")
         runAllChallenges()
         if not running then return end
-        -- เฟส 3: ซื้อ Gold Shop
-        QL("🛒 เฟส 3: ซื้อ Gold Shop (เก็บ 500k)")
+        -- เฟส 3: ซื้อ Gold Shop (ต้องอยู่ล็อบบี้ — หยุดระบบเล่น + กลับล็อบบี้ก่อน)
+        QL("🛒 เฟส 3: ซื้อ Gold Shop (Trait Crystal)")
+        stopAllGameplay()
+        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY); task.wait(6) end
         if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
         if not running then return end
         -- เฟส 4: fallback farm
