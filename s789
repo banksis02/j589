@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.57"
+local SCRIPT_VERSION = "v9.58"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6003,17 +6003,48 @@ local function buildLane(lane)
 end
 
 -- ⭐ สร้าง "ทุกเลน" (แมพ Villain มอบมาหลายทาง — ต้องวางคร่อมทุกเลน)
-local function buildAllPaths()
-    local map = workspace:FindFirstChild("Map")
-    local paths = map and map:FindFirstChild("Paths")
-    if not paths then return {} end
+-- แปลง 1 โฟลเดอร์เป็นเลน — รองรับ 2 โครงสร้าง:
+--   A) folder มีลูกเป็น "เลน" (แต่ละเลนมี waypoint เลข)  B) folder เองมี waypoint เลขตรงๆ (เลนเดียว)
+local function lanesFromFolder(folder)
     local lanes = {}
-    for _, lane in ipairs(paths:GetChildren()) do
+    for _, lane in ipairs(folder:GetChildren()) do
         local L = buildLane(lane)
         if L then L.name = lane.Name; table.insert(lanes, L) end
     end
-    table.sort(lanes, function(a, b) return a.name < b.name end)
+    if #lanes == 0 then
+        local L = buildLane(folder)
+        if L then L.name = folder.Name; table.insert(lanes, L) end
+    end
     return lanes
+end
+-- ⭐ v9.57: หา path ได้ทั้ง workspace.Map.Paths และที่อื่น (Story/Infinite เก็บคนละที่)
+local function buildAllPaths()
+    local map = workspace:FindFirstChild("Map")
+    if not map then return {} end
+    local function done(lanes)
+        if #lanes > 0 then table.sort(lanes, function(a, b) return tostring(a.name) < tostring(b.name) end); return lanes end
+        return nil
+    end
+    -- 1) ตรงๆ Map.Paths
+    local direct = map:FindFirstChild("Paths")
+    if direct then local r = done(lanesFromFolder(direct)); if r then return r end end
+    -- 2) โฟลเดอร์ชื่อมี path/waypoint/node/track ที่ไหนก็ได้ใน Map
+    for _, c in ipairs(map:GetDescendants()) do
+        if (c:IsA("Folder") or c:IsA("Model")) then
+            local nm = tostring(c.Name):lower()
+            if nm:find("path") or nm:find("waypoint") or nm:find("node") or nm:find("track") then
+                local r = done(lanesFromFolder(c)); if r then return r end
+            end
+        end
+    end
+    -- 3) ทางเลือกสุดท้าย: โฟลเดอร์ไหนก็ได้ที่ประกอบเป็นเลนยาวจริง (waypoint เลข, ยาว > 30)
+    for _, c in ipairs(map:GetDescendants()) do
+        if (c:IsA("Folder") or c:IsA("Model")) then
+            local lanes = lanesFromFolder(c)
+            if #lanes > 0 and (lanes[1].total or 0) > 30 then local r = done(lanes); if r then return r end end
+        end
+    end
+    return {}
 end
 
 -- เข้ากันได้กับโค้ดเดิม (เลนแรก)
@@ -6242,14 +6273,21 @@ _G.AE_VILLAIN_PLACE = function()
     pileOn = true
     task.spawn(function()
         local lanes = buildAllPaths()
+        -- ⭐ v9.57: รอ map/paths โหลด (Story/Infinite บางทีโหลดช้า/เก็บคนละที่) — retry สูงสุด 30s
         if #lanes == 0 then
-            -- ⭐ v9.57: ด่าน Story/Infinite ไม่มี workspace.Map.Paths → วางแบบ villain ไม่ได้
-            --    → fallback ไปวางแบบ AE_PLACE (พิกัดตายตัว) แทน
-            warn("[Villain] ❌ ไม่เจอ Paths (ด่าน Story/Infinite) → ใช้ AE_PLACE แทน")
-            pileOn = false
-            if _G.AE_PLACE then pcall(_G.AE_PLACE) end
-            return
+            print("[Villain] ⏳ ยังไม่เจอ path — รอ map โหลด...")
+            for _=1,15 do
+                if not pileOn then break end
+                task.wait(2)
+                lanes = buildAllPaths()
+                if #lanes > 0 then break end
+            end
         end
+        if #lanes == 0 then
+            warn("[Villain] ❌ ไม่เจอ path หลังรอ 30s (ส่ง _G.AE_VILLAIN_PATHDUMP() มาดูโครงสร้าง Map)")
+            pileOn = false; return
+        end
+        print(("[Villain] ✅ เจอ path %d เลน"):format(#lanes))
 
         -- ⭐ รอมอนโผล่ แล้วหาเลนที่มอนเดินจริง (สูงสุด 20 วิ)
         local lane
