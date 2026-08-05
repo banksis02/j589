@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.60"
+local SCRIPT_VERSION = "v9.61"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12296,43 +12296,27 @@ local function doBounty(b)
             tostring(o.cur), tostring(o.goal), o.done and "✓" or "✗")
     end
     QL(("🎯 ทำเควส %s [★%d] — objective[%d]: %s"):format(b.id, b.rank, #(c0.objectives or {}), table.concat(od, " | ")))
-    local didFull = false   -- ลงมือทำ objective จริงทุกตัวไปแล้วรอบนึงหรือยัง (กันวนแพง)
-    for pass = 1, 6 do
+    -- ⭐ v9.61: ทำ objective ทีละตัว "เรียงลำดับ" (ตัวที่ยังไม่ done) จนครบ → เคลม → จบเควสนี้
+    --    (ไม่เลือกใหม่ทุก pass, ไม่สลับตัว — เหมือนที่ user ต้องการ: int→raid→summon ทีละอันจนครบ)
+    local n = #(c0.objectives or {})
+    for i = 1, n do
         if not running then return end
         local cur = bountyById(b.id); if not cur then return end
-        if cur.claimed then return end
-        if cur.completed then break end                 -- เสร็จจริง → ไปเคลมท้ายฟังก์ชัน
-        -- objective ที่ยังไม่ done (ตามที่เกมรายงาน)
-        local pending
-        for _, o in ipairs(cur.objectives) do if not o.done then pending = o; break end end
-        if pending then
-            if not doObjective(pending) then
+        if cur.completed or cur.claimed then break end
+        local o = cur.objectives[i]
+        if o and not o.done then
+            QL(("  → objective %d/%d: %s"):format(i, n, tostring(o.text or o.type)))
+            if not doObjective(o) then
                 QL("  ⏭ objective นี้ยังทำไม่ได้ (cooldown/เข้าไม่ได้) → ข้ามเควสนี้ก่อน"); return
             end
-        else
-            -- ทุก objective รายงาน done แต่ completed ยังไม่ set → ลองเคลม
-            QL("  🏆 objective รายงานครบ → ลองเคลม")
-            if tryClaim(b.id) then QL("  ✅ เคลมสำเร็จ"); return end
-            if didFull then
-                QL("  ⚠️ ทำครบทุก objective แล้วยังเคลมไม่ได้ → เลิกทำเควสนี้ (ไม่วนซ้ำอีก)")
-                gaveUp[b.id] = true; return
-            end
-            -- เคลมไม่ผ่าน = done หลอก → ลงมือทำ objective จริงทุกตัว (ครั้งเดียว)
-            QL("  ⚠️ เคลมไม่ผ่าน (done หลอก) → ลงมือทำ objective จริงทุกตัว")
-            didFull = true
-            for _, o in ipairs(cur.objectives) do
-                if not running then return end
-                local c2 = bountyById(b.id); if c2 and (c2.completed or c2.claimed) then break end
-                if not doObjective(o) then
-                    QL("  ⏭ objective ทำไม่ได้ (cooldown) → ข้ามเควสนี้ก่อน"); return
-                end
-                task.wait(2)
-            end
         end
-        task.wait(1)
     end
+    -- ครบทุก objective → เคลมรางวัล
     local cur = bountyById(b.id)
-    if cur and cur.completed and not cur.claimed then tryClaim(b.id) end
+    if cur and not cur.claimed then
+        if tryClaim(b.id) then QL("  ✅ เคลมรางวัลสำเร็จ")
+        else QL("  ⚠️ ทำครบแล้วยังเคลมไม่ได้ → เลิกทำเควสนี้ (ไม่วนซ้ำ)"); gaveUp[b.id] = true end
+    end
 end
 
 -- ---------- 1 รอบเควส: reroll<3★ → ทำ 3★+ ทุกอัน ----------
