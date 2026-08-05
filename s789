@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.62"
+local SCRIPT_VERSION = "v9.63"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12172,8 +12172,14 @@ local function uiMap(m)
 end
 local function actNum(a) local n = tostring(a or ""):match("%d+"); return tonumber(n) or 1 end
 
+-- ⭐ v9.63: เช็ค "อยู่ในด่าน" ให้เชื่อได้ทุกโหมด (โดยเฉพาะ Infinite)
+--    ใช้ HUD wave (WaveInformations) เป็นหลัก — มีตอนอยู่ในด่านที่มี wave (Story/Infinite/Raid/Challenge)
+--    ไม่มีตอนล็อบบี้ → กันตัวเช็คเดิม (getStageInfo หา " - Act ") ที่กระพริบ false ใน Infinite → เด้งออกวน
 local function inGame()
-    if _G.AE_IN_GAME then local ok,r = pcall(_G.AE_IN_GAME); if ok then return r end end
+    local hasWave = false
+    pcall(function() if player.PlayerGui.GameUI.HUD.Upper.WaveInformations then hasWave = true end end)
+    if hasWave then return true end
+    if _G.AE_IN_GAME then local ok,r = pcall(_G.AE_IN_GAME); if ok and r then return true end end
     return false
 end
 
@@ -12233,7 +12239,9 @@ end
 
 -- ---------- ทำ 1 objective ----------
 local function doObjective(o)
-    stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อนเสมอ
+    stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่า/ออกจากด่านฟามก่อน (ครั้งเดียว)
+    if not running then return false end
+    QL(("  🚪 อยู่ล็อบบี้แล้ว → กำลังนำทางเข้าด่านเควส (%s)..."):format(tostring(o.type)))
     if o.type == "Summon" then
         local need = tonumber(o.goal) or 1
         local total = 0   -- ⭐ v9.55: นับสะสมข้ามรอบ (ไม่ใช่ต่อ call)
