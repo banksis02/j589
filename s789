@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.56"
+local SCRIPT_VERSION = "v9.57"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6242,7 +6242,14 @@ _G.AE_VILLAIN_PLACE = function()
     pileOn = true
     task.spawn(function()
         local lanes = buildAllPaths()
-        if #lanes == 0 then warn("[Villain] ❌ ไม่เจอเส้นทาง (workspace.Map.Paths)"); pileOn = false; return end
+        if #lanes == 0 then
+            -- ⭐ v9.57: ด่าน Story/Infinite ไม่มี workspace.Map.Paths → วางแบบ villain ไม่ได้
+            --    → fallback ไปวางแบบ AE_PLACE (พิกัดตายตัว) แทน
+            warn("[Villain] ❌ ไม่เจอ Paths (ด่าน Story/Infinite) → ใช้ AE_PLACE แทน")
+            pileOn = false
+            if _G.AE_PLACE then pcall(_G.AE_PLACE) end
+            return
+        end
 
         -- ⭐ รอมอนโผล่ แล้วหาเลนที่มอนเดินจริง (สูงสุด 20 วิ)
         local lane
