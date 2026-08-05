@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.71"
+local SCRIPT_VERSION = "v9.72"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10923,6 +10923,31 @@ _G.AE_BOUNTY_READ  = readBoard                      -- คืน list ของ 
 _G.AE_BOUNTY_GOLD  = gold                           -- gold ปัจจุบัน
 _G.AE_BOUNTY_DO_THRESHOLD = DO_THRESHOLD            -- 3 = ทำ Legendary+
 _G.AE_BOUNTY_CLAIM = function(id) L("🏆 เคลม "..tostring(id)); return fireNode("BOUNTY_BOARD_CLAIM_QUEST", id, false) end
+
+-- ⭐ v9.72: SPY จับ remote จริง — รัน _G.AE_BOUNTY_SPY(30) แล้วกดปุ่มเคลมเขียว/ซื้อของ 1 ครั้ง จะโชว์ remote จริง
+_G.AE_BOUNTY_SPY = function(sec)
+    sec = tonumber(sec) or 30
+    local ok = pcall(function()
+        local node, sig
+        pcall(function() node = RS.Nodes.Network.NetworkEvents._updateNode end)
+        pcall(function() sig  = RS.RemoteEvents.ReplicaSignal end)
+        if not (getrawmetatable and setreadonly and newcclosure) then L("❌ SPY: exploit ไม่รองรับ hook"); return end
+        local mt = getrawmetatable(game); local oldNC = mt.__namecall
+        setreadonly(mt, false)
+        L(("🕵️ SPY เริ่ม %d วิ — กดปุ่มเคลมเขียว/ปุ่มซื้อของ 1 ครั้ง!"):format(sec))
+        mt.__namecall = newcclosure(function(self, ...)
+            local m = getnamecallmethod()
+            if m == "FireServer" and (self == node or self == sig) then
+                local a = {...}; local p = {}
+                for i,v in ipairs(a) do p[i] = (type(v)=="table" and "{tbl}" or tostring(v)) end
+                L(("🕵️ %s → %s"):format(tostring(self.Name), table.concat(p, " , ")))
+            end
+            return oldNC(self, ...)
+        end)
+        task.delay(sec, function() pcall(function() mt.__namecall = oldNC; setreadonly(mt, true) end); L("🕵️ SPY จบ") end)
+    end)
+    if not ok then L("❌ SPY ตั้งไม่ได้") end
+end
 
 -- ---------- UI (pcall กันพัง) ----------
 pcall(function()
