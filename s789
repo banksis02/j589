@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.61"
+local SCRIPT_VERSION = "v9.62"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10753,11 +10753,19 @@ notify("🎯 Bounty Core", "กำลังโหลด...", 3)
 
 -- ---------- config โมดูล ----------
 local CFG, cfgErr
-do local ok,e = pcall(function() CFG = require(RS.Shared.Information.Events.BountyBoard) end); if not ok then cfgErr=e end end
 local QUESTS = {}
-pcall(function() QUESTS = CFG:GetEventQuests() end)
 local REROLL_COST = 1000
-pcall(function() REROLL_COST = CFG:GetBountyRerollCost() or 1000 end)
+-- ⭐ v9.62: โหลด config เควสแบบ retry (reload กลางเกม config ยังไม่พร้อม → QUESTS ว่าง → objective[0])
+local function ensureQuests()
+    if next(QUESTS) ~= nil then return true end
+    if not CFG then local ok,e = pcall(function() CFG = require(RS.Shared.Information.Events.BountyBoard) end); if not ok then cfgErr=e end end
+    if CFG then
+        pcall(function() local q = CFG:GetEventQuests(); if type(q)=="table" and next(q) then QUESTS = q end end)
+        pcall(function() REROLL_COST = CFG:GetBountyRerollCost() or REROLL_COST end)
+    end
+    return next(QUESTS) ~= nil
+end
+ensureQuests()
 
 -- ---------- replica PlayerData ----------
 local registry
@@ -10827,6 +10835,7 @@ local function parseObjective(o)
 end
 
 local function readBoard()
+    ensureQuests()   -- ⭐ v9.62: กัน QUESTS ว่าง (config ยังไม่โหลด) → objective[0]
     local d = pdata()
     local bb = d and d.QuestData and d.QuestData.BountyBoard
     if type(bb)~="table" or type(bb.QuestOrder)~="table" then return nil,"อ่าน BountyBoard ไม่ได้" end
@@ -12296,9 +12305,10 @@ local function doBounty(b)
             tostring(o.cur), tostring(o.goal), o.done and "✓" or "✗")
     end
     QL(("🎯 ทำเควส %s [★%d] — objective[%d]: %s"):format(b.id, b.rank, #(c0.objectives or {}), table.concat(od, " | ")))
-    -- ⭐ v9.61: ทำ objective ทีละตัว "เรียงลำดับ" (ตัวที่ยังไม่ done) จนครบ → เคลม → จบเควสนี้
-    --    (ไม่เลือกใหม่ทุก pass, ไม่สลับตัว — เหมือนที่ user ต้องการ: int→raid→summon ทีละอันจนครบ)
     local n = #(c0.objectives or {})
+    -- ⭐ v9.62: objective[0] = config เควสยังโหลดไม่ได้ → ข้ามรอบนี้ (ไม่ gaveUp, รอบหน้าลองใหม่ตอน config พร้อม)
+    if n == 0 then QL("  ⚠️ objective[0] — config เควสยังไม่พร้อม → ข้ามรอบนี้ (ไม่เลิกถาวร)"); return end
+    -- ⭐ v9.61: ทำ objective ทีละตัว "เรียงลำดับ" (ตัวที่ยังไม่ done) จนครบ → เคลม → จบเควสนี้
     for i = 1, n do
         if not running then return end
         local cur = bountyById(b.id); if not cur then return end
