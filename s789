@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.72"
+local SCRIPT_VERSION = "v9.73"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10922,7 +10922,8 @@ end
 _G.AE_BOUNTY_READ  = readBoard                      -- คืน list ของ board (มี .rank/.completed/.objectives[].done)
 _G.AE_BOUNTY_GOLD  = gold                           -- gold ปัจจุบัน
 _G.AE_BOUNTY_DO_THRESHOLD = DO_THRESHOLD            -- 3 = ทำ Legendary+
-_G.AE_BOUNTY_CLAIM = function(id) L("🏆 เคลม "..tostring(id)); return fireNode("BOUNTY_BOARD_CLAIM_QUEST", id, false) end
+-- ⭐ v9.72: remote เคลมจริง (จาก spy) = QUEST_CLAIM, "BountyBoard", id (ไม่ใช่ BOUNTY_BOARD_CLAIM_QUEST ที่เดาไว้)
+_G.AE_BOUNTY_CLAIM = function(id) L("🏆 เคลม "..tostring(id)); return fireNode("QUEST_CLAIM", "BountyBoard", id) end
 
 -- ⭐ v9.72: SPY จับ remote จริง — รัน _G.AE_BOUNTY_SPY(30) แล้วกดปุ่มเคลมเขียว/ซื้อของ 1 ครั้ง จะโชว์ remote จริง
 _G.AE_BOUNTY_SPY = function(sec)
