@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.54"
+local SCRIPT_VERSION = "v9.55"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10813,21 +10813,27 @@ function _G.AE_BOUNTY_REROLL(id)
 end
 
 function _G.AE_BOUNTY_REROLL_SUB()
+    _G.AE_BOUNTY_REROLL_BUSY = true
     task.spawn(function()
-        local guard=0
-        while guard<30 do guard=guard+1
-            local board=readBoard(); if not board then L("อ่าน board ไม่ได้"); return end
-            local target
-            for _, b in ipairs(board) do if b.rank<DO_THRESHOLD and not b.claimed and not b.completed then target=b; break end end
-            if not target then L("✅ 3★+ หมดแล้ว"); return end
-            if gold()<REROLL_COST then L("💰 Gold หมด — หยุด"); return end
-            local before=target.id
-            _G.AE_BOUNTY_REROLL(target.id)
-            local t0=tick()
-            repeat task.wait(0.5) until tick()-t0>5 or (function() local nb=readBoard(); if not nb then return false end
-                for _,b in ipairs(nb) do if b.id~=before then return true end end return false end)()
-            task.wait(0.4)
+        local function body()
+            local guard=0
+            while guard<30 do guard=guard+1
+                local board=readBoard(); if not board then L("อ่าน board ไม่ได้"); return end
+                local target
+                for _, b in ipairs(board) do if b.rank<DO_THRESHOLD and not b.claimed and not b.completed then target=b; break end end
+                if not target then L(("✅ ครบเกณฑ์ %d★ แล้ว"):format(DO_THRESHOLD)); return end
+                if gold()<REROLL_COST then L("💰 Gold หมด — หยุด reroll"); return end
+                -- ⭐ v9.55: gold ลด = reroll สำเร็จ | gold ไม่ลด = ครบโควต้า reroll วันนี้ (10/วัน) → หยุด
+                local g0 = gold()
+                _G.AE_BOUNTY_REROLL(target.id)
+                task.wait(1.3)   -- รอ server ประมวลผล + gold/board อัปเดต
+                if gold() >= g0 then L("🚫 reroll ไม่ได้ (gold ไม่ลด = ครบโควต้าวันนี้/บล็อก) — หยุด"); return end
+                task.wait(0.3)
+            end
+            L("⚠️ reroll ครบ 30 รอบ — หยุดกันลูป")
         end
+        pcall(body)
+        _G.AE_BOUNTY_REROLL_BUSY = false
     end)
 end
 
@@ -12174,12 +12180,15 @@ local function doObjective(o)
     stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อนเสมอ
     if o.type == "Summon" then
         local need = tonumber(o.goal) or 1
+        local total = 0   -- ⭐ v9.55: นับสะสมข้ามรอบ (ไม่ใช่ต่อ call)
         for attempt=1,6 do
             if not running then break end
+            local want = need - total
             local done = 0
-            if _G.AE_BOUNTY_SUMMON then local ok,r = pcall(_G.AE_BOUNTY_SUMMON, need); if ok then done = tonumber(r) or 0 end end
-            QL(("  🎰 Summon %d/%d (รอบ %d)"):format(done, need, attempt))
-            if done >= need then break end
+            if _G.AE_BOUNTY_SUMMON then local ok,r = pcall(_G.AE_BOUNTY_SUMMON, want); if ok then done = tonumber(r) or 0 end end
+            total = total + done
+            QL(("  🎰 Summon รวม %d/%d (+%d รอบ %d)"):format(total, need, done, attempt))
+            if total >= need then break end
             -- currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ ~4 นาที แล้วกลับมาสุ่มต่อ
             QL("  🪙 currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ 4 นาที")
             if _G.AE_VILLAIN_RUN then pcall(_G.AE_VILLAIN_RUN, 1) end
@@ -12273,18 +12282,11 @@ end
 -- ---------- 1 รอบเควส: reroll<3★ → ทำ 3★+ ทุกอัน ----------
 local function questCycle()
     local TH = tonumber(_G.AE_BOUNTY_DO_THRESHOLD) or 4   -- ⭐ ทำแค่ 4★ (Mythic)
-    -- reroll ตัวต่ำกว่าเกณฑ์
+    -- reroll ตัวต่ำกว่าเกณฑ์ — รอจน reroll จบจริง (busy flag) ไม่รอ 40s เปล่าเมื่อ reroll หมดโควต้า
     QL(("🎲 reroll เควสต่ำกว่า %d★..."):format(TH))
     if _G.AE_BOUNTY_REROLL_SUB then pcall(_G.AE_BOUNTY_REROLL_SUB) end
     local t0 = tick()
-    while running and tick()-t0 < 40 do
-        local board = readBoard(); local hasSub = false
-        if board then for _,b in ipairs(board) do
-            if b.rank<TH and not b.claimed and not b.completed then hasSub=true; break end
-        end end
-        if not hasSub then break end
-        task.wait(2)
-    end
+    while running and _G.AE_BOUNTY_REROLL_BUSY and tick()-t0 < 60 do task.wait(1) end
     -- ทำแต่ละ TH★+
     local board = readBoard()
     if not board then QL("❌ อ่าน board ไม่ได้"); return false end
@@ -12362,7 +12364,8 @@ _G.AE_QUEST_RUN = function()
     task.spawn(function()
         QL("🎯🎯 เริ่มโหมดทำเควส (Bounty Board)")
         notify("🎯 ทำเควส", "เริ่มทำเควสรายวัน", 5)
-        -- เฟส 1: เควสรายวัน 3★+
+        -- เฟส 1: เควสรายวัน (ทำแค่ 4★) — หยุดเมื่อครบ หรือทำไม่คืบ 3 รอบติด
+        local prevLeft, stall = math.huge, 0
         for cycle=1,25 do
             if not running or MYGEN ~= _G.AE_SCRIPT_GEN then break end
             local did = questCycle()
@@ -12371,14 +12374,24 @@ _G.AE_QUEST_RUN = function()
             if board then for _,b in ipairs(board) do if b.rank>=TH and not b.claimed then left=left+1 end end end
             QL(("📊 รอบ %d — เควส %d★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, TH, left))
             if left == 0 then QL("✅ เควสครบทุกอันแล้ว"); break end
+            -- ⭐ v9.55: ถ้าจำนวนที่เหลือไม่ลดลง (ทำไม่คืบ/route ไม่ตรง/ติด cooldown) → กันวนเปล่า
+            if left >= prevLeft then stall = stall + 1 else stall = 0 end
+            prevLeft = left
+            if stall >= 3 then
+                QL("⚠️ ทำเควสไม่คืบ 3 รอบติด (route ไม่ตรง/ติด cooldown) → ไปเฟส 2 ก่อน เดี๋ยววนกลับมาใหม่")
+                break
+            end
             if not did then task.wait(10) end
         end
         if not running then return end
         -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อ Trait Crystal (จนครบ 25/วัน) → ฟาม fallback ~10 นาที"
         --    Challenge มี cooldown ~10 นาที/รอบ + ครบ 10/วัน → ทยอยทำเองทุกช่วง จนหมดเวลาจ้าง
-        QL("🔁 เฟส 2: วน Challenge (cooldown ~10 นาที) + ซื้อ Trait Crystal + ฟาม fallback")
-        notify("🎯 ทำเควส", "เควสรายวันครบ → วน Challenge + ฟาม", 6)
+        QL("🔁 เฟส 2: วน เควส4★ค้าง + Challenge (cooldown ~10 นาที) + ซื้อ Trait Crystal + ฟาม fallback")
+        notify("🎯 ทำเควส", "วนเควส + Challenge + ฟาม", 6)
         while running and MYGEN == _G.AE_SCRIPT_GEN do
+            -- 0) กลับมาลองทำเควส 4★ ที่ยังค้าง (เมื่อก่อนติด cooldown/ทำไม่ได้ → ตอนนี้อาจทำได้แล้ว)
+            questCycle()
+            if not running then break end
             -- 1) ลอง challenge ทุกตัว (ตัวที่พ้น cooldown/ยังไม่ครบ = เข้าเล่น) — จบแล้วอยู่ล็อบบี้
             tryChallengesOnce()
             if not running then break end
