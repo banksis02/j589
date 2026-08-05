@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.66"
+local SCRIPT_VERSION = "v9.67"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12302,7 +12302,8 @@ local function doObjective(o, bid)
         local m = uiMap(o.map); local w = tonumber(o.wave) or 15
         QL(("  ⚔️ Infinite %s → wave %d"):format(m, w))
         if _G.AE_INF_RUN then pcall(_G.AE_INF_RUN, m, w) end
-        return waitStageCycle(100, 900)   -- false = เข้าด่านไม่ได้
+        -- ⭐ v9.66: timeout ยาว (wave สูงใช้เวลานาน) — ปกติ INF ออกเองตอนถึง wave เป้า, timeout แค่กันค้าง
+        return waitStageCycle(120, 3000)   -- 50 นาที (wave 60 ใช้เวลานาน)
 
     elseif o.type == "FinishMap" then
         local gm = tostring(o.gamemode)
@@ -12310,17 +12311,17 @@ local function doObjective(o, bid)
             local m, a = uiMap(o.map), actNum(o.actName)
             QL(("  🐉 Raid %s Act %d"):format(m, a))
             if _G.AE_RAID_RUN then pcall(_G.AE_RAID_RUN, m, a) end
-            return waitStageCycle(100, 600)
+            return waitStageCycle(120, 1200)   -- 20 นาที
         elseif gm == "Challenge" then
             local kind = (tostring(o.challengeType)=="Daily") and "Daily" or "Regular"
             QL(("  🏆 Challenge %s"):format(kind))
             if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, 1) end
-            return waitStageCycle(100, 600)   -- ⭐ false = ติด cooldown/เข้าไม่ได้ → ข้ามเควสนี้
+            return waitStageCycle(45, 1200)   -- 45s เข้า (cooldown = ข้าม) / เล่น 20 นาที
         else  -- Story
             local m = uiMap(o.map)
             QL(("  📖 Story %s (%s)"):format(m, tostring(o.difficulty)))
             if _G.AE_STORY_RUN then pcall(_G.AE_STORY_RUN, m, 1) end
-            return waitStageCycle(100, 600)
+            return waitStageCycle(120, 1200)   -- 20 นาที
         end
     end
     QL("  ❓ objective ไม่รู้จัก: "..tostring(o.type))
