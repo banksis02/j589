@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.51"
+local SCRIPT_VERSION = "v9.52"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12261,25 +12261,22 @@ local function questCycle()
     return didAny
 end
 
--- ---------- Challenge ทั้งหมด (Regular 3×10, Daily 1) ----------
-local function runAllChallenges()
+-- ---------- ลอง Challenge ทุกตัว "รอบละ 1 ครั้ง" (มี cooldown ~10 นาที/ครบ limit = ข้าม) ----------
+--   ครบ 10 รอบ/วัน จะทำได้เองเพราะวนกลับมาลองใหม่ทุกช่วง (สลับกับ fallback)
+local function tryChallengesOnce()
     for idx=1,3 do
-        for run=1,10 do
-            if not running then return end
-            QL(("  🏆 Regular #%d รอบ %d/10"):format(idx, run))
-            stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อน
-            if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", idx) end
-            if not waitStageCycle(60, 600) then
-                QL(("  Regular #%d เข้าไม่ได้ (ครบ limit?) → ข้าม"):format(idx)); break
-            end
-            task.wait(3)
-        end
+        if not running then return end
+        QL(("  🏆 ลอง Regular #%d"):format(idx))
+        stopAllGameplay()
+        if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", idx) end
+        if waitStageCycle(45, 600) then task.wait(3)
+        else QL(("  Regular #%d ยังไม่พร้อม (cooldown/ครบวันนี้) → ข้าม"):format(idx)) end
     end
     if not running then return end
-    QL("  🏆 Daily x1")
+    QL("  🏆 ลอง Daily")
     stopAllGameplay()
     if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Daily", 1) end
-    waitStageCycle(60, 600)
+    waitStageCycle(45, 600)
 end
 
 -- ---------- fallback farm ----------
@@ -12296,6 +12293,17 @@ local function runFallback(fb)
     else
         QL("⚠️ fallback ไม่รู้จัก/ไม่พร้อม: "..fb)
     end
+end
+
+-- ฟาม fallback เป็นช่วงเวลา (นาที) แล้วหยุด — ให้ challenge cooldown หมดพอดี
+local function farmFallbackFor(mins)
+    if not running then return end
+    local fb = _G.AE_QUEST_FALLBACK_MODE or "villain"
+    QL(("🌾 ฟาม fallback (%s) ~%d นาที (รอ challenge cooldown)"):format(tostring(fb), mins))
+    runFallback(fb)   -- เริ่มฟาม (ลูป async)
+    local t0 = tick()
+    while running and tick()-t0 < mins*60 do task.wait(5) end
+    stopAllGameplay()   -- หยุดฟามก่อนไปลอง challenge รอบใหม่
 end
 
 -- ---------- STOP ----------
@@ -12325,21 +12333,26 @@ _G.AE_QUEST_RUN = function()
             if not did then task.wait(10) end
         end
         if not running then return end
-        -- เฟส 2: Challenge ทั้งหมด
-        QL("🏆 เฟส 2: ทำ Challenge ทั้งหมด (Regular 3×10, Daily 1)")
-        runAllChallenges()
-        if not running then return end
-        -- เฟส 3: ซื้อ Gold Shop (ต้องอยู่ล็อบบี้ — หยุดระบบเล่น + กลับล็อบบี้ก่อน)
-        QL("🛒 เฟส 3: ซื้อ Gold Shop (Trait Crystal)")
-        stopAllGameplay()
-        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY); task.wait(6) end
-        if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
-        if not running then return end
-        -- เฟส 4: fallback farm
-        local fb = _G.AE_QUEST_FALLBACK_MODE or "villain"
-        QL("🌾 เฟส 4: fallback farm = "..tostring(fb))
-        notify("🎯 ทำเควส", "เควสครบ → fallback "..tostring(fb), 6)
-        runFallback(fb)
+        -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อของ (ทุก ~1 ชม.) → ฟาม fallback ~10 นาที"
+        --    Challenge มี cooldown ~10 นาที/รอบ + ครบ 10/วัน → ทยอยทำเองทุกช่วง จนหมดเวลาจ้าง
+        QL("🔁 เฟส 2: วน Challenge (cooldown ~10 นาที) + ซื้อของ + ฟาม fallback สลับกัน")
+        notify("🎯 ทำเควส", "เควสรายวันครบ → วน Challenge + ฟาม", 6)
+        local shopT = 0   -- ซื้อของครั้งล่าสุด (0 = ยังไม่เคย → ซื้อรอบแรกเลย)
+        while running and MYGEN == _G.AE_SCRIPT_GEN do
+            -- 1) ลอง challenge ทุกตัว (ตัวที่พ้น cooldown/ยังไม่ครบ = เข้าเล่น)
+            tryChallengesOnce()
+            if not running then break end
+            -- 2) ซื้อ Trait Crystal ทุก ~1 ชม. (restock รายวัน — เช็คบ่อยไม่เสียหาย)
+            if tick()-shopT > 3600 then
+                stopAllGameplay()
+                if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY); task.wait(5) end
+                if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
+                shopT = tick()
+            end
+            if not running then break end
+            -- 3) ฟาม fallback ~10 นาที (ให้ challenge cooldown หมดพอดี) แล้ววนกลับไปลองใหม่
+            farmFallbackFor(10)
+        end
         running = false
     end)
 end
