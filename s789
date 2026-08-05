@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.50"
+local SCRIPT_VERSION = "v9.51"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12102,14 +12102,32 @@ local function inGame()
     return false
 end
 
--- รอเข้าด่าน (สูงสุด enterT) แล้วรอกลับล็อบบี้ (สูงสุด playT) — คืน true ถ้าเข้าด่าน+จบครบ
+-- ⭐ v9.51: เจอหน้าจบเกม (Victory/Defeat) ไหม — ด่านจบแล้วต้องออก ไม่งั้นค้าง
+local function endScreenUp()
+    local ok, r = pcall(function()
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, l in ipairs(g:GetDescendants()) do
+                    if l:IsA("TextLabel") and l.Visible and (l.Text=="Victory" or l.Text=="Defeat") then return true end
+                end
+            end
+        end
+        return false
+    end)
+    return ok and r
+end
+
+-- รอเข้าด่าน (สูงสุด enterT) แล้วรอจบด่าน (playT) — จบเมื่อออกจากด่าน/เจอหน้า Victory/Defeat
 local function waitStageCycle(enterT, playT)
     local t0 = tick()
-    while running and not inGame() and tick()-t0 < enterT do task.wait(2) end
-    if not inGame() then QL("  ⚠️ ไม่เข้าด่านใน "..enterT.."s (ข้าม)"); return false end
+    while running and not inGame() and not endScreenUp() and tick()-t0 < enterT do task.wait(2) end
+    if not inGame() and not endScreenUp() then QL("  ⚠️ ไม่เข้าด่านใน "..enterT.."s (ข้าม)"); return false end
     QL("  ▶ เข้าด่านแล้ว — เล่นจนจบ...")
     t0 = tick()
-    while running and inGame() and tick()-t0 < playT do task.wait(3) end
+    while running and inGame() and tick()-t0 < playT do
+        if endScreenUp() then QL("  🏁 เจอหน้าจบเกม → จบรอบ"); break end
+        task.wait(3)
+    end
     task.wait(2)
     return true
 end
@@ -12128,6 +12146,15 @@ local function stopAllGameplay()
         if _G[fn] then pcall(_G[fn]) end
     end
     task.wait(0.6)
+    -- ⭐ v9.51: ต้อง "กลับล็อบบี้จริง" ก่อนเริ่มอันใหม่ (ไม่งั้นเข้าด่านผิด/ค้างหน้า Victory)
+    --    backToLobby ปลอดภัย: เช็ค inLobby ก่อน คืนเร็วถ้าอยู่ล็อบบี้ + จัดการปุ่ม Exit/Confirm
+    if (inGame() or endScreenUp()) and _G.AE_BACK_TO_LOBBY then
+        QL("  🏠 ออกจากด่าน/หน้าจบเกม → กลับล็อบบี้ก่อน")
+        pcall(_G.AE_BACK_TO_LOBBY)
+        local t0 = tick()
+        while (inGame() or endScreenUp()) and tick()-t0 < 30 do task.wait(2) end
+    end
+    task.wait(1)
 end
 
 -- ---------- ทำ 1 objective ----------
