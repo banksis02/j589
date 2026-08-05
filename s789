@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.64"
+local SCRIPT_VERSION = "v9.65"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12229,15 +12229,17 @@ local function bountyById(id)
     return nil
 end
 
--- ⭐ v9.50: หยุดทุกระบบเล่นก่อนเริ่มอันใหม่ (กันทับกัน — player เก่า + villain place/upgrade ค้าง)
-local function stopAllGameplay()
+-- หยุดแค่ loop เฝ้า/วาง/อัพ (ไม่ออกจากด่าน) — ใช้ตอน "อยู่ในด่านถูกต้องอยู่แล้ว"
+local function stopLoops()
     for _,fn in ipairs({ "AE_INF_STOP","AE_STORY_STOP","AE_RAID_STOP","AE_CHAL_STOP",
                          "AE_VILLAIN_RUN_STOP","AE_VILLAIN_PLACE_STOP","AE_VILLAIN_UPGRADE_STOP" }) do
         if _G[fn] then pcall(_G[fn]) end
     end
-    task.wait(0.6)
-    -- ⭐ v9.51: ต้อง "กลับล็อบบี้จริง" ก่อนเริ่มอันใหม่ (ไม่งั้นเข้าด่านผิด/ค้างหน้า Victory)
-    --    backToLobby ปลอดภัย: เช็ค inLobby ก่อน คืนเร็วถ้าอยู่ล็อบบี้ + จัดการปุ่ม Exit/Confirm
+    task.wait(0.4)
+end
+-- หยุด loop + ออกจากด่าน (กลับล็อบบี้จริง) — ใช้ตอนต้องไปด่านอื่น
+local function stopAllGameplay()
+    stopLoops()
     if (inGame() or endScreenUp()) and _G.AE_BACK_TO_LOBBY then
         QL("  🏠 ออกจากด่าน/หน้าจบเกม → กลับล็อบบี้ก่อน")
         pcall(_G.AE_BACK_TO_LOBBY)
@@ -12249,9 +12251,21 @@ end
 
 -- ---------- ทำ 1 objective ----------
 local function doObjective(o)
-    stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่า/ออกจากด่านฟามก่อน (ครั้งเดียว)
+    -- ⭐ v9.65: ถ้าอยู่ในด่านที่ objective นี้ต้องการอยู่แล้ว → ไม่ต้องออก แค่หยุด loop เก่าแล้วเล่นต่อ
+    --    (เดิม stopAllGameplay สั่งกลับล็อบบี้ทุกครั้ง → ออกจากด่านที่ถูกอยู่แล้ว → เข้า-ออกวน)
+    local wantStage = (o.type == "ClearWave") or (o.type == "FinishMap" and tostring(o.gamemode) ~= "Challenge")
+    local targetMap = uiMap(o.map or "")
+    local curStage = ""
+    if _G.AE_GET_STAGE then local ok,s = pcall(_G.AE_GET_STAGE); if ok and s then curStage = tostring(s) end end
+    if wantStage and targetMap ~= "" and curStage ~= "" and curStage:find(targetMap, 1, true) then
+        QL(("  ✅ อยู่ในด่านถูกต้องแล้ว (%s) → เล่นต่อเลย (ไม่ออกจากด่าน)"):format(curStage))
+        stopLoops()   -- หยุด loop เก่า แต่ไม่ออกจากด่าน
+    else
+        stopAllGameplay()   -- อยู่ด่านผิด/ฟาม/ล็อบบี้ → ออกกลับล็อบบี้ก่อนนำทางเข้าด่านถูก
+        if not running then return false end
+        QL(("  🚪 อยู่ล็อบบี้แล้ว → กำลังนำทางเข้าด่านเควส (%s)..."):format(tostring(o.type)))
+    end
     if not running then return false end
-    QL(("  🚪 อยู่ล็อบบี้แล้ว → กำลังนำทางเข้าด่านเควส (%s)..."):format(tostring(o.type)))
     if o.type == "Summon" then
         local need = tonumber(o.goal) or 1
         local total = 0   -- ⭐ v9.55: นับสะสมข้ามรอบ (ไม่ใช่ต่อ call)
