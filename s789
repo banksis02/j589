@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.58"
+local SCRIPT_VERSION = "v9.59"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -950,12 +950,9 @@ if GAME_ID == "anime_expeditions" then
         return stage, mode, difficulty
     end
 
-    -- ⭐ v9.56: เช็คจาก RightGameHUD.Enabled ตรงๆ (เดิมใช้ getStageInfo()~=nil ซึ่งดู "ชื่อด่าน"
-    --    ที่หาจาก label " - Act " → โหมด Infinite ไม่มี Act → คืน nil → นึกว่าอยู่ล็อบบี้ทั้งที่อยู่ในด่าน)
-    local function isInGame()
-        local rh = player.PlayerGui:FindFirstChild("RightGameHUD")
-        return rh ~= nil and rh.Enabled == true
-    end
+    -- ⭐ v9.59: ย้อนกลับของเดิม — getStageInfo (RightGameHUD.Enabled + มี label ชื่อด่าน " - Act ")
+    --    v9.56 เปลี่ยนเป็นเช็คแค่ RightGameHUD.Enabled ทำให้ false-positive ตอนล็อบบี้ (HUD ค้าง) → นึกว่าอยู่ในด่าน
+    local function isInGame() return getStageInfo() ~= nil end
     local function isInLobby() return not isInGame() end
 
     -- Expose สำหรับใช้จากภายนอก
