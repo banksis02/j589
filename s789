@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.65"
+local SCRIPT_VERSION = "v9.66"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12250,7 +12250,7 @@ local function stopAllGameplay()
 end
 
 -- ---------- ทำ 1 objective ----------
-local function doObjective(o)
+local function doObjective(o, bid)
     -- ⭐ v9.65: ถ้าอยู่ในด่านที่ objective นี้ต้องการอยู่แล้ว → ไม่ต้องออก แค่หยุด loop เก่าแล้วเล่นต่อ
     --    (เดิม stopAllGameplay สั่งกลับล็อบบี้ทุกครั้ง → ออกจากด่านที่ถูกอยู่แล้ว → เข้า-ออกวน)
     local wantStage = (o.type == "ClearWave") or (o.type == "FinishMap" and tostring(o.gamemode) ~= "Challenge")
@@ -12267,24 +12267,34 @@ local function doObjective(o)
     end
     if not running then return false end
     if o.type == "Summon" then
-        local need = tonumber(o.goal) or 1
-        local total = 0   -- ⭐ v9.55: นับสะสมข้ามรอบ (ไม่ใช่ต่อ call)
-        for attempt=1,6 do
+        local goal = tonumber(o.goal) or 1
+        -- ⭐ v9.66: ยืนยันจาก "board จริง" ว่า objective ขยับถึง goal ไหม (ไม่นับเองในสคริปต์ = กันนับหลอก)
+        local function summonCur()
+            local board = readBoard(); if not board then return nil end
+            for _,bb in ipairs(board) do if bb.id==bid then
+                for _,oo in ipairs(bb.objectives or {}) do if oo.type=="Summon" then return tonumber(oo.cur) or 0 end end
+            end end
+            return nil
+        end
+        for attempt=1,10 do
             if not running then break end
-            local want = need - total
-            local done = 0
-            if _G.AE_BOUNTY_SUMMON then local ok,r = pcall(_G.AE_BOUNTY_SUMMON, want); if ok then done = tonumber(r) or 0 end end
-            total = total + done
-            QL(("  🎰 Summon รวม %d/%d (+%d รอบ %d)"):format(total, need, done, attempt))
-            if total >= need then break end
-            -- currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ ~4 นาที แล้วกลับมาสุ่มต่อ
-            QL("  🪙 currency ไม่พอ → ฟาร์ม Villain Act1 เก็บเหรียญ 4 นาที")
-            if _G.AE_VILLAIN_RUN then pcall(_G.AE_VILLAIN_RUN, 1) end
-            local t0=tick(); while running and tick()-t0<240 do task.wait(5) end
-            if _G.AE_VILLAIN_RUN_STOP then pcall(_G.AE_VILLAIN_RUN_STOP) end
-            task.wait(3)
-            if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
-            task.wait(6)
+            local before = summonCur()
+            if before and before >= goal then QL(("  ✅ Summon ครบ (ยืนยัน board %d/%d)"):format(before, goal)); break end
+            local need = goal - (before or 0)
+            QL(("  🎰 Summon objective cur=%s/%d → สุ่มอีก %d (รอบ %d)"):format(tostring(before), goal, need, attempt))
+            local got = 0
+            if _G.AE_BOUNTY_SUMMON then local ok,r = pcall(_G.AE_BOUNTY_SUMMON, need); if ok then got = tonumber(r) or 0 end end
+            task.wait(1.5)   -- รอ server อัปเดต progress
+            local after = summonCur()
+            QL(("  🎰 ยิงสุ่ม %d → objective cur %s→%s"):format(got, tostring(before), tostring(after)))
+            if after and after >= goal then QL("  ✅ Summon ครบ (ยืนยัน board)"); break end
+            -- ยิงสุ่มไปแล้วแต่ objective ไม่ขยับ = สุ่มไม่ติด (currency หมด/สุ่มในด่านไม่ได้)
+            if (not after) or (before and after and after <= before) then
+                QL("  🪙 objective ไม่ขยับ (currency หมด?) → ฟาร์ม Villain Act1 4 นาที")
+                if _G.AE_VILLAIN_RUN then pcall(_G.AE_VILLAIN_RUN, 1) end
+                local t0=tick(); while running and tick()-t0<240 do task.wait(5) end
+                stopAllGameplay()   -- กลับล็อบบี้ (สุ่มต้องอยู่ล็อบบี้)
+            end
         end
         return true
 
@@ -12344,7 +12354,7 @@ local function doBounty(b)
         if not running then return end
         if not o.done then
             QL(("  → objective %d/%d: %s"):format(i, #objs, tostring(o.text or o.type)))
-            if not doObjective(o) then
+            if not doObjective(o, b.id) then
                 QL("  ⏭ objective นี้ยังทำไม่ได้ (cooldown/เข้าไม่ได้) → ข้ามเควสนี้ก่อน"); return
             end
         end
