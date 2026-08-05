@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.68"
+local SCRIPT_VERSION = "v9.69"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12207,6 +12207,21 @@ local function endScreenUp()
     return ok and r
 end
 
+-- ⭐ v9.69: มี label ที่เห็นในจอ (ScreenGui ที่เปิด) ที่มีคำ needle ไหม — ใช้ดูว่าอยู่ในด่านชนิดไหน
+local function guiHasText(needle)
+    local found = false
+    pcall(function()
+        for _, g in ipairs(player.PlayerGui:GetChildren()) do
+            if g:IsA("ScreenGui") and g.Enabled then
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible and tostring(d.Text):find(needle, 1, true) then found = true; return end
+                end
+            end
+        end
+    end)
+    return found
+end
+
 -- รอเข้าด่าน (สูงสุด enterT) แล้วรอจบด่าน (playT) — จบเมื่อออกจากด่าน/เจอหน้า Victory/Defeat
 local function waitStageCycle(enterT, playT)
     local t0 = tick()
@@ -12251,6 +12266,12 @@ end
 
 -- ---------- ทำ 1 objective ----------
 local function doObjective(o, bid)
+    -- ⭐ v9.69: Challenge objective ต้องชนะหลายรอบ (cooldown ~10 นาที/รอบ) ทำใน doObjective ไม่ได้ (เด้งเข้า-ออก)
+    --    → ไม่ทำตรงนี้ ปล่อยให้เฟส 2 (tryChallengesOnce วน challenge) สะสมชนะให้เอง → พอครบ bounty completed → questCycle เคลม
+    if o.type == "FinishMap" and tostring(o.gamemode) == "Challenge" then
+        QL("  🏆 Challenge objective — ให้เฟส 2 (วน challenge ทุก ~10 นาที) สะสมชนะเอง (ข้ามรอบนี้)")
+        return true   -- คืน true = ไม่ block เควส (objective อื่นทำต่อได้), เฟส 2 จัดการ challenge
+    end
     -- ⭐ v9.65/68: ถ้าอยู่ในด่านที่ objective นี้ต้องการอยู่แล้ว → ไม่ต้องออก แค่หยุด loop เก่าแล้วเล่นต่อ
     --    (เดิม stopAllGameplay สั่งกลับล็อบบี้ทุกครั้ง → ออกจากด่านที่ถูกอยู่แล้ว → เข้า-ออกวน)
     local curStage, curMode = "", ""
@@ -12261,9 +12282,10 @@ local function doObjective(o, bid)
         local targetMap = uiMap(o.map or "")   -- Story/Infinite/แมพปกติ → เทียบชื่อด่าน
         alreadyThere = targetMap ~= "" and curStage ~= "" and curStage:find(targetMap, 1, true) ~= nil
     elseif o.type == "FinishMap" and gmc == "Challenge" then
-        alreadyThere = (curMode == "Challenge")   -- ⭐ v9.68: อยู่ใน Challenge อยู่แล้ว → เล่นต่อ (ชนะ = นับ)
+        -- ⭐ v9.69: อยู่ในด่าน + เห็นคำ "Challenge" ในจอ = อยู่ใน Challenge อยู่แล้ว → เล่นต่อ (ชนะ = นับ)
+        alreadyThere = inGame() and guiHasText("Challenge")
     elseif o.type == "FinishMap" and gmc == "Raid" then
-        alreadyThere = (curMode == "Raid")        -- อยู่ใน Raid อยู่แล้ว → เล่นต่อ
+        alreadyThere = inGame() and (curMode == "Raid" or guiHasText("Raid"))
     end
     if alreadyThere then
         QL(("  ✅ อยู่ในด่านถูกต้องแล้ว (%s/%s) → เล่นต่อเลย (ไม่ออกจากด่าน)"):format(curStage, curMode))
