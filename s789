@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.63"
+local SCRIPT_VERSION = "v9.64"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10767,17 +10767,27 @@ local function ensureQuests()
 end
 ensureQuests()
 
--- ---------- replica PlayerData ----------
+-- ---------- replica PlayerData (⭐ v9.64: re-capture registry เมื่อหาไม่เจอ — กัน stale หลังเปลี่ยนด่าน) ----------
 local registry
-pcall(function()
-    local RC = require(RS.Shared.ReplicaClient)
-    for _, up in pairs(debug.getupvalues(RC.FromId)) do
-        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+local function captureRegistry()
+    pcall(function()
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+        end
+    end)
+end
+captureRegistry()
+local function findRep(tok)
+    if registry then
+        for _, r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t==tok then return r end end
     end
-end)
+    return nil
+end
 local function pdata()
-    if not registry then return nil end
-    for _, r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t=="PlayerData" then return r.Data end end
+    local r = findRep("PlayerData")
+    if not r then captureRegistry(); r = findRep("PlayerData") end   -- ⭐ re-capture on miss
+    return r and r.Data or nil
 end
 
 -- ---------- remote _updateNode ----------
@@ -12304,37 +12314,31 @@ local function tryClaim(id)
     local c = bountyById(id)
     return (not c) or c.claimed
 end
+-- ⭐ v9.64 (ตาม user): "จำ" objective จากตอนอ่าน board ที่ล็อบบี้ → เข้าด่านเล่นตามที่จำ
+--    ไม่ re-read board กลางด่าน (อ่านไม่ได้เพราะ registry ค้าง + ไม่จำเป็น เพราะมีข้อมูลแล้ว)
 local function doBounty(b)
-    -- 🔎 v9.60 DIAG: โชว์ objective ทั้งหมดของเควสนี้ (type/cur/goal/done) — ดูว่าตัวไหน done หลอก
-    local c0 = bountyById(b.id) or b
+    local objs = b.objectives or {}   -- ⭐ objective ที่จำไว้จากล็อบบี้ (cache)
     local od = {}
-    for _, o in ipairs(c0.objectives or {}) do
+    for _, o in ipairs(objs) do
         od[#od+1] = ("%s %s(%s/%s)%s"):format(tostring(o.type), tostring(o.map or o.challengeType or ""),
             tostring(o.cur), tostring(o.goal), o.done and "✓" or "✗")
     end
-    QL(("🎯 ทำเควส %s [★%d] — objective[%d]: %s"):format(b.id, b.rank, #(c0.objectives or {}), table.concat(od, " | ")))
-    local n = #(c0.objectives or {})
-    -- ⭐ v9.62: objective[0] = config เควสยังโหลดไม่ได้ → ข้ามรอบนี้ (ไม่ gaveUp, รอบหน้าลองใหม่ตอน config พร้อม)
-    if n == 0 then QL("  ⚠️ objective[0] — config เควสยังไม่พร้อม → ข้ามรอบนี้ (ไม่เลิกถาวร)"); return end
-    -- ⭐ v9.61: ทำ objective ทีละตัว "เรียงลำดับ" (ตัวที่ยังไม่ done) จนครบ → เคลม → จบเควสนี้
-    for i = 1, n do
+    QL(("🎯 ทำเควส %s [★%d] — objective[%d]: %s"):format(b.id, b.rank, #objs, table.concat(od, " | ")))
+    if #objs == 0 then QL("  ⚠️ objective[0] — config เควสยังไม่พร้อม → ข้ามรอบนี้"); return end
+    -- ทำ objective ทีละตัวเรียงลำดับ ตามข้อมูลที่จำไว้ (ไม่อ่าน board ใหม่กลางด่าน)
+    for i, o in ipairs(objs) do
         if not running then return end
-        local cur = bountyById(b.id); if not cur then return end
-        if cur.completed or cur.claimed then break end
-        local o = cur.objectives[i]
-        if o and not o.done then
-            QL(("  → objective %d/%d: %s"):format(i, n, tostring(o.text or o.type)))
+        if not o.done then
+            QL(("  → objective %d/%d: %s"):format(i, #objs, tostring(o.text or o.type)))
             if not doObjective(o) then
                 QL("  ⏭ objective นี้ยังทำไม่ได้ (cooldown/เข้าไม่ได้) → ข้ามเควสนี้ก่อน"); return
             end
         end
     end
-    -- ครบทุก objective → เคลมรางวัล
-    local cur = bountyById(b.id)
-    if cur and not cur.claimed then
-        if tryClaim(b.id) then QL("  ✅ เคลมรางวัลสำเร็จ")
-        else QL("  ⚠️ ทำครบแล้วยังเคลมไม่ได้ → เลิกทำเควสนี้ (ไม่วนซ้ำ)"); gaveUp[b.id] = true end
-    end
+    -- ครบทุก objective → กลับมาล็อบบี้แล้ว (player ออกเอง) → เคลมรางวัล
+    QL("  🏆 ทำครบทุก objective → เคลมรางวัล")
+    if tryClaim(b.id) then QL("  ✅ เคลมรางวัลสำเร็จ")
+    else QL("  ⚠️ เคลมไม่ผ่าน → เลิกทำเควสนี้ (ไม่วนซ้ำ)"); gaveUp[b.id] = true end
 end
 
 -- ---------- 1 รอบเควส: reroll<3★ → ทำ 3★+ ทุกอัน ----------
@@ -12427,19 +12431,24 @@ _G.AE_QUEST_RUN = function()
         for cycle=1,25 do
             if not running or MYGEN ~= _G.AE_SCRIPT_GEN then break end
             local did = questCycle()
-            local board = readBoard(); local left = 0
-            local TH = tonumber(_G.AE_BOUNTY_DO_THRESHOLD) or 4
-            if board then for _,b in ipairs(board) do if b.rank>=TH and not b.claimed then left=left+1 end end end
-            QL(("📊 รอบ %d — เควส %d★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, TH, left))
-            if left == 0 then QL("✅ เควสครบทุกอันแล้ว"); break end
-            -- ⭐ v9.55: ถ้าจำนวนที่เหลือไม่ลดลง (ทำไม่คืบ/route ไม่ตรง/ติด cooldown) → กันวนเปล่า
-            if left >= prevLeft then stall = stall + 1 else stall = 0 end
-            prevLeft = left
-            if stall >= 3 then
-                QL("⚠️ ทำเควสไม่คืบ 3 รอบติด (route ไม่ตรง/ติด cooldown) → ไปเฟส 2 ก่อน เดี๋ยววนกลับมาใหม่")
-                break
+            local board = readBoard()
+            -- ⭐ v9.64: อ่าน board ไม่ได้ (registry ค้าง) → ห้ามสรุปว่า "เควสครบ" → รอ+retry
+            if not board then
+                QL(("📊 รอบ %d — อ่าน board ไม่ได้ → รอ retry"):format(cycle)); task.wait(5)
+            else
+                local left = 0
+                local TH = tonumber(_G.AE_BOUNTY_DO_THRESHOLD) or 4
+                for _,b in ipairs(board) do if b.rank>=TH and not b.claimed then left=left+1 end end
+                QL(("📊 รอบ %d — เควส %d★+ ที่ยังไม่เคลมเหลือ %d"):format(cycle, TH, left))
+                if left == 0 then QL("✅ เควสครบทุกอันแล้ว"); break end
+                -- ⭐ v9.55: จำนวนไม่ลดลง (ทำไม่คืบ/route ไม่ตรง/cooldown) → กันวนเปล่า
+                if left >= prevLeft then stall = stall + 1 else stall = 0 end
+                prevLeft = left
+                if stall >= 3 then
+                    QL("⚠️ ทำเควสไม่คืบ 3 รอบติด → ไปเฟส 2 ก่อน เดี๋ยววนกลับมาใหม่"); break
+                end
+                if not did then task.wait(10) end
             end
-            if not did then task.wait(10) end
         end
         if not running then return end
         -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อ Trait Crystal (จนครบ 25/วัน) → ฟาม fallback ~10 นาที"
