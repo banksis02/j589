@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.74"
+local SCRIPT_VERSION = "v9.75"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11151,20 +11151,29 @@ local logBuf = {}
 local function L(s) s=tostring(s); print("[SHOP] "..s); table.insert(logBuf,s); if logSink then pcall(logSink,s) end end
 
 -- registry (คงคีย์ = id)
+-- ⭐ v9.74: re-capture registry เมื่อหาไม่เจอ (กัน stale หลังเปลี่ยนด่าน → findShop หาร้านไม่เจอ)
 local registry
-pcall(function()
-    local RC=require(RS.Shared.ReplicaClient)
-    for _,up in pairs(debug.getupvalues(RC.FromId)) do
-        if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
-    end
-end)
+local function captureRegistry()
+    pcall(function()
+        local RC=require(RS.Shared.ReplicaClient)
+        for _,up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end; if registry then break end end
+        end
+    end)
+end
+captureRegistry()
 
 local ReplicaSignal
 pcall(function() ReplicaSignal = RS.RemoteEvents.ReplicaSignal end)
 
+local function findByToken(tok)
+    if registry then for id,r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t==tok then return r, id end end end
+    return nil
+end
 local function pdata()
-    if not registry then return nil end
-    for _,r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t=="PlayerData" then return r.Data end end
+    local r = findByToken("PlayerData")
+    if not r then captureRegistry(); r = findByToken("PlayerData") end
+    return r and r.Data or nil
 end
 local function gold()
     local d=pdata(); local g=d and d.ItemData and d.ItemData.Gold
@@ -11172,18 +11181,22 @@ local function gold()
     return tonumber(g) or 0
 end
 
--- หา replica ร้านทอง → คืน id + ตาราง Items
+-- หา replica ร้านทอง → คืน id + ตาราง Items (re-capture registry ถ้าไม่เจอ)
 local function findShop()
-    if not registry then return nil end
-    for id,rep in pairs(registry) do
-        local ok,t=pcall(function() return rep.Token end)
-        if ok and t=="ShopData" then
-            local okd,d=pcall(function() return rep.Data end)
-            if okd and type(d)=="table" and d.DataKey==SHOP_DATAKEY then
-                local shop = d.Shops and d.Shops[SHOP_KEY]
-                if shop and type(shop.Items)=="table" then return id, shop.Items end
+    for attempt=1,2 do
+        if registry then
+            for id,rep in pairs(registry) do
+                local ok,t=pcall(function() return rep.Token end)
+                if ok and t=="ShopData" then
+                    local okd,d=pcall(function() return rep.Data end)
+                    if okd and type(d)=="table" and d.DataKey==SHOP_DATAKEY then
+                        local shop = d.Shops and d.Shops[SHOP_KEY]
+                        if shop and type(shop.Items)=="table" then return id, shop.Items end
+                    end
+                end
             end
         end
+        captureRegistry()   -- ⭐ re-capture แล้วลองใหม่
     end
     return nil
 end
@@ -11224,18 +11237,15 @@ function _G.AE_SHOP_BUY()
         elseif stock then
             local remain = stock - boughtCount(name)
             if remain > 0 and price >= 0 then
-                -- ซื้อได้กี่ชิ้นโดยยังเหลือ > RESERVE
-                local affordable = price > 0 and math.floor((gold() - RESERVE) / price) or remain
-                local qty = math.min(remain, math.max(0, affordable))
-                if qty > 0 then
-                    if buy(shopId, idx, qty) then
-                        boughtAny = boughtAny + 1; spent = spent + qty*price
-                        L(("  ✅ #%s %s x%d (-%d)"):format(tostring(idx), tostring(name), qty, qty*price))
+                -- ⭐ v9.74: ซื้อ "ทีละ 1 ชิ้น" วนจนครบ remain (เหมือน fuel + ที่ spy จับได้ qty=1) เก็บ reserve
+                for _=1, remain do
+                    if gold() - price < RESERVE then L(("  💰 หยุดซื้อ %s (เหลือ gold จะต่ำกว่า reserve)"):format(tostring(name))); break end
+                    if buy(shopId, idx, 1) then
+                        boughtAny = boughtAny + 1; spent = spent + price
                         task.wait(0.35)
-                    end
-                elseif remain > 0 then
-                    L(("  💰 ข้าม %s (gold ไม่พอ/ติด reserve)"):format(tostring(name)))
+                    else break end
                 end
+                L(("  ✅ %s ซื้อรวม %d ชิ้น (เหลือโควต้า %d)"):format(tostring(name), boughtAny, math.max(0, remain - boughtAny)))
             end
         end
     end
