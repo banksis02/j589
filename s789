@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.48"
+local SCRIPT_VERSION = "v9.49"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11230,6 +11230,8 @@ end
 local function curWave()
     local hud = waveFromHUD()
     if hud and hud>0 then return hud end
+    -- ⭐ v9.49: ใช้ตัวอ่านของสคริปต์หลัก (aeGetReplica re-capture registry — เชื่อถือได้ทุกแมพ)
+    if _G.AE_GET_STATS then local ok,_,_,w = pcall(_G.AE_GET_STATS); if ok and tonumber(w) and tonumber(w)>0 then return tonumber(w) end end
     local gs=repByToken("GameState"); local d=gs and gs.Data
     return d and tonumber(d.Wave) or 0
 end
