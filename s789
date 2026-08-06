@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.80"
+local SCRIPT_VERSION = "v9.81"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12519,22 +12519,28 @@ local function questCycle()
     return didAny
 end
 
--- ---------- ลอง Challenge ทุกตัว "รอบละ 1 ครั้ง" (มี cooldown ~10 นาที/ครบ limit = ข้าม) ----------
---   ครบ 10 รอบ/วัน จะทำได้เองเพราะวนกลับมาลองใหม่ทุกช่วง (สลับกับ fallback)
+-- ---------- ลอง Challenge (จำ cooldown ต่อตัว — ไม่ลองซ้ำที่ติด cooldown/ครบวันนี้ = ไม่เด้งกลับล็อบบี้วน) ----------
+local chalCD = {}   -- ⭐ v9.81: [key] = tick() ที่จะลองได้อีก (เข้าไม่ได้/ชนะแล้ว = ข้าม 10 นาที)
 local function tryChallengesOnce()
-    for idx=1,3 do
+    local function tryOne(kind, idx)
         if not running then return end
-        QL(("  🏆 ลอง Regular #%d"):format(idx))
+        local key = kind .. idx
+        if chalCD[key] and tick() < chalCD[key] then
+            return   -- ยังติด cooldown/เพิ่งเล่น → ข้าม (ไม่ stopAllGameplay/backToLobby)
+        end
+        QL(("  🏆 ลอง %s #%d"):format(kind, idx))
         stopAllGameplay()
-        if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", idx) end
-        if waitStageCycle(45, 600) then task.wait(3)
-        else QL(("  Regular #%d ยังไม่พร้อม (cooldown/ครบวันนี้) → ข้าม"):format(idx)) end
+        if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, idx) end
+        if waitStageCycle(45, 600) then
+            task.wait(3)
+            chalCD[key] = tick() + 600   -- ชนะ/เล่นแล้ว → cooldown 10 นาที
+        else
+            chalCD[key] = tick() + 600   -- เข้าไม่ได้ (cooldown/ครบวันนี้) → ข้าม 10 นาที (กันเด้งกลับล็อบบี้วน)
+            QL(("  %s #%d ยังไม่พร้อม → ข้าม 10 นาที"):format(kind, idx))
+        end
     end
-    if not running then return end
-    QL("  🏆 ลอง Daily")
-    stopAllGameplay()
-    if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Daily", 1) end
-    waitStageCycle(45, 600)
+    for idx=1,3 do tryOne("Regular", idx) end
+    tryOne("Daily", 1)
 end
 
 -- ---------- fallback farm ----------
