@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.82"
+local SCRIPT_VERSION = "v9.83"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12548,6 +12548,16 @@ local function grindChallenges()
     if not running then return false end
     QL("🏆 เริ่มลง Challenge ที่ยังเหลือของวันนี้ (เล่นติดกันจนครบ 10/10)")
     local playedAny, progressed = false, true
+    -- ⭐ v9.83: กันเคสสำคัญ — ถ้า "อยู่ในด่านอยู่แล้ว" (สคริปต์รีสตาร์ท/รีอินเจกต์กลางแมตช์ Challenge)
+    --   ห้ามสั่งกลับล็อบบี้! ให้ resume วางตัว+เฝ้าจนแมตช์จบ (นี่คือสาเหตุ "เข้าด่านแล้วเด้งกลับล็อบบี้")
+    if inGame() then
+        QL("  ↩️ ยังอยู่ในด่าน (รีสตาร์ทกลางแมตช์) → เล่นให้จบก่อน ไม่เด้งกลับล็อบบี้")
+        stopLoops()                                          -- หยุด loop เก่าเฉยๆ (ไม่ backToLobby)
+        if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, "Regular", 1) end   -- inGame → CHAL_RUN ข้าม enter, วางตัว+เฝ้าจนจบ
+        waitStageCycle(45, 900)
+        playedAny = true
+        task.wait(2)
+    end
     while running and MYGEN == _G.AE_SCRIPT_GEN and progressed do
         progressed = false
         for _, c in ipairs(CHAL_LIST) do
