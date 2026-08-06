@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.79"
+local SCRIPT_VERSION = "v9.80"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10377,7 +10377,10 @@ local UIS_ui     = game:GetService("UserInputService")
 --    _G.AE_EXP_ROTATE_MAPS = {"School Grounds","Flower Forest","Rose Kingdom"} (ไม่ใส่ = ใช้ค่านี้)
 --    _G.AE_EXP_ROTATE_MIN  = 60   (นาทีต่อด่าน — ครบแล้วกลับล็อบบี้เปลี่ยนด่านถัดไป)
 local DEFAULT_ROT_MAPS = { "School Grounds", "Flower Forest", "Rose Kingdom" }
-_G.AE_EXP_ROTIDX = _G.AE_EXP_ROTIDX or 1   -- ⭐ v9.79: global กัน reset scope (ด่านปัจจุบันในลิสต์วน 1-based)
+_G.AE_EXP_ROTIDX = _G.AE_EXP_ROTIDX or 1   -- ⭐ v9.79: global (ด่านปัจจุบันในลิสต์วน 1-based)
+-- ⭐ v9.80: เก็บ rotIdx ลงไฟล์ กันรีเซ็ตทุกกรณี (reload/re-start/rejoin เคลียร์ _G)
+pcall(function() if readfile then local v = tonumber(readfile("ae_exp_rotidx.txt")); if v and v >= 1 then _G.AE_EXP_ROTIDX = v end end end)
+local function rotSave() pcall(function() if writefile then writefile("ae_exp_rotidx.txt", tostring(_G.AE_EXP_ROTIDX)) end end) end
 local rotMapStart = nil     -- tick() ตอนเริ่มเล่นด่านนี้ (nil = ยังไม่เริ่มจับเวลา)
 local function rotMaps()
     local m = _G.AE_EXP_ROTATE_MAPS
@@ -10524,10 +10527,11 @@ _G.AE_EXP_RUN = function()
                         stopCombat()
                         local maps = rotMaps()
                         _G.AE_EXP_ROTIDX = (_G.AE_EXP_ROTIDX % #maps) + 1
+                        rotSave()   -- ⭐ v9.80: เซฟลงไฟล์ทันที กันรีเซ็ต
                         rotMapStart = nil
                         placed, routeDone, runActive = false, false, false
-                        L(("🔄 ครบ %d นาที → กลับล็อบบี้ เปลี่ยนไปด่าน %s")
-                            :format(rotMinutes(), maps[((_G.AE_EXP_ROTIDX - 1) % #maps) + 1]))
+                        L(("🔄 ครบ %d นาที → เปลี่ยนไปด่าน %s (rotIdx=%d เซฟแล้ว)")
+                            :format(rotMinutes(), maps[((_G.AE_EXP_ROTIDX - 1) % #maps) + 1], _G.AE_EXP_ROTIDX))
                         uiHide(true)
                         if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
                         uiHide(false)
