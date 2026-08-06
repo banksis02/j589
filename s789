@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.81"
+local SCRIPT_VERSION = "v9.82"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12519,28 +12519,45 @@ local function questCycle()
     return didAny
 end
 
--- ---------- ลอง Challenge (จำ cooldown ต่อตัว — ไม่ลองซ้ำที่ติด cooldown/ครบวันนี้ = ไม่เด้งกลับล็อบบี้วน) ----------
-local chalCD = {}   -- ⭐ v9.81: [key] = tick() ที่จะลองได้อีก (เข้าไม่ได้/ชนะแล้ว = ข้าม 10 นาที)
-local function tryChallengesOnce()
-    local function tryOne(kind, idx)
-        if not running then return end
-        local key = kind .. idx
-        if chalCD[key] and tick() < chalCD[key] then
-            return   -- ยังติด cooldown/เพิ่งเล่น → ข้าม (ไม่ stopAllGameplay/backToLobby)
-        end
-        QL(("  🏆 ลอง %s #%d"):format(kind, idx))
-        stopAllGameplay()
-        if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, idx) end
-        if waitStageCycle(45, 600) then
-            task.wait(3)
-            chalCD[key] = tick() + 600   -- ชนะ/เล่นแล้ว → cooldown 10 นาที
-        else
-            chalCD[key] = tick() + 600   -- เข้าไม่ได้ (cooldown/ครบวันนี้) → ข้าม 10 นาที (กันเด้งกลับล็อบบี้วน)
-            QL(("  %s #%d ยังไม่พร้อม → ข้าม 10 นาที"):format(kind, idx))
+-- ---------- ลง Challenge ให้ครบวันนี้ (grind ติดๆกันจนแต่ละอันครบ 10/10) ----------
+-- ⭐ v9.82: Challenge ไม่มี cooldown 10 นาที! เล่นติดกันได้จนครบ Daily Limit (10/10) แล้วค่อยหมดวัน
+--    เดิม (v9.81) ตั้ง cooldown 10 นาทีแม้ "เล่นสำเร็จ" → เล่น 1 รอบแล้วไปฟาม villain 10 นาที = ดูเหมือนไม่เล่น
+--    ตอนนี้: เข้าได้=เล่นแล้วลองซ้ำทันที (จนเข้าไม่ได้=ครบ10/10) ; เข้าไม่ได้=พัก 30 นาที (กันสแปม)
+local chalCD = {}        -- [key] = tick() ที่จะลองอันนี้ได้อีก (ตั้งเมื่อ "เข้าไม่ได้" = ครบวันนี้/ไม่พร้อม)
+local CHAL_LIST = { {"Regular",1}, {"Regular",2}, {"Regular",3}, {"Weekly",1}, {"Daily",1} }
+-- ลอง challenge 1 อัน → คืน "played"/"blocked"/"skip"
+local function tryChalOne(kind, idx)
+    local key = kind .. idx
+    if chalCD[key] and tick() < chalCD[key] then return "skip" end   -- พักอยู่ → ข้าม
+    QL(("  🏆 ลง %s #%d"):format(kind, idx))
+    stopAllGameplay()                                    -- ให้แน่ใจว่าอยู่ล็อบบี้ก่อนเข้า
+    if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, idx) end
+    if waitStageCycle(45, 600) then
+        task.wait(3)
+        chalCD[key] = nil                                -- เข้าได้=ยังมีโควต้า → ลองซ้ำทันทีรอบถัดไป
+        QL(("  ✅ %s #%d จบ 1 รอบ → ยังลงต่อได้ (จนครบ 10/10)"):format(kind, idx))
+        return "played"
+    else
+        chalCD[key] = tick() + 1800                      -- เข้าไม่ได้=ครบ10/10/ไม่พร้อม → พัก 30 นาที
+        QL(("  ⛔ %s #%d เข้าไม่ได้ (น่าจะครบ 10/10 วันนี้) → พัก 30 นาที"):format(kind, idx))
+        return "blocked"
+    end
+end
+-- grind challenge ทั้งหมดที่ยังลงได้ ติดๆกัน จนไม่มีอันไหนเข้าได้แล้ว → คืน true ถ้าได้เล่นอย่างน้อย 1 รอบ
+local function grindChallenges()
+    if not running then return false end
+    QL("🏆 เริ่มลง Challenge ที่ยังเหลือของวันนี้ (เล่นติดกันจนครบ 10/10)")
+    local playedAny, progressed = false, true
+    while running and MYGEN == _G.AE_SCRIPT_GEN and progressed do
+        progressed = false
+        for _, c in ipairs(CHAL_LIST) do
+            if not running then break end
+            local r = tryChalOne(c[1], c[2])
+            if r == "played" then playedAny = true; progressed = true end   -- เล่นได้ → วนอีกรอบเผื่อยังลงต่อได้
         end
     end
-    for idx=1,3 do tryOne("Regular", idx) end
-    tryOne("Daily", 1)
+    if not playedAny then QL("  ℹ️ ไม่มี Challenge ที่ลงได้ตอนนี้ (ครบ 10/10 หมด/รอรีเซ็ต) → ไปฟาม fallback") end
+    return playedAny
 end
 
 -- ---------- fallback farm ----------
@@ -12611,16 +12628,16 @@ _G.AE_QUEST_RUN = function()
             end
         end
         if not running then return end
-        -- ⭐ เฟส 2+: วนสลับ "ลอง Challenge (ที่พร้อม) → ซื้อ Trait Crystal (จนครบ 25/วัน) → ฟาม fallback ~10 นาที"
-        --    Challenge มี cooldown ~10 นาที/รอบ + ครบ 10/วัน → ทยอยทำเองทุกช่วง จนหมดเวลาจ้าง
-        QL("🔁 เฟส 2: วน เควส4★ค้าง + Challenge (cooldown ~10 นาที) + ซื้อ Trait Crystal + ฟาม fallback")
-        notify("🎯 ทำเควส", "วนเควส + Challenge + ฟาม", 6)
+        -- ⭐ เฟส 2+ (v9.82): ลง Challenge ให้ครบวันนี้ก่อน (เล่นติดกันจนครบ 10/10) → ซื้อ Trait Crystal → ฟาม fallback
+        --    Challenge ไม่มี cooldown 10 นาที → grind ติดกันจนครบ ; ครบแล้วค่อยฟาม (ไม่เด้งกลับล็อบบี้วนเปล่า)
+        QL("🔁 เฟส 2: ลง Challenge ให้ครบ 10/10 ทุกอัน → ซื้อ Trait Crystal → ฟาม fallback")
+        notify("🎯 ทำเควส", "ลง Challenge + ฟาม", 6)
         while running and MYGEN == _G.AE_SCRIPT_GEN do
             -- 0) กลับมาลองทำเควส 4★ ที่ยังค้าง (เมื่อก่อนติด cooldown/ทำไม่ได้ → ตอนนี้อาจทำได้แล้ว)
             questCycle()
             if not running then break end
-            -- 1) ลอง challenge ทุกตัว (ตัวที่พ้น cooldown/ยังไม่ครบ = เข้าเล่น) — จบแล้วอยู่ล็อบบี้
-            tryChallengesOnce()
+            -- 1) ลง Challenge ที่ยังเหลือของวันนี้ ให้หมด (เล่นติดกันจนแต่ละอันครบ 10/10)
+            local playedChal = grindChallenges()
             if not running then break end
             stopAllGameplay()   -- กลับล็อบบี้ (จำเป็นสำหรับอ่าน/ซื้อร้าน)
             -- 2) ซื้อ Trait Crystal — ซื้อเฉพาะเมื่อยังเหลือโควต้าวันนี้ (25/วัน) ไม่ใช่ทุกชั่วโมง
@@ -12630,8 +12647,9 @@ _G.AE_QUEST_RUN = function()
                 if _G.AE_SHOP_BUY then pcall(_G.AE_SHOP_BUY) end
             end
             if not running then break end
-            -- 3) ฟาม fallback ~10 นาที (ให้ challenge cooldown หมดพอดี) แล้ววนกลับไปลองใหม่
-            farmFallbackFor(10)
+            -- 3) ฟาม fallback เฉพาะตอน "ไม่มี Challenge ให้ลงแล้ว" (ครบ 10/10 หมด) — รอ ~15 นาทีค่อยเช็คใหม่
+            --    ถ้าเพิ่งเล่น challenge ได้ → วนกลับไป grind ต่อทันที (ไม่ฟาม = ไม่เสียเวลา)
+            if not playedChal then farmFallbackFor(15) end
         end
         running = false
     end)
