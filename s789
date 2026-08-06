@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.76"
+local SCRIPT_VERSION = "v9.77"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10451,6 +10451,9 @@ _G.AE_EXP_RUN = function()
         local lastState   = ""
         local otherSince  = tick()
         local failStreak  = 0
+        local lastRotLog  = 0          -- ⭐ v9.77: throttle log วนด่าน
+        L(("🔄 [วนด่าน] ROTATE=%s | ด่าน %s | ด่านละ %d นาที")
+            :format(tostring(_G.AE_EXP_ROTATE), table.concat(rotMaps(), " → "), rotMinutes()))
 
         while running and MYGEN == _G.AE_SCRIPT_GEN do
             local ok, err = pcall(function()
@@ -10494,6 +10497,12 @@ _G.AE_EXP_RUN = function()
                         rotMapStart = tick()
                         L(("🔄 เริ่มจับเวลาด่าน %s (ครบ %d นาที = เปลี่ยนด่าน)")
                             :format(expMap(), rotMinutes()))
+                    end
+                    -- 🔎 v9.77 diagnostic: โชว์เวลานับถอยหลังวนด่านทุก ~1 นาที (เห็นว่ามันนับจริงไหม)
+                    if _G.AE_EXP_ROTATE and rotMapStart and tick()-lastRotLog > 60 then
+                        lastRotLog = tick()
+                        L(("🔄 [วนด่าน] ด่าน %s (rotIdx %d/%d) — ผ่าน %.1f/%d นาที"):format(
+                            expMap(), rotIdx, #rotMaps(), (tick()-rotMapStart)/60, rotMinutes()))
                     end
                     -- ⭐ ครบเวลา → กลับล็อบบี้ เปลี่ยนไปด่านถัดไปในลิสต์
                     if _G.AE_EXP_ROTATE and rotMapStart
