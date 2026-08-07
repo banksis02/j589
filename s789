@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.86"
+local SCRIPT_VERSION = "v9.87"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2451,23 +2451,50 @@ if GAME_ID == "anime_expeditions" then
         return nil
     end
 
+    -- ⭐ v9.87: คลิกด้วยพิกัด (fallback ถ้า fireButtonConns ไม่ติด)
+    local function vimClickBtn(btn)
+        pcall(function()
+            local inset = game:GetService("GuiService"):GetGuiInset()
+            local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X/2
+            local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y/2 + inset.Y
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end)
+    end
+    -- ⭐ v9.87: อ่านสถานะแบบเสถียร (อ่าน 2 ครั้งให้ตรงกันก่อนเชื่อ — กันเครื่องช้าอ่านผิด)
+    local function getSettingStateStable(name)
+        local s1 = getSettingState(name)
+        task.wait(0.15)
+        local s2 = getSettingState(name)
+        if s1 == s2 then return s1 end
+        task.wait(0.45)
+        return getSettingState(name)
+    end
+
+    -- ⭐ v9.87: ตั้งค่า 1 อัน — วนอ่าน→คลิก→ตรวจซ้ำ สูงสุด 5 รอบ (กันเครื่องช้าคลิก/อ่านพลาด)
     local function setSettingState(name, wantOn)
-        local state = getSettingState(name)
-        if state == nil then
-            warn("[AE Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. name)
-            return false
-        end
         local wantState = wantOn and "on" or "off"
-        if state == wantState then
-            print("[AE Settings] ✓ " .. name .. " = " .. state .. " (ตรงแล้ว)")
-            return true
+        for attempt = 1, 5 do
+            local state = getSettingStateStable(name)
+            if state == nil then
+                if attempt >= 5 then warn("[AE Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. name); return false end
+                task.wait(0.7)   -- UI ยังไม่พร้อม → รอแล้วลองใหม่
+            elseif state == wantState then
+                if attempt == 1 then print("[AE Settings] ✓ " .. name .. " = " .. state .. " (ตรงแล้ว)")
+                else print("[AE Settings] ✅ " .. name .. " = " .. state .. " (แก้สำเร็จ)") end
+                return true
+            else
+                local btn = findToggleButton(name)
+                if btn then
+                    if fireButtonConns(btn) == 0 then vimClickBtn(btn) end
+                end
+                print(("[AE Settings] 🔄 %s: %s → กด (ครั้งที่ %d) รอตรวจ..."):format(name, state, attempt))
+                task.wait(0.8)   -- รอ UI อัพเดตสี toggle (เครื่องช้า)
+            end
         end
-        local btn = findToggleButton(name)
-        fireButtonConns(btn)
-        task.wait(0.6)
-        local newState = getSettingState(name)
-        print("[AE Settings] 🔄 " .. name .. ": " .. state .. " → " .. tostring(newState))
-        return newState == wantState
+        warn("[AE Settings] ⚠️ ตั้ง " .. name .. " ไม่สำเร็จหลังลอง 5 ครั้ง")
+        return false
     end
 
     local function closeSettings()
@@ -2492,11 +2519,28 @@ if GAME_ID == "anime_expeditions" then
                 warn("[AE Settings] ❌ เปิด Settings ไม่ได้")
                 return
             end
-            task.wait(1.5)
+            -- ⭐ v9.87: รอ UI เรนเดอร์จริงก่อนอ่าน (เครื่องช้า) — รอจนเจอปุ่ม toggle ตัวแรก
+            local t0 = tick()
+            repeat task.wait(0.3) until findToggleButton("Auto Vote Start") or tick()-t0 > 8
+            task.wait(1.2)
+            -- รอบที่ 1: ตั้งทุกอัน (แต่ละอัน retry เองแล้ว)
             for _, pref in ipairs(SETTING_PREFS) do
                 setSettingState(pref.name, pref.want)
-                task.wait(0.4)
+                task.wait(0.35)
             end
+            -- ⭐ v9.87: รอบที่ 2 — ตรวจซ้ำทั้งหมด เผื่อรอบแรกมีอันไหนไม่ติด (เครื่องช้า)
+            local allOk = true
+            for _, pref in ipairs(SETTING_PREFS) do
+                local st = getSettingStateStable(pref.name)
+                local wantState = pref.want and "on" or "off"
+                if st ~= wantState then
+                    allOk = false
+                    print("[AE Settings] 🔁 ตรวจซ้ำ: " .. pref.name .. " ยังไม่ตรง (" .. tostring(st) .. ") → แก้อีก")
+                    setSettingState(pref.name, pref.want)
+                    task.wait(0.35)
+                end
+            end
+            print("[AE Settings] " .. (allOk and "✅ ตั้งค่าครบทุกอันตั้งแต่รอบแรก" or "✅ ตั้งค่าเสร็จ (มีบางอันแก้รอบ 2)"))
             closeSettings()
             task.wait(0.5)
             print("[AE Settings] ✅ ตั้งค่าเสร็จ")
