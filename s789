@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.90"
+local SCRIPT_VERSION = "v9.91"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -11237,7 +11237,9 @@ local UIS=game:GetService("UserInputService"); local SG=game:GetService("Starter
 local player=Players.LocalPlayer; local CLIP=(setclipboard) or (toclipboard) or nil
 local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
 
-local RESERVE   = 500000        -- ⭐ เก็บ gold ขั้นต่ำ (ซื้อได้ถ้าซื้อแล้วยังเหลือ > นี้)
+-- ⭐ v9.91 (user): ซื้อ Trait Crystal ทันทีถ้ามี stock — ลด reserve 500k → 20k
+--   (Trait Crystal 5000×25=125k ถูกมาก + เก็บทองไว้รีโรลบาวน์ตี้ ~10k/วันพอ) ปรับได้ที่ _G.AE_SHOP_RESERVE
+local RESERVE   = tonumber(_G.AE_SHOP_RESERVE) or 20000   -- เก็บ gold ขั้นต่ำ (ซื้อได้ถ้าซื้อแล้วยังเหลือ ≥ นี้)
 local SHOP_KEY  = "GoldShop1"   -- key ร้านทองใน Shops
 local SHOP_DATAKEY = "GoldShop" -- DataKey ของ replica ShopData ร้านทอง
 
@@ -11334,7 +11336,8 @@ function _G.AE_SHOP_BUY()
             if remain > 0 and price >= 0 then
                 -- ⭐ v9.74: ซื้อ "ทีละ 1 ชิ้น" วนจนครบ remain (เหมือน fuel + ที่ spy จับได้ qty=1) เก็บ reserve
                 for _=1, remain do
-                    if gold() - price < RESERVE then L(("  💰 หยุดซื้อ %s (เหลือ gold จะต่ำกว่า reserve)"):format(tostring(name))); break end
+                    local rsv = tonumber(_G.AE_SHOP_RESERVE) or RESERVE   -- อ่าน reserve สด (ปรับได้)
+                    if gold() - price < rsv then L(("  💰 หยุดซื้อ %s (gold %d จะต่ำกว่า reserve %d)"):format(tostring(name), gold(), rsv)); break end
                     if buy(shopId, idx, 1) then
                         boughtAny = boughtAny + 1; spent = spent + price
                         task.wait(0.35)
