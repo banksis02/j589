@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.87"
+local SCRIPT_VERSION = "v9.88"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -2414,7 +2414,10 @@ if GAME_ID == "anime_expeditions" then
         { name = "Auto-Upgrade Placed Units",  want = true  },
     }
 
-    -- หาปุ่ม toggle ของ setting (Settings เป็น 2 คอลัมน์ — เลือกปุ่มฝั่งเดียวกับ label)
+    -- ⭐ v9.88 (จาก recon): toggle = PrimaryButton 30x26 | on = รูป ✓ 139144590557777 / gradient เขียว(136,255,0)
+    --                                                    off = รูป ✗ 89701503974482 / gradient แดง(255,51,51)
+    local TOGGLE_ON_IMG, TOGGLE_OFF_IMG = "139144590557777", "89701503974482"
+    -- หาปุ่ม toggle ของ setting (Settings 2 คอลัมน์ — เลือกปุ่มฝั่งเดียวกับ label, ใกล้สุดทางขวา dx<320)
     local function findToggleButton(name)
         local s = player.PlayerGui:FindFirstChild("Settings")
         if not s then return nil end
@@ -2424,12 +2427,14 @@ if GAME_ID == "anime_expeditions" then
         end
         if not label then return nil end
         local lx, ly = label.AbsolutePosition.X, label.AbsolutePosition.Y
+        if ly <= 0 then return nil end   -- ⭐ UI ยังไม่วางตำแหน่ง (เครื่องช้า) → ยังไม่พร้อม (กันจับปุ่มผิด)
         local best, bestDx
         for _, btn in ipairs(s:GetDescendants()) do
-            if btn:IsA("TextButton") and btn.Visible and btn.AbsoluteSize.X <= 40
+            if btn:IsA("TextButton") and btn.Visible
+               and btn.AbsoluteSize.X >= 18 and btn.AbsoluteSize.X <= 40
                and math.abs(btn.AbsolutePosition.Y - ly) < 15 then
                 local dx = btn.AbsolutePosition.X - lx
-                if dx > 0 and (not bestDx or dx < bestDx) then
+                if dx > 0 and dx < 320 and (not bestDx or dx < bestDx) then   -- ⭐ dx<320 กันจับ toggle คอลัมน์อื่น
                     best, bestDx = btn, dx
                 end
             end
@@ -2437,18 +2442,28 @@ if GAME_ID == "anime_expeditions" then
         return best
     end
 
+    -- อ่านสถานะ: ใช้ "รูป ✓/✗" เป็นหลัก + เช็คสี gradient คู่กัน (ขัดกัน = ยังไม่ชัวร์ → nil ให้ retry)
     local function getSettingState(name)
         local btn = findToggleButton(name)
         if not btn then return nil end
+        local imgState, gradState
+        for _, g in ipairs(btn:GetDescendants()) do
+            if g:IsA("ImageLabel") or g:IsA("ImageButton") then
+                local im = tostring(g.Image)
+                if im:find(TOGGLE_ON_IMG, 1, true) then imgState = "on"; break end
+                if im:find(TOGGLE_OFF_IMG, 1, true) then imgState = "off"; break end
+            end
+        end
         for _, g in ipairs(btn:GetDescendants()) do
             if g:IsA("UIGradient") then
                 local c = g.Color.Keypoints[1].Value
                 local r, gr = c.R * 255, c.G * 255
-                if gr > 200 and r < 200 then return "on" end
-                if r > 200 and gr < 100 then return "off" end
+                if gr > 200 and r < 200 then gradState = "on"; break end
+                if r > 200 and gr < 100 then gradState = "off"; break end
             end
         end
-        return nil
+        if imgState and gradState and imgState ~= gradState then return nil end   -- อ่านขัดกัน → ไม่เชื่อ
+        return imgState or gradState
     end
 
     -- ⭐ v9.87: คลิกด้วยพิกัด (fallback ถ้า fireButtonConns ไม่ติด)
