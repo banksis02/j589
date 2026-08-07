@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.85"
+local SCRIPT_VERSION = "v9.86"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -10941,8 +10941,8 @@ function _G.AE_BOUNTY_SCAN()
         L(("%d) %s [★%d] +%s → %s"):format(i, b.id, b.rank, b.reward and tostring(b.reward.Amount) or "?", v))
         for _, o in ipairs(b.objectives) do L(("   • %s (%d/%d)%s"):format(o.text,o.cur,o.goal,o.done and "✓" or "")) end
     end
-    if CLIP then pcall(CLIP, table.concat(logBuf,"\n")) end
-    notify("🎯 Bounty", "SCAN เสร็จ — "..#board.." อัน (ดูใน UI/clipboard)", 4)
+    -- ⭐ v9.86: ไม่ setclipboard แล้ว (รบกวน Ctrl+C ของผู้ใช้) — ดู board จาก log/print แทน
+    notify("🎯 Bounty", "SCAN เสร็จ — "..#board.." อัน (ดูใน log)", 4)
     return board
 end
 
