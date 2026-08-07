@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.89"
+local SCRIPT_VERSION = "v9.90"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -12388,9 +12388,11 @@ _G.AE_CHAL_RUN=function(kind, idx)
     task.spawn(function()
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade on)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         -- ⭐ v9.70: เอา EXP_SETTINGS ออก (ขัดกับ APPLY + เปิดตั้งค่า 2 รอบ) → ใช้ auto-upgrade เกมเหมือน Infinite/Story
-        if not inGame() then enterChallenge(kind, idx) end
+        if not inGame() then
+            if not enterChallenge(kind, idx) then L("  ⛔ เข้าไม่ได้ (คูลดาวน์/ไม่พร้อม) → เลิกเร็ว"); running=false; return end
+        end
         local t0=tick()
-        while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
+        while running and not inGame() and tick()-t0<60 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
         if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("🏅 Challenge","ไม่เข้าด่าน",6); running=false; return end
         L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
         if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
@@ -12786,30 +12788,26 @@ local function grindChallenges()
         progressed = false
         local board = _G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()
         if not board then QL("  ⚠️ อ่านสถานะ Challenge ไม่ได้ → หยุด"); break end
-        -- log สถานะทุกหมวด
-        for _,kind in ipairs({"Regular","Daily","Weekly"}) do
-            local c = board.cats[kind]
-            if c then QL(("   • %s: %s%s"):format(kind,
-                c.avail==false and "⛔ ติดคูลดาวน์" or (c.avail and "✅ ลงได้" or "❔ ไม่แน่ใจ"),
-                c.reset and (" (รีเซ็ต "..c.reset..")") or "")) end
-        end
+        -- ⭐ v9.90: ไม่ใช้ป้ายหมวด (Rewards Available/Unavailable) ตัดสินแล้ว — อ่านพลาดบ่อยตอนเครื่องช้า
+        --   ใช้ "card remain>0" ตรงๆ + ให้ enterChallenge ถอยเองถ้าเจอ "Available in" (คูลดาวน์จริง)
         for _,kind in ipairs({"Regular","Daily","Weekly"}) do
             if not running then break end
             local c = board.cats[kind]
-            if c and c.avail == false then
-                -- หมวดติดคูลดาวน์ → ข้าม (ไม่เข้า = ไม่ค้างหน้าคูลดาวน์)
-            elseif c then
-                if _G.AE_CHAL_SELECT then pcall(_G.AE_CHAL_SELECT, kind); task.wait(0.9) end
-                local b2 = (_G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()) or board
-                for _,card in ipairs(b2.cards or {}) do
-                    if not running then break end
-                    if card.kind == kind then
-                        local r = playChalCard(kind, card)
-                        if r == "played" then
-                            playedAny = true; progressed = true
-                            if _G.AE_CHAL_OPEN then pcall(_G.AE_CHAL_OPEN) end; task.wait(1)   -- เปิดเมนูอ่านสถานะใหม่
-                        end
-                    end
+            local statusTxt = c and (c.avail==false and "⛔(ป้าย unavailable)" or (c.avail and "✅(ป้าย available)" or "❔")) or "❔"
+            if _G.AE_CHAL_SELECT then pcall(_G.AE_CHAL_SELECT, kind); task.wait(0.9) end
+            local b2 = (_G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()) or board
+            -- มีการ์ดที่ยังเหลือรอบไหม
+            local playable = {}
+            for _,card in ipairs(b2.cards or {}) do
+                if card.kind == kind and (card.remain or 0) > 0 then playable[#playable+1]=card end
+            end
+            QL(("   • %s %s — การ์ดที่ยังเหลือรอบ: %d"):format(kind, statusTxt, #playable))
+            for _,card in ipairs(playable) do
+                if not running then break end
+                local r = playChalCard(kind, card)   -- เข้าไม่ได้จริง (คูลดาวน์) → enterChallenge ถอย + park 10 นาที
+                if r == "played" then
+                    playedAny = true; progressed = true
+                    if _G.AE_CHAL_OPEN then pcall(_G.AE_CHAL_OPEN) end; task.wait(1)   -- เปิดเมนูอ่านสถานะใหม่
                 end
             end
         end
