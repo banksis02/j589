@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.92"
+local SCRIPT_VERSION = "v9.93"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -8496,6 +8496,23 @@ _G.AE_EXP_EXTRACT = pressExtract
 
 -- ⭐ ลูปกด Continue อัตโนมัติเมื่อรถจอด (checkpoint/ร้านค้า — เราไม่ซื้อ)
 local contOn = false
+-- ⭐ v9.93: เช็คว่ามีปุ่ม "Continue" โผล่บนจอไหม (ใช้ทั้งตรวจเจอ + ยืนยันหลังกด)
+local function continueVisible()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible then
+                    local bt=""; if b:IsA("TextButton") then pcall(function() bt=tostring(b.Text) end) end
+                    if bt == "Continue" then return true end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and l.Text == "Continue" then return true end
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
 local function startAutoContinue()
     if contOn then return end
     contOn = true
@@ -8504,7 +8521,7 @@ local function startAutoContinue()
         --    ไม่เช็คแผนที่/10-10/บอส/Extract (บัคเยอะ) แพ้ค่อย Repeat (ลูป FULL AUTO จัดการ)
         print("[Exp] 🚚 เริ่มเฝ้ารถจอด — เจอ Continue กดเลย (เล่นต่อเนื่อง)")
         while contOn and MYGEN == _G.AE_SCRIPT_GEN do
-            task.wait(2)
+            task.wait(1)   -- ⭐ v9.93: เช็คถี่ขึ้น (2→1s) กันพลาดตอนแลค
             -- ⭐ v9.92: กดปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) ด้วย — ไม่งั้นเวฟไม่เริ่ม → ไม่มีศัตรู/เงิน → ค้างรอเงินวางตัว
             local startBtn
             for _, root in ipairs(player.PlayerGui:GetChildren()) do
@@ -8522,23 +8539,7 @@ local function startAutoContinue()
             end
             if startBtn then print("[Exp] ▶️ auto-start: กด 'Start Game' (เริ่มเวฟ)"); clickHard(startBtn); task.wait(2) end
             -- รถจอด = มีปุ่ม Continue โผล่
-            local found = false
-            for _, root in ipairs(player.PlayerGui:GetChildren()) do
-                if root:IsA("ScreenGui") and root.Enabled then
-                    for _, b in ipairs(root:GetDescendants()) do
-                        if b:IsA("GuiButton") and b.Visible then
-                            for _, l in ipairs(b:GetDescendants()) do
-                                if l:IsA("TextLabel") and l.Visible and l.Text == "Continue" then
-                                    found = true; break
-                                end
-                            end
-                        end
-                        if found then break end
-                    end
-                end
-                if found then break end
-            end
-            if found then
+            if continueVisible() then
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
                 if _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY then
                     local gs = getReplica("GameState")
@@ -8553,9 +8554,16 @@ local function startAutoContinue()
                         task.wait(1)
                     end
                 end
+                -- ⭐ v9.93: กด Continue "ยืนยัน" — กดซ้ำจนปุ่มหายจริง (กันเครื่องแลค กดไม่ติด/พลาด)
                 print("[Exp] 🚚 รถจอด → กด Continue")
-                pressContinue()
-                task.wait(4)
+                for attempt = 1, 5 do
+                    if not contOn or not continueVisible() then break end
+                    pressContinue()
+                    task.wait(1.2)
+                    if not continueVisible() then break end   -- ปุ่มหาย = กดติดแล้ว
+                    print(("[Exp] 🔁 Continue ยังค้าง (เครื่องแลค?) → กดซ้ำ #%d"):format(attempt))
+                end
+                task.wait(1.5)
             end
         end
         print("[Exp] ⏹️ หยุดเฝ้ารถจอด")
