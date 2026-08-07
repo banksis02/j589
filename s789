@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.93"
+local SCRIPT_VERSION = "v9.94"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
@@ -6871,37 +6871,70 @@ local function findToggleButton(names)
     return best
 end
 
+-- ⭐ v9.94 (จาก recon): อ่านสถานะจาก "รูป ✓/✗" เป็นหลัก + เช็คสี gradient คู่กัน (ทนเครื่องแลค)
+local TOGGLE_ON_IMG, TOGGLE_OFF_IMG = "139144590557777", "89701503974482"
 local function getSettingState(names)
     local btn = findToggleButton(names)
     if not btn then return nil end
+    local imgState, gradState
+    for _, g in ipairs(btn:GetDescendants()) do
+        if g:IsA("ImageLabel") or g:IsA("ImageButton") then
+            local im = tostring(g.Image)
+            if im:find(TOGGLE_ON_IMG, 1, true) then imgState = "on"; break end
+            if im:find(TOGGLE_OFF_IMG, 1, true) then imgState = "off"; break end
+        end
+    end
     for _, g in ipairs(btn:GetDescendants()) do
         if g:IsA("UIGradient") then
             local c = g.Color.Keypoints[1].Value
             local r, gr = c.R * 255, c.G * 255
-            if gr > 200 and r < 200 then return "on" end
-            if r > 200 and gr < 100 then return "off" end
+            if gr > 200 and r < 200 then gradState = "on"; break end
+            if r > 200 and gr < 100 then gradState = "off"; break end
         end
     end
-    return nil
+    if imgState and gradState and imgState ~= gradState then return nil end   -- ขัดกัน = ไม่ชัวร์
+    return imgState or gradState
+end
+-- อ่าน 2 ครั้งให้ตรงกันก่อนเชื่อ (กันเครื่องแลคอ่านผิดตอน UI ยังไม่นิ่ง)
+local function getSettingStateStable(names)
+    local s1 = getSettingState(names); task.wait(0.15)
+    local s2 = getSettingState(names)
+    if s1 == s2 then return s1 end
+    task.wait(0.45); return getSettingState(names)
+end
+local function vimClickBtn(btn)
+    pcall(function()
+        local inset = game:GetService("GuiService"):GetGuiInset()
+        local cx = btn.AbsolutePosition.X + btn.AbsoluteSize.X/2
+        local cy = btn.AbsolutePosition.Y + btn.AbsoluteSize.Y/2 + inset.Y
+        local V = game:GetService("VirtualInputManager")
+        V:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05)
+        V:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
 end
 
+-- ⭐ v9.94: วนอ่าน→คลิก→ตรวจซ้ำ สูงสุด 5 รอบ (ทนเครื่องแลค กดไม่ติด/อ่านพลาด)
 local function setSettingState(names, wantOn)
     local shown = names[1]
-    local state = getSettingState(names)
-    if state == nil then
-        warn("[Exp Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. shown)
-        return false
-    end
     local wantState = wantOn and "on" or "off"
-    if state == wantState then
-        print("[Exp Settings] ✓ " .. shown .. " = " .. state .. " (ตรงแล้ว)")
-        return true
+    for attempt = 1, 5 do
+        local state = getSettingStateStable(names)
+        if state == nil then
+            if attempt >= 5 then warn("[Exp Settings] ❌ ไม่เจอ/อ่านไม่ได้: " .. shown); return false end
+            task.wait(0.7)
+        elseif state == wantState then
+            if attempt == 1 then print("[Exp Settings] ✓ " .. shown .. " = " .. state .. " (ตรงแล้ว)")
+            else print("[Exp Settings] ✅ " .. shown .. " = " .. state .. " (แก้สำเร็จ)") end
+            return true
+        else
+            local btn = findToggleButton(names)
+            if btn then if fireBtn(btn) == 0 then vimClickBtn(btn) end end
+            print(("[Exp Settings] 🔄 %s: %s → กด (ครั้งที่ %d) รอตรวจ..."):format(shown, state, attempt))
+            task.wait(0.8)
+        end
     end
-    fireBtn(findToggleButton(names))
-    task.wait(0.6)
-    local newState = getSettingState(names)
-    print("[Exp Settings] 🔄 " .. shown .. ": " .. state .. " → " .. tostring(newState))
-    return newState == wantState
+    warn("[Exp Settings] ⚠️ ตั้ง " .. shown .. " ไม่สำเร็จหลังลอง 5 ครั้ง")
+    return false
 end
 
 local function closeSettings()
@@ -6939,6 +6972,20 @@ local function run(prefs)
         end
         if setSettingState(names, pref.want) then okCount = okCount + 1 end
         task.wait(0.4)
+    end
+
+    -- ⭐ v9.94: รอบตรวจซ้ำทั้งหมด — เผื่อรอบแรกมีอันไหนไม่ติด (เครื่องแลค)
+    for _, pref in ipairs(prefs) do
+        local names = nameList(pref)
+        local wantState = pref.want and "on" or "off"
+        if pref.tab then if not clickTab(pref.tab, pref.tabTH) then clickTab("All", "ทั้งหมด") end; task.wait(0.4) end
+        if not scrollToLabel(names) then clickTab("All", "ทั้งหมด"); task.wait(0.4); scrollToLabel(names) end
+        local st = getSettingStateStable(names)
+        if st ~= nil and st ~= wantState then
+            print("[Exp Settings] 🔁 ตรวจซ้ำ: " .. names[1] .. " ยังไม่ตรง (" .. tostring(st) .. ") → แก้อีก")
+            setSettingState(names, pref.want)
+            task.wait(0.35)
+        end
     end
 
     closeSettings()
@@ -8513,6 +8560,21 @@ local function continueVisible()
     end
     return false
 end
+-- ⭐ v9.94: หาปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) — คืนปุ่ม/nil
+local function findStartGameBtn()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 20 then
+                    local bt=""; if b:IsA("TextButton") then pcall(function() bt=tostring(b.Text) end) end
+                    if bt=="Start Game" then return b end
+                    for _, l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and tostring(l.Text)=="Start Game" then return b end end
+                end
+            end
+        end
+    end
+    return nil
+end
 local function startAutoContinue()
     if contOn then return end
     contOn = true
@@ -8522,22 +8584,17 @@ local function startAutoContinue()
         print("[Exp] 🚚 เริ่มเฝ้ารถจอด — เจอ Continue กดเลย (เล่นต่อเนื่อง)")
         while contOn and MYGEN == _G.AE_SCRIPT_GEN do
             task.wait(1)   -- ⭐ v9.93: เช็คถี่ขึ้น (2→1s) กันพลาดตอนแลค
-            -- ⭐ v9.92: กดปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) ด้วย — ไม่งั้นเวฟไม่เริ่ม → ไม่มีศัตรู/เงิน → ค้างรอเงินวางตัว
-            local startBtn
-            for _, root in ipairs(player.PlayerGui:GetChildren()) do
-                if root:IsA("ScreenGui") and root.Enabled then
-                    for _, b in ipairs(root:GetDescendants()) do
-                        if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 20 then
-                            local bt=""; if b:IsA("TextButton") then pcall(function() bt=tostring(b.Text) end) end
-                            local hit = (bt=="Start Game")
-                            if not hit then for _, l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and tostring(l.Text)=="Start Game" then hit=true; break end end end
-                            if hit then startBtn=b; break end
-                        end
-                    end
+            -- ⭐ v9.94: กดปุ่ม "Start Game" (โหวตเริ่มเวฟ) ซ้ำจนหายจริง — กันเครื่องแลค กดไม่ติด
+            if findStartGameBtn() then
+                print("[Exp] ▶️ auto-start: กด 'Start Game' (เริ่มเวฟ)")
+                for a = 1, 5 do
+                    local sb = findStartGameBtn()
+                    if not sb or not contOn then break end
+                    clickHard(sb); task.wait(1.2)
+                    if not findStartGameBtn() then break end
+                    print(("[Exp] 🔁 Start Game ยังค้าง (แลค?) → กดซ้ำ #%d"):format(a))
                 end
-                if startBtn then break end
             end
-            if startBtn then print("[Exp] ▶️ auto-start: กด 'Start Game' (เริ่มเวฟ)"); clickHard(startBtn); task.wait(2) end
             -- รถจอด = มีปุ่ม Continue โผล่
             if continueVisible() then
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
