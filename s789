@@ -1,8 +1,11 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.94"
+local SCRIPT_VERSION = "v9.95"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
+-- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
+_G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
+local SCRIPT_GEN = _G.AE_SCRIPT_GEN
 print("════════════════════════════════════════")
 print("🚀 OverloadScript " .. SCRIPT_VERSION .. " loaded")
 print("════════════════════════════════════════")
@@ -47,7 +50,9 @@ print("[OV] Game:", GAME_NAME)
 pcall(function()
     -- 1) Idled event handler (Roblox's official AFK reset)
     local VirtualUser = game:GetService("VirtualUser")
-    player.Idled:Connect(function()
+    if _G.AE_ANTI_AFK_CONN then pcall(function() _G.AE_ANTI_AFK_CONN:Disconnect() end) end
+    _G.AE_ANTI_AFK_CONN = player.Idled:Connect(function()
+        if SCRIPT_GEN ~= _G.AE_SCRIPT_GEN then return end
         print("[ANTI-AFK] Idled detected → reset (" .. GAME_NAME .. ")")
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
@@ -55,8 +60,9 @@ pcall(function()
 
     -- 2) Periodic action ทุก 5 นาที (กระโดด → ถ้าไม่ได้ ให้เดินหน้า)
     task.spawn(function()
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             task.wait(300)  -- 5 นาที
+            if SCRIPT_GEN ~= _G.AE_SCRIPT_GEN then break end
             local jumped = false
 
             -- ลองกระโดดหลายแบบ (บางเกม block บาง method)
@@ -508,7 +514,7 @@ if GAME_ID == "anime_vanguards" then
         print("[AV] 👀 Watching for EndScreen...")
         local lastEndScreenState = false
 
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local ok = pcall(function()
                 local gui = player.PlayerGui
                 local endScreen = gui:FindFirstChild("EndScreen")
@@ -658,7 +664,7 @@ if GAME_ID == "summon_heroes" then
         print("[SH] 👀 Watching for RoundEnd...")
         local lastRoundEndState = false
 
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             pcall(function()
                 local gui = player.PlayerGui
                 local roundEnd = gui:FindFirstChild("RoundEnd")
@@ -895,7 +901,7 @@ if GAME_ID == "anime_expeditions" then
     end
 
     task.spawn(function()
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             task.wait(3)
             pcall(function()
                 local gs = aeGetReplica("GameState")
@@ -963,7 +969,7 @@ if GAME_ID == "anime_expeditions" then
     -- print ทุก 5 วิเมื่อ state เปลี่ยน (in-game ↔ lobby)
     task.spawn(function()
         local lastState = nil
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local stage, mode, diff = getStageInfo()
             local currentState = stage and (stage .. "|" .. tostring(mode) .. "|" .. tostring(diff)) or "Lobby"
             if currentState ~= lastState then
@@ -2742,7 +2748,7 @@ if GAME_ID == "anime_expeditions" then
         task.wait(5)
         print("[AE] 👀 Watching Prompt for end screen...")
         local lastState = false
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             pcall(function()
                 local stats = getEndScreenData()
                 if stats and not lastState then
@@ -3407,7 +3413,7 @@ if GAME_ID == "anime_expeditions" then
         task.wait(3)
         sendHeartbeat()
         print("[AE Remote] 📡 Heartbeat เริ่มแล้ว — ไอดีขึ้นหน้าเว็บ admin")
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             task.wait(30)
             pcall(sendHeartbeat)
         end
@@ -3441,7 +3447,7 @@ if GAME_ID == "anime_expeditions" then
         end
         print("[AE Remote] 🎛️ รอรับคำสั่งงานจากเว็บ...")
         local lastStatus, lastLabel = nil, nil
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             pcall(function()
                 local job = fetchJob()
                 if not job then return end
@@ -3530,7 +3536,7 @@ if GAME_ID == "anime_squadron" then
         print("[AS] 👀 Watching for EndScreen...")
         local lastState = false
 
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             pcall(function()
                 local menus = player.PlayerGui:FindFirstChild("Menus")
                 local endScreen = menus and menus:FindFirstChild("EndScreen")
@@ -3956,7 +3962,7 @@ if GAME_ID == "utdx" then
 
     -- Auto Activate Hand
     task.spawn(function()
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             for _, obj in ipairs(game.Workspace:GetDescendants()) do
                 if obj:IsA("ProximityPrompt") and obj.ActionText == "Activate Hand" then
                     local attachment = obj.Parent
@@ -4081,7 +4087,7 @@ if GAME_ID == "utdx" then
             return ok
         end
 
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local now = tick()
             local container = getCardContainer()
             if container and (now - lastVoteTime > 5) then
@@ -4102,7 +4108,7 @@ if GAME_ID == "utdx" then
 
     -- Auto GreenZone
     task.spawn(function()
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
             local zone = workspace:FindFirstChild("ShinobiAllianceRuntime")
             if zone and hrp then
@@ -4644,7 +4650,7 @@ if GAME_ID == "utdx" then
 
         -- ⭐ Loop aggressive ทุก 0.5 วิ — ดักทุก effect (particle + mesh ใน Ignore.Effects/Camera)
         task.spawn(function()
-            while true do
+            while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
                 task.wait(0.5)
                 pcall(function()
                     -- ปิด particle/beam/trail ทั่ว workspace
@@ -4693,7 +4699,7 @@ if GAME_ID == "utdx" then
         end)
 
         -- รีเฟรชเต็มทุก 5 วิ + force GC
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             task.wait(5)
             pcall(boostFPS)
             pcall(function() collectgarbage("collect") end)
@@ -4821,7 +4827,7 @@ if game.PlaceId == 133410800847665 or game.PlaceId == 106402284955512 then
         end
 
         task.wait(8) -- เริ่มหลัง load 8 วิ (รอ packages)
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             claimAll()
             task.wait(300) -- 5 นาที
         end
@@ -5554,7 +5560,7 @@ task.spawn(function()
     task.spawn(function()
         local inStage = false
         local lastStage = ""
-        while true do
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local stage = getCurrentStage()
             -- debug: print เมื่อ stage เปลี่ยน
             if stage ~= lastStage then
@@ -5988,6 +5994,17 @@ end
 _G.AE_VILLAIN_ENTER = function(act)
     act = tonumber(act) or 1
     print(("[Villain] ▶️ เข้าด่าน Villain Invasion — Act %d"):format(act))
+
+    -- Challenge เป็น modal overlay และจะบังเมนูหลัก รวมถึงปุ่ม Events
+    -- ปิดและยืนยันก่อนเริ่ม flow Villain (เผื่อ caller ก่อนหน้าปิดไม่สำเร็จ)
+    if _G.AE_CHAL_CLOSE then
+        local okClose, closed = pcall(_G.AE_CHAL_CLOSE)
+        if not okClose or not closed then
+            warn("[Villain] ❌ ปิดหน้า Challenge ไม่สำเร็จ — ยกเลิกก่อนเพื่อไม่ให้วนหา 'Events'")
+            return false
+        end
+        task.wait(0.8)
+    end
 
     -- 1) เปิด Events (เมนูซ้ายในล็อบบี้) — ⭐ VIM click จริง
     --    ถ้าอยู่ในเมนู Events อยู่แล้ว (เจอการ์ด Villain Invasion) → ข้าม ไม่ต้องกด Events
@@ -6550,15 +6567,17 @@ local function inVillainStage()
 end
 
 local villainRunning = false
+local VILLAIN_GEN = _G.AE_SCRIPT_GEN
 _G.AE_VILLAIN_RUN = function(act)
-    if villainRunning then print("[Villain] ทำงานอยู่แล้ว"); return end
+    if villainRunning then print("[Villain] ทำงานอยู่แล้ว"); return true end
     villainRunning = true
     act = tonumber(act) or tonumber(_G.AE_VILLAIN_ACT) or 1
     print(("[Villain] 🚀 FULL AUTO — Act %d"):format(act))
     task.spawn(function()
         local placedThisRun = false
         local settingsDone = false
-        while villainRunning do
+        local enterFailures = 0
+        while villainRunning and VILLAIN_GEN == _G.AE_SCRIPT_GEN do
             local ok, err = pcall(function()
                 -- จบด่าน → Replay
                 if _G.AE_VILLAIN_ENDOPEN() then
@@ -6598,17 +6617,34 @@ _G.AE_VILLAIN_RUN = function(act)
                     act = tonumber(_G.AE_VILLAIN_ACT) or act
                     if _G.AE_CLOSE_POPUP then pcall(_G.AE_CLOSE_POPUP) end
                     print(("[Villain] 🏠 ล็อบบี้ → เข้าด่าน Act %d"):format(act))
-                    _G.AE_VILLAIN_ENTER(act)
-                    task.wait(6)
+                    local entered = _G.AE_VILLAIN_ENTER(act)
+                    if entered then
+                        enterFailures = 0
+                        task.wait(6)
+                    else
+                        enterFailures = enterFailures + 1
+                        local retryIn = math.min(10 * enterFailures, 60)
+                        warn(("[Villain] ⚠️ เข้าเมนูไม่สำเร็จ → ลองใหม่ใน %d วินาที"):format(retryIn))
+                        task.wait(retryIn)
+                    end
                 end
             end)
-            if not ok then warn("[Villain] ลูปพัง: " .. tostring(err)) end
+            if not ok then
+                enterFailures = enterFailures + 1
+                local retryIn = math.min(10 * enterFailures, 60)
+                warn(("[Villain] ลูปพัง: %s → ลองใหม่ใน %d วินาที"):format(tostring(err), retryIn))
+                task.wait(retryIn)
+            end
             task.wait(1)
         end
-        _G.AE_VILLAIN_PLACE_STOP()
-        _G.AE_VILLAIN_UPGRADE_STOP()
+        -- รุ่นเก่าห้ามเรียก global STOP ของรุ่นใหม่ เพราะจะหยุดงานที่เพิ่งเริ่มหลัง re-inject
+        if VILLAIN_GEN == _G.AE_SCRIPT_GEN then
+            if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+            if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
+        end
         print("[Villain] ⏹ หยุด FULL AUTO")
     end)
+    return true
 end
 _G.AE_VILLAIN_RUN_STOP = function() villainRunning = false end
 
@@ -6678,7 +6714,7 @@ end
 
 -- ===== [EXPEDITION MODULE] =====
 -- ระบบ Expedition ทั้งชุด (ฝังอัตโนมัติ — แก้ที่ไฟล์ต้นทางแล้ว build ใหม่)
-_G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
+-- AE_SCRIPT_GEN ถูกเพิ่มตั้งแต่ต้นไฟล์แล้ว (ห้ามเพิ่มซ้ำกลางไฟล์)
 _G.AE_EXP_NO_UI = true
 
 do -- [EXP 0] SETTINGS
@@ -12188,7 +12224,8 @@ end
 local function vimClick(b) pcall(function()
     local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
     VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
-local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+-- ส่งทั้ง signal และคลิกพิกัดจริง: บางปุ่มมี connection แต่ Fire() อย่างเดียวไม่เปลี่ยนหน้า UI
+local function clickBtn(b) fireConns(b); vimClick(b) end
 local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
 local function eachBtn(fn)
     for _,g in ipairs(player.PlayerGui:GetChildren()) do
@@ -12263,16 +12300,32 @@ end
 local function findChalRoot()
     for _,g in ipairs(player.PlayerGui:GetChildren()) do
         if g:IsA("ScreenGui") and g.Enabled then
-            local hasChal,hasKey=false,false
+            local chalNodes,keyNodes={},{}
             for _,d in ipairs(g:GetDescendants()) do
                 if d:IsA("TextLabel") or d:IsA("TextButton") then
                     local t=""; pcall(function() t=tostring(d.Text):lower() end)
-                    if t:find("challenge",1,true) then hasChal=true end
+                    if t:find("challenge",1,true) then chalNodes[#chalNodes+1]=d end
                     if t:find("daily limit",1,true) or t:find("rewards available",1,true)
-                       or t:find("unavailable",1,true) or t:find("available in",1,true) then hasKey=true end
+                       or t:find("unavailable",1,true) or t:find("available in",1,true) then keyNodes[#keyNodes+1]=d end
                 end
             end
-            if hasChal and hasKey then return g end
+            local cam=workspace.CurrentCamera; local vp=cam and cam.ViewportSize or Vector2.new(800,600)
+            for _,cn in ipairs(chalNodes) do
+                local ancestors={}; local n=cn
+                while n and n~=g do ancestors[n]=true; n=n.Parent end
+                for _,kn in ipairs(keyNodes) do
+                    local common=kn
+                    while common and common~=g and not ancestors[common] do common=common.Parent end
+                    if common and common~=g then
+                        local panel=common
+                        while panel and panel~=g do
+                            if panel:IsA("GuiObject") and panel.AbsoluteSize.X>=vp.X*0.50
+                               and panel.AbsoluteSize.Y>=vp.Y*0.45 then return panel end
+                            panel=panel.Parent
+                        end
+                    end
+                end
+            end
         end
     end
     return nil
@@ -12367,14 +12420,14 @@ end
 local function closeChalMenu()
     if not findChalRoot() then return true end
     clickText("Back",false,1)   -- ถ้าอยู่หน้า detail → ถอยก่อน (list ไม่มีก็ข้าม)
-    for _=1,4 do
+    for attempt=1,6 do
         local root=findChalRoot(); if not root then return true end
         -- หากรอบพื้นที่ panel (จาก label ที่เจอ) เพื่อรู้ว่า "ขวาบน" อยู่ไหน
         local maxX=0
         for _,d in ipairs(root:GetDescendants()) do
             if d:IsA("GuiObject") and d.Visible then local rx=d.AbsolutePosition.X+d.AbsoluteSize.X; if rx>maxX then maxX=rx end end
         end
-        local hit, hitByColor
+        local hit, hitByColor, hitByPosition
         for _,b in ipairs(root:GetDescendants()) do
             if (b:IsA("ImageButton") or b:IsA("TextButton")) and b.Visible and b.AbsoluteSize.X>8 and b.AbsoluteSize.X<70 then
                 local nm=tostring(b.Name):lower(); local tx=""; pcall(function() tx=tostring(b.Text):lower() end)
@@ -12389,15 +12442,33 @@ local function closeChalMenu()
                     local ir,ig,ib = b.ImageColor3.R*255, b.ImageColor3.G*255, b.ImageColor3.B*255
                     if ir>170 and ig<90 and ib<90 and rightish and b.AbsolutePosition.Y < 200 then hitByColor=b end
                 end
+                -- UI จริงมักเป็น X สีขาว/โปร่งใสที่วางบน Frame สีแดง จึงตรวจสี parent ด้วย
+                local parent=b.Parent
+                if not hitByColor and parent and parent:IsA("GuiObject") then
+                    local pr,pg,pb=parent.BackgroundColor3.R*255,parent.BackgroundColor3.G*255,parent.BackgroundColor3.B*255
+                    if pr>150 and pg<110 and pb<110 and rightish and b.AbsolutePosition.Y<220 then hitByColor=b end
+                end
+                -- fallback สุดท้าย: ปุ่มเล็กที่อยู่ขวาบนสุดของ Challenge panel
+                if rightish and b.AbsolutePosition.Y<220 then
+                    if not hitByPosition
+                       or b.AbsolutePosition.X>hitByPosition.AbsolutePosition.X
+                       or (b.AbsolutePosition.X==hitByPosition.AbsolutePosition.X
+                           and b.AbsolutePosition.Y<hitByPosition.AbsolutePosition.Y) then
+                        hitByPosition=b
+                    end
+                end
             end
         end
-        hit = hit or hitByColor
-        if hit then clickBtn(hit); L("  ✖️ ปิดเมนู Challenge") else
+        hit = hit or hitByColor or hitByPosition
+        if hit then clickBtn(hit); L(("  ✖️ ปิดเมนู Challenge (รอบ %d)"):format(attempt)) else
             pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.Escape,false,game); task.wait(0.1); VIM:SendKeyEvent(false,Enum.KeyCode.Escape,false,game) end)
         end
-        task.wait(0.7)
+        local t0=tick()
+        repeat task.wait(0.2) until not findChalRoot() or tick()-t0>1.2
     end
-    return findChalRoot()==nil
+    local closed=findChalRoot()==nil
+    if not closed then L("  ❌ ปิดหน้า Challenge ไม่สำเร็จหลังลอง 6 รอบ") end
+    return closed
 end
 _G.AE_CHAL_STATUS = function() return readChalBoard() end
 _G.AE_CHAL_OPEN   = function() return openChalMenu() end
@@ -12455,19 +12526,27 @@ local function enterChallenge(kind, idx)
     end
     -- ปุ่มเข้าจริง = "Enter Matchmaking" (fallback เก่า: Select Stage/Start/Enter)
     if clickText("Enter Matchmaking",false,6) then task.wait(1.5); return true end
-    clickText("Select Stage",false,4); task.wait(1.5)
-    if not clickText("Start",false,8) then
-        clickText("Enter",false,4); task.wait(2)
-        if not clickText("Start",false,8) then L("  ⚠️ ไม่เจอ Start/Enter Matchmaking (อาจเข้าด่านตรงๆ)") end
+    local selected=clickText("Select Stage",false,4); task.wait(1.5)
+    if selected and clickText("Start",false,8) then return true end
+    local entered=clickText("Enter",true,4); task.wait(2)
+    if entered and clickText("Start",false,8) then return true end
+    -- บาง UI เข้าด่านทันทีหลัง Select/Enter: ยืนยันจากสถานะจริงเท่านั้น
+    local t0=tick()
+    while tick()-t0<5 do
+        local started=false
+        if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); started=ok and r or false end
+        if started then return true end
+        task.wait(0.5)
     end
-    return true
+    L("  ❌ ยืนยันการเริ่ม Challenge ไม่ได้")
+    return false
 end
 
 local running=false
 _G.AE_CHAL_STOP=function() running=false; if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end; if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end; L("⏹ หยุด Challenge") end
 _G.AE_CHAL_RUN=function(kind, idx)
     kind=kind or "Regular"; idx=idx or 1
-    if running then L("กำลังทำงานอยู่"); return end
+    if running then L("กำลังทำงานอยู่"); return true end
     running=true
     task.spawn(function()
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade on)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
@@ -12499,6 +12578,7 @@ _G.AE_CHAL_RUN=function(kind, idx)
         if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
         running=false
     end)
+    return true
 end
 
 -- UI
@@ -12618,15 +12698,19 @@ end
 local function waitStageCycle(enterT, playT)
     local t0 = tick()
     while running and not inGame() and not endScreenUp() and tick()-t0 < enterT do task.wait(2) end
+    if not running or MYGEN ~= _G.AE_SCRIPT_GEN then return false end
     if not inGame() and not endScreenUp() then QL("  ⚠️ ไม่เข้าด่านใน "..enterT.."s (ข้าม)"); return false end
+    if endScreenUp() then QL("  🏁 เจอหน้าจบเกมแล้ว"); return true end
     QL("  ▶ เข้าด่านแล้ว — เล่นจนจบ...")
     t0 = tick()
-    while running and inGame() and tick()-t0 < playT do
-        if endScreenUp() then QL("  🏁 เจอหน้าจบเกม → จบรอบ"); break end
+    while running and MYGEN == _G.AE_SCRIPT_GEN and tick()-t0 < playT do
+        if endScreenUp() then QL("  🏁 เจอหน้าจบเกม → จบรอบ"); return true end
+        if not inGame() then QL("  🏠 ออกจากด่านแล้ว → จบรอบ"); return true end
         task.wait(3)
     end
-    task.wait(2)
-    return true
+    if not running or MYGEN ~= _G.AE_SCRIPT_GEN then return false end
+    QL("  ⚠️ รอผลด่านเกิน "..playT.."s → ไม่นับว่าสำเร็จ")
+    return false
 end
 
 local function readBoard() return _G.AE_BOUNTY_READ and _G.AE_BOUNTY_READ() or nil end
@@ -12845,7 +12929,13 @@ local function playChalCard(kind, card)
     if left <= 0 then QL(("  ✓ %s #%d '%s' ครบแล้ว (เหลือ 0/%d) → ข้าม"):format(kind, card.idx, card.name or "?", card.max or 10)); return "full" end
     QL(("  🏆 ลง %s #%d '%s' (เหลือ %d/%d รอบ)"):format(kind, card.idx, card.name or "?", left, card.max or 10))
     stopLoops()   -- หยุด loop เก่าเฉยๆ (ไม่ backToLobby — CHAL_RUN นำทางเข้าเอง)
-    if _G.AE_CHAL_RUN then pcall(_G.AE_CHAL_RUN, kind, card.idx) end
+    if not _G.AE_CHAL_RUN then QL("  ❌ ไม่พบระบบ AE_CHAL_RUN"); return "blocked" end
+    local okStart,started=pcall(_G.AE_CHAL_RUN, kind, card.idx)
+    if not okStart or started==false then
+        QL("  ❌ เริ่ม Challenge ไม่สำเร็จ: "..tostring(started))
+        chalCD[key]=tick()+60
+        return "blocked"
+    end
     if waitStageCycle(45, 900) then
         task.wait(3); return "played"
     else
@@ -12898,7 +12988,12 @@ local function grindChallenges()
     end
     if not playedAny then QL("  ℹ️ ไม่มี Challenge ให้ลง (ครบ 10/10 หมด/ติดคูลดาวน์หมด) → ไปฟาม fallback") end
     -- ⭐ v9.85: ปิดเมนู Challenge ก่อนออก (กัน overlay ค้างบัง → villain fallback หา 'Events' ไม่เจอ)
-    if _G.AE_CHAL_CLOSE then pcall(_G.AE_CHAL_CLOSE) end
+    if _G.AE_CHAL_CLOSE then
+        local okClose,closed=pcall(_G.AE_CHAL_CLOSE)
+        if not okClose or not closed then
+            QL("  ⛔ ยังปิดหน้า Challenge ไม่ได้ → Villain จะลองปิดซ้ำก่อนหา Events")
+        end
+    end
     return playedAny
 end
 
@@ -12907,15 +13002,20 @@ local function runFallback(fb)
     stopAllGameplay()   -- ⭐ เคลียร์ระบบเก่าก่อนเข้า fallback
     fb = tostring(fb or "villain")
     if fb=="villain" and _G.AE_VILLAIN_RUN then
-        pcall(_G.AE_VILLAIN_RUN, tonumber(_G.AE_QUEST_FALLBACK_ACT) or 1)
+        local ok,res=pcall(_G.AE_VILLAIN_RUN, tonumber(_G.AE_QUEST_FALLBACK_ACT) or 1)
+        if not ok or res==false then QL("❌ เริ่ม Villain fallback ไม่สำเร็จ: "..tostring(res)); return false end
     elseif fb=="expedition" and _G.AE_EXP_RUN then
         _G.AE_EXP_MAP = _G.AE_QUEST_FALLBACK_STAGE or "School Grounds"; _G.AE_EXP_DIFF = 3
-        pcall(_G.AE_EXP_RUN)
+        local ok,res=pcall(_G.AE_EXP_RUN)
+        if not ok or res==false then QL("❌ เริ่ม Expedition fallback ไม่สำเร็จ: "..tostring(res)); return false end
     elseif fb=="story" and _G.AE_STORY_RUN then
-        pcall(_G.AE_STORY_RUN, _G.AE_QUEST_FALLBACK_STAGE or "School Grounds", 1)
+        local ok,res=pcall(_G.AE_STORY_RUN, _G.AE_QUEST_FALLBACK_STAGE or "School Grounds", 1)
+        if not ok or res==false then QL("❌ เริ่ม Story fallback ไม่สำเร็จ: "..tostring(res)); return false end
     else
         QL("⚠️ fallback ไม่รู้จัก/ไม่พร้อม: "..fb)
+        return false
     end
+    return true
 end
 
 -- ฟาม fallback เป็นช่วงเวลา (นาที) แล้วหยุด — ให้ challenge cooldown หมดพอดี
@@ -12923,10 +13023,11 @@ local function farmFallbackFor(mins)
     if not running then return end
     local fb = _G.AE_QUEST_FALLBACK_MODE or "villain"
     QL(("🌾 ฟาม fallback (%s) ~%d นาที (รอ challenge cooldown)"):format(tostring(fb), mins))
-    runFallback(fb)   -- เริ่มฟาม (ลูป async)
+    if not runFallback(fb) then QL("  ⛔ ไม่เริ่มจับเวลา fallback เพราะระบบเริ่มไม่สำเร็จ"); return false end
     local t0 = tick()
     while running and tick()-t0 < mins*60 do task.wait(5) end
     stopAllGameplay()   -- หยุดฟามก่อนไปลอง challenge รอบใหม่
+    return true
 end
 
 -- ---------- STOP ----------
