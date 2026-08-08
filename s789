@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.97"
+local SCRIPT_VERSION = "v9.98"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -138,19 +138,73 @@ local function rewardPopupVisible()
 end
 
 local lastRewardPopupClick = 0
+local function findRewardModalCloseButton()
+    local best,bestArea
+    pcall(function()
+        for _,gui in ipairs(player.PlayerGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Enabled then
+                for _,btn in ipairs(gui:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and guiObjectShown(btn) then
+                        local texts={}
+                        if btn:IsA("TextButton") then texts[#texts+1]=tostring(btn.Text or "") end
+                        for _,d in ipairs(btn:GetDescendants()) do
+                            if d:IsA("TextLabel") and guiObjectShown(d) then texts[#texts+1]=tostring(d.Text or "") end
+                        end
+                        local isClose=false
+                        for _,t in ipairs(texts) do
+                            if t:gsub("<[^>]->",""):match("^%s*[Cc][Ll][Oo][Ss][Ee]%s*$") then isClose=true; break end
+                        end
+                        if isClose then
+                            local area=btn.AbsoluteSize.X*btn.AbsoluteSize.Y
+                            if not bestArea or area>bestArea then best,bestArea=btn,area end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return best
+end
+
+local function hardClickGuiButton(btn)
+    pcall(function()
+        if getconnections then
+            for _,c in ipairs(getconnections(btn.MouseButton1Click)) do c:Fire() end
+            for _,c in ipairs(getconnections(btn.Activated)) do c:Fire() end
+        end
+    end)
+    local cx=math.floor(btn.AbsolutePosition.X+btn.AbsoluteSize.X/2)
+    local cy=math.floor(btn.AbsolutePosition.Y+btn.AbsoluteSize.Y/2)
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06)
+        VirtualInputManager:SendMouseButtonEvent(cx,cy,0,false,game,0)
+    end)
+end
+
 local function dismissRewardPopup()
     if not rewardPopupVisible() or tick()-lastRewardPopupClick < 0.35 then return false end
     local cam = workspace.CurrentCamera
     if not cam then return false end
     lastRewardPopupClick = tick()
+
+    -- Tooltip/หน้ารายละเอียดไอเทมอาจบัง Obtained Rewards และมีปุ่ม Close ของตัวเอง
+    local closeBtn=findRewardModalCloseButton()
+    if closeBtn then
+        hardClickGuiButton(closeBtn)
+        print("[UI] 🎁 popup ไอเทมบังอยู่ → กดปุ่ม Close ก่อน")
+        return true
+    end
+
     local size = cam.ViewportSize
-    local cx, cy = math.floor(size.X/2), math.floor(size.Y/2)
+    -- ห้ามคลิกกลางจอ: ตรงนั้นเป็นการ์ดไอเทมและจะเปิด tooltip ซ้ำ
+    -- ใช้มุมขวาล่างซึ่งอยู่นอกแผงรางวัล/เมนูซ้าย/Roblox top bar
+    local cx, cy = math.max(5,math.floor(size.X-40)), math.max(5,math.floor(size.Y-40))
     pcall(function()
         VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
         task.wait(0.06)
         VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
-    print("[UI] 🎁 พบ Obtained Rewards → คลิกกลางจอเพื่อปิด")
+    print(("[UI] 🎁 พบ Obtained Rewards → คลิกพื้นที่ว่าง (%d,%d) เพื่อปิด"):format(cx,cy))
     return true
 end
 _G.AE_DISMISS_REWARD_POPUP = dismissRewardPopup
