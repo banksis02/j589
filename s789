@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v9.96"
+local SCRIPT_VERSION = "v9.97"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -12390,6 +12390,7 @@ local function findChalRoot()
     return nil
 end
 -- คืน { cats={Regular={avail=bool,reset=str}, Daily=..., Weekly=...}, cards={ {idx,name,done,max}, ... } }
+local currentChalKind = "Regular"
 local function readChalBoard()
     local root=findChalRoot(); if not root then return nil end
     local labels={}
@@ -12441,12 +12442,17 @@ local function readChalBoard()
         for _,l in ipairs(labels) do
             if l.x>300 and l.y>=yTop-6 and l.y<yBot then
                 if not name and l.t:find(" %- Act",1) then name=l.t end
-                -- ⭐ v9.89: "Daily Limit A / B" → A = รอบที่ "เหลือ" (ลงได้), B = สูงสุด (ไม่ใช่ A=ทำไปแล้ว!)
+                -- "Daily Limit A / B" = เล่นไปแล้ว A จากทั้งหมด B → เหลือ B-A
                 local a,b=l.t:match("^%s*(%d+)%s*/%s*(%d+)%s*$")
-                if a and b then remain=tonumber(a); max=tonumber(b) end
+                if a and b then
+                    local used,total=tonumber(a) or 0,tonumber(b) or 10
+                    max=total; remain=math.max(0,total-used)
+                end
             end
         end
-        board.cards[#board.cards+1]={ kind=tt.kind, idx=tt.idx, name=name or "?", remain=remain or 0, max=max or 10 }
+        -- prefix บนการ์ดยังคงเป็น Regular แม้เลือกแท็บ Daily/Weekly → ยึดแท็บที่เลือก
+        board.cards[#board.cards+1]={ kind=currentChalKind, rawKind=tt.kind, idx=tt.idx,
+                                     name=name or "?", remain=remain or 0, max=max or 10 }
     end
     return board
 end
@@ -12467,6 +12473,7 @@ local function selectChalTab(kind)
                     local anc=l.Parent
                     while anc and not (anc:IsA("TextButton") or anc:IsA("ImageButton")) do anc=anc.Parent end
                     if anc then clickBtn(anc) else vimClick(l) end
+                    currentChalKind=kind
                     return true
                 end
             end
@@ -12474,9 +12481,21 @@ local function selectChalTab(kind)
     end
     return false
 end
+
+-- Enter Matchmaking เปิด Private Party ก่อน; ต้อง Disband เพื่อย้อนกลับ Challenge
+local function closeChalParty()
+    local disband=findBtn("Disband",true) or findBtn("Disband",false)
+    if not disband then return true end
+    clickBtn(disband); L("  🚪 กด Disband ออกจาก Private Party")
+    local t0=tick()
+    repeat task.wait(0.2) until not findBtn("Disband",false) or tick()-t0>5
+    return findBtn("Disband",false)==nil
+end
+
 -- ปิดเมนู Challenges (กัน overlay ค้างบังตอนไปฟาม fallback → villain หา "Events" ไม่เจอ)
 -- ⭐ v9.89: หน้า list ไม่มีปุ่ม "Back" — ปุ่มปิดคือ X แดง มุมขวาบนของ panel → หาโดยชื่อ/สีแดง/ตำแหน่งขวาบน
 local function closeChalMenu()
+    closeChalParty(); task.wait(0.4)
     if not findChalRoot() then return true end
     clickText("Back",false,1)   -- ถ้าอยู่หน้า detail → ถอยก่อน (list ไม่มีก็ข้าม)
     for attempt=1,6 do
@@ -12533,6 +12552,7 @@ _G.AE_CHAL_STATUS = function() return readChalBoard() end
 _G.AE_CHAL_OPEN   = function() return openChalMenu() end
 _G.AE_CHAL_SELECT = function(kind) return selectChalTab(kind) end
 _G.AE_CHAL_CLOSE  = function() return closeChalMenu() end
+_G.AE_CHAL_ABORT_PARTY = function() return closeChalParty() end
 
 local function inGame()
     if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
@@ -12570,8 +12590,11 @@ end
 
 local function enterChallenge(kind, idx)
     L(("🏅 เข้า Challenge: %s #%s"):format(tostring(kind), tostring(idx)))
-    clickText("Play",true,5); task.wait(1.5)
-    clickText("Challenge",true,5); task.wait(1.8)
+    closeChalParty()
+    if not findChalRoot() then
+        if not clickText("Play",true,5) then return false end; task.wait(1.5)
+        if not clickText("Challenge",true,5) then return false end; task.wait(1.8)
+    end
     -- เลือกแท็บ (Regular/Daily/Weekly Challenge)
     if not clickText(kind.." Challenge",false,5) then clickText(kind,false,4) end
     task.wait(1.2)
@@ -12584,7 +12607,14 @@ local function enterChallenge(kind, idx)
         return false
     end
     -- ปุ่มเข้าจริง = "Enter Matchmaking" (fallback เก่า: Select Stage/Start/Enter)
-    if clickText("Enter Matchmaking",false,6) then task.wait(1.5); return true end
+    if clickText("Enter Matchmaking",false,6) then
+        task.wait(1.2)
+        L("  👥 เข้า Private Party → กด Start")
+        if clickText("Start",true,10) then task.wait(1); return true end
+        L("  ❌ เข้า Private Party แล้วแต่กด Start ไม่ได้")
+        closeChalParty()
+        return false
+    end
     local selected=clickText("Select Stage",false,4); task.wait(1.5)
     if selected and clickText("Start",false,8) then return true end
     local entered=clickText("Enter",true,4); task.wait(2)
@@ -12598,6 +12628,7 @@ local function enterChallenge(kind, idx)
         task.wait(0.5)
     end
     L("  ❌ ยืนยันการเริ่ม Challenge ไม่ได้")
+    closeChalParty()
     return false
 end
 
@@ -12607,15 +12638,20 @@ _G.AE_CHAL_RUN=function(kind, idx)
     kind=kind or "Regular"; idx=idx or 1
     if running then L("กำลังทำงานอยู่"); return true end
     running=true
+    _G.AE_CHAL_LAST_START="starting"
     task.spawn(function()
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade on)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         -- ⭐ v9.70: เอา EXP_SETTINGS ออก (ขัดกับ APPLY + เปิดตั้งค่า 2 รอบ) → ใช้ auto-upgrade เกมเหมือน Infinite/Story
         if not inGame() then
-            if not enterChallenge(kind, idx) then L("  ⛔ เข้าไม่ได้ (คูลดาวน์/ไม่พร้อม) → เลิกเร็ว"); running=false; return end
+            if not enterChallenge(kind, idx) then
+                _G.AE_CHAL_LAST_START="failed"
+                L("  ⛔ เข้าไม่ได้ (คูลดาวน์/ไม่พร้อม) → เลิกเร็ว"); running=false; return
+            end
         end
         local t0=tick()
         while running and not inGame() and tick()-t0<60 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
-        if not inGame() then L("⚠️ ไม่เข้าด่าน"); notify("🏅 Challenge","ไม่เข้าด่าน",6); running=false; return end
+        if not inGame() then _G.AE_CHAL_LAST_START="failed"; closeChalParty(); L("⚠️ ไม่เข้าด่าน"); notify("🏅 Challenge","ไม่เข้าด่าน",6); running=false; return end
+        _G.AE_CHAL_LAST_START="entered"
         L("✅ อยู่ในด่าน → วาง Villain + อัพเกรดเอง (เงินก่อนตัน → ดาเมจ)")
         if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
         -- ⭐ v9.70: เอา VILLAIN_UPGRADE ออก → ใช้ auto-upgrade ของเกม (APPLY เปิดไว้) เหมือน Infinite/Story
@@ -12754,9 +12790,15 @@ local function guiHasText(needle)
 end
 
 -- รอเข้าด่าน (สูงสุด enterT) แล้วรอจบด่าน (playT) — จบเมื่อออกจากด่าน/เจอหน้า Victory/Defeat
-local function waitStageCycle(enterT, playT)
+local function waitStageCycle(enterT, playT, watchChallengeStart)
     local t0 = tick()
-    while running and not inGame() and not endScreenUp() and tick()-t0 < enterT do task.wait(2) end
+    while running and not inGame() and not endScreenUp() and tick()-t0 < enterT do
+        if watchChallengeStart and _G.AE_CHAL_LAST_START=="failed" then
+            QL("  ⛔ Challenge ยืนยันว่าเริ่มไม่สำเร็จ → หยุดรอทันที")
+            return false
+        end
+        task.wait(0.5)
+    end
     if not running or MYGEN ~= _G.AE_SCRIPT_GEN then return false end
     if not inGame() and not endScreenUp() then QL("  ⚠️ ไม่เข้าด่านใน "..enterT.."s (ข้าม)"); return false end
     if endScreenUp() then QL("  🏁 เจอหน้าจบเกมแล้ว"); return true end
@@ -12984,9 +13026,11 @@ local chalCD = {}   -- [kind..idx] = tick() park until (ตั้งเมื่
 local function playChalCard(kind, card)
     local key = kind .. card.idx
     if chalCD[key] and tick() < chalCD[key] then return "skip" end
-    local left = card.remain or 0   -- ⭐ v9.89: remain = ตัวเลขแรกใน "A/10" = รอบที่ยังลงได้
-    if left <= 0 then QL(("  ✓ %s #%d '%s' ครบแล้ว (เหลือ 0/%d) → ข้าม"):format(kind, card.idx, card.name or "?", card.max or 10)); return "full" end
-    QL(("  🏆 ลง %s #%d '%s' (เหลือ %d/%d รอบ)"):format(kind, card.idx, card.name or "?", left, card.max or 10))
+    -- Regular: 3 การ์ด x 10 รอบ; Daily/Weekly: เล่นได้อย่างละ 1 รอบต่อ reset
+    local maxRuns = kind=="Regular" and (card.max or 10) or 1
+    local left = kind=="Regular" and (card.remain or 0) or 1
+    if left <= 0 then QL(("  ✓ %s #%d '%s' ครบแล้ว (เหลือ 0/%d) → ข้าม"):format(kind, card.idx, card.name or "?", maxRuns)); return "full" end
+    QL(("  🏆 ลง %s #%d '%s' (เหลือ %d/%d รอบ)"):format(kind, card.idx, card.name or "?", left, maxRuns))
     stopLoops()   -- หยุด loop เก่าเฉยๆ (ไม่ backToLobby — CHAL_RUN นำทางเข้าเอง)
     if not _G.AE_CHAL_RUN then QL("  ❌ ไม่พบระบบ AE_CHAL_RUN"); return "blocked" end
     local okStart,started=pcall(_G.AE_CHAL_RUN, kind, card.idx)
@@ -12995,9 +13039,10 @@ local function playChalCard(kind, card)
         chalCD[key]=tick()+60
         return "blocked"
     end
-    if waitStageCycle(45, 900) then
+    if waitStageCycle(45, 900, true) then
         task.wait(3); return "played"
     else
+        if _G.AE_CHAL_ABORT_PARTY then pcall(_G.AE_CHAL_ABORT_PARTY) end
         chalCD[key] = tick() + 600   -- กดเข้าแล้วเข้าไม่ได้จริง (คูลดาวน์ซ่อน) → พัก 10 นาที
         QL(("  ⛔ %s #%d เข้าไม่ได้ → พัก 10 นาที"):format(kind, card.idx))
         return "blocked"
@@ -13017,35 +13062,65 @@ local function grindChallenges()
     if not (_G.AE_CHAL_OPEN and _G.AE_CHAL_OPEN()) then QL("  ⚠️ เปิดเมนู Challenge ไม่ได้ → ข้าม"); return false end
     task.wait(1)
     local playedAny, progressed = false, true
+    local hadUiFailure = false
+    local specialPlayed = { Daily=false, Weekly=false } -- กัน server status อัปเดตช้าแล้วลงซ้ำ
     while running and MYGEN == _G.AE_SCRIPT_GEN and progressed do
         progressed = false
         local board = _G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()
         if not board then QL("  ⚠️ อ่านสถานะ Challenge ไม่ได้ → หยุด"); break end
-        -- ⭐ v9.90: ไม่ใช้ป้ายหมวด (Rewards Available/Unavailable) ตัดสินแล้ว — อ่านพลาดบ่อยตอนเครื่องช้า
-        --   ใช้ "card remain>0" ตรงๆ + ให้ enterChallenge ถอยเองถ้าเจอ "Available in" (คูลดาวน์จริง)
+        -- ใช้สถานะหมวดร่วมกับ Daily Limit: Unavailable ต้องข้าม, Available จึงอ่านการ์ด
         for _,kind in ipairs({"Regular","Daily","Weekly"}) do
             if not running then break end
             local c = board.cats[kind]
             local statusTxt = c and (c.avail==false and "⛔(ป้าย unavailable)" or (c.avail and "✅(ป้าย available)" or "❔")) or "❔"
-            if _G.AE_CHAL_SELECT then pcall(_G.AE_CHAL_SELECT, kind); task.wait(0.9) end
-            local b2 = (_G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()) or board
-            -- มีการ์ดที่ยังเหลือรอบไหม
-            local playable = {}
-            for _,card in ipairs(b2.cards or {}) do
-                if card.kind == kind and (card.remain or 0) > 0 then playable[#playable+1]=card end
-            end
-            QL(("   • %s %s — การ์ดที่ยังเหลือรอบ: %d"):format(kind, statusTxt, #playable))
-            for _,card in ipairs(playable) do
-                if not running then break end
-                local r = playChalCard(kind, card)   -- เข้าไม่ได้จริง (คูลดาวน์) → enterChallenge ถอย + park 10 นาที
-                if r == "played" then
-                    playedAny = true; progressed = true
-                    if _G.AE_CHAL_OPEN then pcall(_G.AE_CHAL_OPEN) end; task.wait(1)   -- เปิดเมนูอ่านสถานะใหม่
+            if specialPlayed[kind] then
+                QL(("   • %s — เล่นครบ 1 รอบของ reset นี้แล้ว"):format(kind))
+            elseif c and c.avail==false then
+                QL(("   • %s %s — ข้ามทั้งหมวดจนกว่าจะ reset"):format(kind,statusTxt))
+            else
+                local selected=false
+                if _G.AE_CHAL_SELECT then
+                    local okSel,resSel=pcall(_G.AE_CHAL_SELECT,kind); selected=okSel and resSel~=false
+                    task.wait(0.9)
+                end
+                if not selected then
+                    hadUiFailure=true
+                    QL(("   ⛔ เลือกแท็บ %s ไม่สำเร็จ → ไม่ใช้การ์ดจากแท็บก่อนหน้า"):format(kind))
+                else
+                    local b2 = (_G.AE_CHAL_STATUS and _G.AE_CHAL_STATUS()) or board
+                    local playable = {}
+                    for _,card in ipairs(b2.cards or {}) do
+                        if card.kind==kind and ((kind=="Regular" and (card.remain or 0)>0) or kind~="Regular") then
+                            playable[#playable+1]=card
+                            if kind~="Regular" then break end -- Daily/Weekly เลือกเพียงการ์ดแรก
+                        end
+                    end
+                    local quotaText=kind=="Regular" and ("การ์ดที่ยังไม่ครบ 10 รอบ: "..#playable) or ("รอบที่ลงได้วันนี้/รอบ reset: "..(#playable>0 and 1 or 0))
+                    QL(("   • %s %s — %s"):format(kind,statusTxt,quotaText))
+                    for _,card in ipairs(playable) do
+                        if not running then break end
+                        local r = playChalCard(kind,card)
+                        if r=="played" then
+                            playedAny=true; progressed=true
+                            if kind~="Regular" then specialPlayed[kind]=true end
+                            if _G.AE_CHAL_OPEN then pcall(_G.AE_CHAL_OPEN) end; task.wait(1)
+                        elseif r=="blocked" then
+                            if _G.AE_CHAL_OPEN then pcall(_G.AE_CHAL_OPEN) end; task.wait(0.8)
+                            if _G.AE_CHAL_SELECT then pcall(_G.AE_CHAL_SELECT,kind) end; task.wait(0.6)
+                        end
+                        if kind~="Regular" then break end
+                    end
                 end
             end
         end
     end
-    if not playedAny then QL("  ℹ️ ไม่มี Challenge ให้ลง (ครบ 10/10 หมด/ติดคูลดาวน์หมด) → ไปฟาม fallback") end
+    if not playedAny then
+        if hadUiFailure then
+            QL("  ⚠️ ตรวจ Challenge ไม่ครบเพราะเลือกแท็บไม่สำเร็จ — ไม่สรุปว่าโควตาหมด")
+        else
+            QL("  ℹ️ ไม่มี Challenge ให้ลงจริง (Regular ครบ 30 รอบ + Daily/Weekly unavailable) → ไปฟาม fallback")
+        end
+    end
     -- ⭐ v9.85: ปิดเมนู Challenge ก่อนออก (กัน overlay ค้างบัง → villain fallback หา 'Events' ไม่เจอ)
     if _G.AE_CHAL_CLOSE then
         local okClose,closed=pcall(_G.AE_CHAL_CLOSE)
@@ -13053,7 +13128,8 @@ local function grindChallenges()
             QL("  ⛔ ยังปิดหน้า Challenge ไม่ได้ → Villain จะลองปิดซ้ำก่อนหา Events")
         end
     end
-    return playedAny
+    -- UI อ่านไม่ครบถือว่ายังมีงาน Challenge ค้าง เพื่อไม่กระโดดไป Villain ผิดๆ
+    return playedAny or hadUiFailure
 end
 
 -- ---------- fallback farm ----------
