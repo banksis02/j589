@@ -17,6 +17,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local player             = Players.LocalPlayer
 
 local BACKEND_URL = "https://overload-backend-production.up.railway.app"
+local AUTOMATION_URL = "https://ggx-automation-backend-production.up.railway.app"
 
 local placeId = game.PlaceId
 local GAME_NAME, GAME_ID
@@ -975,6 +976,17 @@ if GAME_ID == "anime_expeditions" then
         return level, bp, wave
     end
     _G.AE_GET_STATS = aeGetStats
+
+    local function aeGetGem()
+        local amount = 0
+        pcall(function()
+            local pd = aeGetReplica("PlayerData")
+            local gem = pd and pd.Data and pd.Data.ItemData and pd.Data.ItemData.Gem
+            amount = tonumber(type(gem) == "table" and gem.Amount or gem) or 0
+        end)
+        return amount
+    end
+    _G.AE_GET_GEM = aeGetGem
 
     -- ⭐ Villain Invasion Battlepass level (คนละอันกับ BP หลัก)
     local function aeGetVillainBP()
@@ -3501,6 +3513,20 @@ if GAME_ID == "anime_expeditions" then
                 end
             end
         end)
+        if currentJob and currentJob.id then
+            pcall(function()
+                HttpService:RequestAsync({
+                    Url = AUTOMATION_URL .. "/api/public/runtime-jobs/" .. tostring(currentJob.id) .. "/progress",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        username = player.Name,
+                        userId = player.UserId,
+                        stats = { gem = aeGetGem(), battlepass = bp, level = level, villainBattlepass = aeGetVillainBP() }
+                    })
+                })
+            end)
+        end
         local payload = {
             username     = player.Name,
             userId       = player.UserId,
@@ -3534,6 +3560,16 @@ if GAME_ID == "anime_expeditions" then
 
     -- poll งานจากเว็บ
     local function fetchJob()
+        local okAuto, autoResp = pcall(function()
+            return HttpService:RequestAsync({
+                Url = AUTOMATION_URL .. "/api/public/runtime-jobs/" .. HttpService:UrlEncode(player.Name),
+                Method = "GET",
+            })
+        end)
+        if okAuto and type(autoResp) == "table" and autoResp.Success then
+            local okAutoDec, autoJob = pcall(function() return HttpService:JSONDecode(autoResp.Body) end)
+            if okAutoDec and type(autoJob) == "table" and autoJob.status ~= "idle" then return autoJob end
+        end
         local ok, resp = pcall(function()
             return HttpService:RequestAsync({
                 Url = BACKEND_URL .. "/api/job/" .. tostring(player.UserId),
@@ -10861,14 +10897,24 @@ _G.AE_EXP_RUN = function()
                         task.wait(2)
                         return
                     end
-                    -- [1] ตั้งค่าก่อน: ปิด Auto-Upgrade / Auto Retry / Auto Next
+                    -- [1] ตั้งค่าแบบ background: ห้ามรอจนตั้งค่าเสร็จ เพราะ wave เริ่มแล้ว
+                    -- การวางตัวด้านล่างต้องเริ่มทันทีพร้อมกับการตั้งค่า เพื่อไม่ให้แพ้ต้นเกม
                     if not settingsDone and has("AE_EXP_SETTINGS") then
-                        L("[1] ตั้งค่า: ปิด Auto-Upgrade / Auto Retry / Auto Next")
-                        call("AE_EXP_SETTINGS")
-                        settingsDone = true
-                        task.wait(1)
+                        settingsDone = true -- ล็อกก่อน spawn กันลูปถัดไปเปิด Settings ซ้ำ
+                        L("[1] ตั้งค่าเบื้องหลัง พร้อมเริ่มวางตัวทันที")
+                        task.spawn(function()
+                            local ok, err = pcall(function()
+                                call("AE_EXP_SETTINGS")
+                            end)
+                            if not ok then
+                                settingsDone = false -- ให้ลองใหม่ได้ ถ้า thread ตั้งค่าพังจริง
+                                warn("[AE Settings] background error: " .. tostring(err))
+                            else
+                                L("[1] ตั้งค่าเบื้องหลังเสร็จแล้ว")
+                            end
+                        end)
                     end
-                    -- [2] วางตัว + อัพเกรด + เฝ้ากด Continue (เล่นไปเรื่อยๆ)
+                    -- [2] วางตัว + อัพเกรด + เฝ้ากด Continue ทันที (ทำพร้อมกับ Settings)
                     if not placed then
                         if has("AE_EXP_RESETRUN") then call("AE_EXP_RESETRUN") end
                         L("[2] วางตัวละคร + อัพเกรด + เฝ้ากด Continue")
