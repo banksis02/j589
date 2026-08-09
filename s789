@@ -3522,6 +3522,7 @@ if GAME_ID == "anime_expeditions" then
                     Body = HttpService:JSONEncode({
                         username = player.Name,
                         userId = player.UserId,
+                        farming = farmingActive == true,
                         stats = { gem = aeGetGem(), battlepass = bp, level = level, villainBattlepass = aeGetVillainBP() }
                     })
                 })
