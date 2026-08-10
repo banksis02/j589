@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.6"
+local SCRIPT_VERSION = "v10.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11718,13 +11718,14 @@ local function clickBtn(b)
     pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
     pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Up)) do c:Fire() end end)
     task.wait(0.08)
-    -- คลิกพิกัดจริง (เผื่อ fire ไม่พอ) — ลองทั้งมี/ไม่มี inset กัน GUI ที่ IgnoreGuiInset
+    -- คลิกพิกัดจริง (เผื่อ fire ไม่พอ) — hover ก่อน + ลองทั้งมี/ไม่มี inset
     pcall(function()
         local x = b.AbsolutePosition.X + b.AbsoluteSize.X/2
         local y0 = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2
         for _, y in ipairs({ y0 + inset.Y, y0 }) do
-            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.04)
-            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            pcall(function() VIM:SendMouseMoveEvent(x, y, game) end); task.wait(0.05)
+            VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.05)
+            VIM:SendMouseButtonEvent(x, y, 0, false, game, 0); task.wait(0.03)
         end
     end)
 end
@@ -11945,6 +11946,7 @@ function _G.AE_GTU_AUTO()
     GL(("▶️ auto self-learning เริ่ม (รู้แล้ว %d ตัว) — หยุด: _G.AE_GTU_STOP()"):format(mapCount()))
     local myGen = _G.AE_SCRIPT_GEN
     local roundSig, roundAnim, roundSnap, learnedSig
+    local enterTries, lastEnter = 0, 0
     task.spawn(function()
         while _G.AE_GTU_ON and myGen == _G.AE_SCRIPT_GEN do
             pcall(function()
@@ -11958,11 +11960,17 @@ function _G.AE_GTU_AUTO()
                 end
                 local panel = findPanel()
                 if not panel then
-                    -- 2) หน้าเลือกโหมด → กดเข้าเล่น
+                    -- 2) หน้าเลือกโหมด → กดเข้าเล่น (มี cooldown กันสแปม)
                     local eb = findEnterButton()
-                    if eb then clickBtn(eb); GL("🎮 เข้าเล่น"); task.wait(2.5) end
+                    if eb and (tick() - lastEnter > 5) then
+                        clickBtn(eb); lastEnter = tick(); enterTries = enterTries + 1
+                        if enterTries <= 3 then GL("🎮 ลองเข้าเล่น ("..enterTries..")")
+                        elseif enterTries == 4 then GL("⚠️ กดการ์ด Hard Mode ไม่ติด — กด Hard Mode เข้าเกมเอง 1 ครั้ง แล้ว auto จะทำต่อ (Retry เอง)") end
+                        task.wait(3)
+                    end
                     return
                 end
+                enterTries = 0   -- เข้าเกมได้แล้ว รีเซ็ต
                 -- 3) ตอบ (เฉพาะช่วงกำลังทาย = ปุ่มสะอาด)
                 if isGuessing() then
                     local btns = cleanButtons()
