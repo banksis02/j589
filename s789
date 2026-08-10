@@ -11414,6 +11414,146 @@ if not okAll then
     pcall(function() if setclipboard then setclipboard("BQ FATAL: "..tostring(fatal)) end end)
 end
 
+-- ===================== [ae_event_quest] =====================
+-- ============================================================
+-- 🎁 AE EVENT QUEST — เคลมเควส "ทุก event" ที่ทำเสร็จแล้วรวดเดียว (generic)
+--   โครงสร้าง event quest เหมือน BountyBoard: QuestData.<DataKey>.Quests[qid]={Completed,Claimed,...}
+--   config: RS.Shared.Information.Events.<Name> มี field .DataKey (เช่น ShenronEvent = Dragon's Wish)
+--   เคลม: _updateNode:FireServer({Type="Post"},"QUEST_CLAIM",<DataKey>,qid) — remote เดียวกับ BountyBoard (พิสูจน์แล้ว)
+--   ฟังก์ชัน: _G.AE_EVENT_LIST()  ดูสถานะ | _G.AE_EVENT_CLAIM_ALL()  เคลมทุกอันที่เสร็จ (ตรวจซ้ำเอง)
+-- ============================================================
+local okEvt, evtErr = pcall(function()
+
+local RS      = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player  = Players.LocalPlayer
+local function EL(s) s=tostring(s); print("[EVT] "..s) end
+
+-- ---------- replica PlayerData (re-capture เมื่อ stale) ----------
+local registry
+local function captureRegistry()
+    pcall(function()
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up)=="table" then
+                for kk in pairs(up) do if type(kk)=="number" then registry=up break end end
+                if registry then break end
+            end
+        end
+    end)
+end
+captureRegistry()
+local function findRep(tok)
+    if registry then for _, r in pairs(registry) do local ok,t=pcall(function() return r.Token end) if ok and t==tok then return r end end end
+end
+local function pdata()
+    local r = findRep("PlayerData")
+    if not r then captureRegistry(); r = findRep("PlayerData") end
+    return r and r.Data or nil
+end
+
+-- ---------- remote เคลม (เดียวกับ BountyBoard) ----------
+local updateNode
+pcall(function() updateNode = RS.Nodes.Network.NetworkEvents._updateNode end)
+local function fireClaim(dataKey, qid)
+    if not updateNode then return false end
+    return pcall(function() updateNode:FireServer({ Type="Post" }, "QUEST_CLAIM", dataKey, qid) end)
+end
+
+-- ---------- รายชื่อ DataKey ของ "event" จาก config modules ----------
+local function eventDataKeys()
+    local map = {}   -- dataKey -> displayName
+    pcall(function()
+        for _, m in ipairs(RS.Shared.Information.Events:GetChildren()) do
+            if m:IsA("ModuleScript") then
+                local ok, cfg = pcall(require, m)
+                if ok and type(cfg)=="table" then
+                    local dk; pcall(function() dk = rawget(cfg,"DataKey") end)
+                    if dk == nil then pcall(function() dk = cfg.DataKey end) end
+                    if type(dk)=="string" and dk~="" then
+                        local disp; pcall(function() disp = cfg.DisplayName end)
+                        map[dk] = disp or m.Name
+                    end
+                end
+            end
+        end
+    end)
+    return map
+end
+
+-- ---------- อ่านสถานะ event ทั้งหมด (read-only) ----------
+function _G.AE_EVENT_LIST()
+    local d = pdata(); local qd = d and d.QuestData
+    if type(qd)~="table" then EL("❌ อ่าน QuestData ไม่ได้ (อยู่ล็อบบี้ไหม?)"); return {} end
+    local dks = eventDataKeys()
+    local rows = {}
+    for dataKey, disp in pairs(dks) do
+        local board = qd[dataKey]
+        if type(board)=="table" and type(board.Quests)=="table" then
+            local total, done, unclaimed = 0, 0, 0
+            for _, q in pairs(board.Quests) do
+                total = total + 1
+                if q.Completed then done = done + 1; if not q.Claimed then unclaimed = unclaimed + 1 end end
+            end
+            rows[#rows+1] = { key=dataKey, name=disp, total=total, done=done, unclaimed=unclaimed }
+        end
+    end
+    table.sort(rows, function(a,b) return a.unclaimed > b.unclaimed end)
+    EL("===== EVENT QUEST STATUS =====")
+    for _, r in ipairs(rows) do
+        EL(("  %s [%s]  เสร็จ %d/%d | รอเคลม %d"):format(r.name, r.key, r.done, r.total, r.unclaimed))
+    end
+    return rows
+end
+
+-- ---------- เคลมทุกอันที่เสร็จแต่ยังไม่เคลม (ตรวจซ้ำเอง) ----------
+function _G.AE_EVENT_CLAIM_ALL(opts)
+    opts = opts or {}
+    local d = pdata(); local qd = d and d.QuestData
+    if type(qd)~="table" then EL("❌ อ่าน QuestData ไม่ได้"); return 0 end
+    local dks = eventDataKeys()
+    local claimed, attempted, fails = 0, 0, {}
+    for dataKey, disp in pairs(dks) do
+        if not (opts.only and opts.only ~= dataKey) then
+            local board = qd[dataKey]
+            if type(board)=="table" and type(board.Quests)=="table" then
+                for qid, q in pairs(board.Quests) do
+                    if q.Completed == true and not q.Claimed then
+                        attempted = attempted + 1
+                        fireClaim(dataKey, qid)
+                        task.wait(0.35)
+                        local nb = pdata(); nb = nb and nb.QuestData and nb.QuestData[dataKey]
+                        local nq = nb and nb.Quests and nb.Quests[qid]
+                        if nq and nq.Claimed then
+                            claimed = claimed + 1
+                            EL(("✅ %s / %s"):format(disp, qid))
+                        else
+                            fails[#fails+1] = dataKey.."/"..qid
+                            EL(("⚠️ เคลมไม่ติด %s / %s"):format(dataKey, qid))
+                        end
+                        -- หยุดเองถ้า 3 อันแรกพลาดหมด (remote/args อาจไม่ตรง → ขอ SPY)
+                        if attempted >= 3 and claimed == 0 then
+                            EL("🛑 หยุด — 3 อันแรกเคลมไม่ติดเลย, remote/args อาจไม่ตรง")
+                            EL("   → รัน _G.AE_BOUNTY_SPY(30) แล้วกดเคลมมือ 1 อัน ส่ง log มาให้ผม")
+                            return claimed
+                        end
+                    end
+                end
+            end
+        end
+    end
+    EL(("สรุป: เคลมสำเร็จ %d/%d | พลาด %d"):format(claimed, attempted, #fails))
+    if #fails > 0 then EL("อันที่พลาด: "..table.concat(fails, ", ")) end
+    pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",
+        { Title="🎁 Event Claim", Text=("เคลม %d/%d อัน"):format(claimed, attempted), Duration=6 }) end)
+    return claimed
+end
+
+EL("พร้อม — เทส: _G.AE_EVENT_LIST() แล้ว _G.AE_EVENT_CLAIM_ALL()")
+
+end)
+if not okEvt then warn("[EVT FATAL] "..tostring(evtErr)) end
+
 -- ===================== [ae_bounty_summon] =====================
 -- ============================================================
 -- 🎰 AE BOUNTY — SUMMON player v1 (ยิง BANNER_SUMMON ตรง เหมือน fuel)
