@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.14"
+local SCRIPT_VERSION = "v10.15"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8114,7 +8114,8 @@ local function randomPayloadCF(zone)
     local area = payloadPartSafe("UnitArea")
     local bse  = payloadPartSafe("Base")
     if not area then return nil end
-    local y = bse and (bse.Position.Y + bse.Size.Y / 2 + 0.015) or area.Position.Y + 1.5
+    -- ⭐ รถใหม่ Base เป็น Model (ไม่มี .Position) → ใช้ Base เฉพาะตอนเป็น Part, ไม่งั้นอิง UnitArea (รองรับรถทั้ง 2 คัน)
+    local y = (bse and bse:IsA("BasePart")) and (bse.Position.Y + bse.Size.Y / 2 + 0.015) or (area.Position.Y + 1.5)
     local halfX = math.max(area.Size.X / 2 - 1.2, 0.4)
     local halfZ = math.max(area.Size.Z / 2 - 1.5, 0.6)
     local minZ  = halfZ * MID_EXCLUDE
@@ -9761,8 +9762,8 @@ local function payloadTopY()
     local map = workspace:FindFirstChild("Map")
     local pm = map and map:FindFirstChild("PayloadModel")
     local base = pm and pm:FindFirstChild("Base")
-    if base then return base.Position.Y + base.Size.Y / 2 + 0.015 end
-    local area = getUnitArea()
+    if base and base:IsA("BasePart") then return base.Position.Y + base.Size.Y / 2 + 0.015 end
+    local area = getUnitArea()   -- ⭐ รถใหม่ Base=Model → ใช้ UnitArea แทน
     if area then return area.Position.Y + area.Size.Y / 2 + 1.5 end
     return nil
 end
