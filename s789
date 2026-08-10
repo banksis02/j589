@@ -3249,7 +3249,7 @@ if GAME_ID == "anime_expeditions" then
             _G.AE_EXP_ROTATE_MIN = tonumber(_G.AE_EXP_ROTATE_MIN) or 60
             if _G.AE_EXP_RUN then
                 print(("[AE Farm] 🔄 Expedition วนด่าน: %s | ด่านละ %s นาที | ความยาก %s")
-                    :format(table.concat(_G.AE_EXP_ROTATE_MAPS or { "School Grounds", "Flower Forest", "Rose Kingdom" }, " → "),
+                    :format(table.concat(_G.AE_EXP_ROTATE_MAPS or { "School Grounds", "Flower Forest", "Rose Kingdom", "East Town" }, " → "),
                             tostring(_G.AE_EXP_ROTATE_MIN), tostring(_G.AE_EXP_DIFF or 3)))
                 pcall(_G.AE_EXP_RUN)
             else
@@ -10733,9 +10733,9 @@ local UIS_ui     = game:GetService("UserInputService")
 --    _G.AE_EXP_MAP  = "School Grounds" | "Flower Forest" | "Rose Kingdom"
 --    _G.AE_EXP_DIFF = 1 | 2 | 3
 -- ⭐ v9.33 โหมดวนด่าน: _G.AE_EXP_ROTATE = true → วนแมพตามลิสต์ ด่านละ N นาที
---    _G.AE_EXP_ROTATE_MAPS = {"School Grounds","Flower Forest","Rose Kingdom"} (ไม่ใส่ = ใช้ค่านี้)
+--    _G.AE_EXP_ROTATE_MAPS = {"School Grounds","Flower Forest","Rose Kingdom","East Town"} (ไม่ใส่ = ใช้ค่านี้)
 --    _G.AE_EXP_ROTATE_MIN  = 60   (นาทีต่อด่าน — ครบแล้วกลับล็อบบี้เปลี่ยนด่านถัดไป)
-local DEFAULT_ROT_MAPS = { "School Grounds", "Flower Forest", "Rose Kingdom" }
+local DEFAULT_ROT_MAPS = { "School Grounds", "Flower Forest", "Rose Kingdom", "East Town" }
 _G.AE_EXP_ROTIDX = _G.AE_EXP_ROTIDX or 1   -- ⭐ v9.79: global (ด่านปัจจุบันในลิสต์วน 1-based)
 -- ⭐ v9.80: เก็บ rotIdx ลงไฟล์ กันรีเซ็ตทุกกรณี (reload/re-start/rejoin เคลียร์ _G)
 pcall(function() if readfile then local v = tonumber(readfile("ae_exp_rotidx.txt")); if v and v >= 1 then _G.AE_EXP_ROTIDX = v end end end)
@@ -12876,6 +12876,7 @@ local MAP_UI = {
     SchoolGrounds="School Grounds", FlowerForest="Flower Forest",
     FairyKingForest="Fairy King Forest", KingsTomb="King's Tomb",
     Dressrosa="Rose Kingdom", RoseKingdom="Rose Kingdom", SpiritCity="Spirit City",
+    EastTown="East Town",
 }
 local function uiMap(m)
     m = tostring(m or "")
