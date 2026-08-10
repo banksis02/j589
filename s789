@@ -11507,46 +11507,51 @@ function _G.AE_EVENT_LIST()
 end
 
 -- ---------- เคลมทุกอันที่เสร็จแต่ยังไม่เคลม (ตรวจซ้ำเอง) ----------
+-- ⭐ วนหลายรอบ: chapter ปลดตามลำดับ (เคลม Ch1 ครบ → Ch2 ปลด → เคลมต่อ)
+--    หยุดเมื่อรอบไหนเคลมไม่ได้เพิ่มเลย (= ที่เหลือคือ chapter ยังไม่ปลด/ล็อกเวลา)
 function _G.AE_EVENT_CLAIM_ALL(opts)
     opts = opts or {}
-    local d = pdata(); local qd = d and d.QuestData
-    if type(qd)~="table" then EL("❌ อ่าน QuestData ไม่ได้"); return 0 end
-    local dks = eventDataKeys()
-    local claimed, attempted, fails = 0, 0, {}
-    for dataKey, disp in pairs(dks) do
-        if not (opts.only and opts.only ~= dataKey) then
-            local board = qd[dataKey]
-            if type(board)=="table" and type(board.Quests)=="table" then
-                for qid, q in pairs(board.Quests) do
-                    if q.Completed == true and not q.Claimed then
-                        attempted = attempted + 1
-                        fireClaim(dataKey, qid)
-                        task.wait(0.35)
-                        local nb = pdata(); nb = nb and nb.QuestData and nb.QuestData[dataKey]
-                        local nq = nb and nb.Quests and nb.Quests[qid]
-                        if nq and nq.Claimed then
-                            claimed = claimed + 1
-                            EL(("✅ %s / %s"):format(disp, qid))
-                        else
-                            fails[#fails+1] = dataKey.."/"..qid
-                            EL(("⚠️ เคลมไม่ติด %s / %s"):format(dataKey, qid))
-                        end
-                        -- หยุดเองถ้า 3 อันแรกพลาดหมด (remote/args อาจไม่ตรง → ขอ SPY)
-                        if attempted >= 3 and claimed == 0 then
-                            EL("🛑 หยุด — 3 อันแรกเคลมไม่ติดเลย, remote/args อาจไม่ตรง")
-                            EL("   → รัน _G.AE_BOUNTY_SPY(30) แล้วกดเคลมมือ 1 อัน ส่ง log มาให้ผม")
-                            return claimed
+    local maxPass = tonumber(opts.passes) or 8
+    local totalClaimed = 0
+    local lastFails = {}
+    for pass = 1, maxPass do
+        local d = pdata(); local qd = d and d.QuestData
+        if type(qd)~="table" then EL("❌ อ่าน QuestData ไม่ได้"); break end
+        local dks = eventDataKeys()
+        local claimedPass, attempted, fails = 0, 0, {}
+        for dataKey, disp in pairs(dks) do
+            if not (opts.only and opts.only ~= dataKey) then
+                local board = qd[dataKey]
+                if type(board)=="table" and type(board.Quests)=="table" then
+                    for qid, q in pairs(board.Quests) do
+                        if q.Completed == true and not q.Claimed then
+                            attempted = attempted + 1
+                            fireClaim(dataKey, qid)
+                            task.wait(0.3)
+                            local nb = pdata(); nb = nb and nb.QuestData and nb.QuestData[dataKey]
+                            local nq = nb and nb.Quests and nb.Quests[qid]
+                            if nq and nq.Claimed then
+                                claimedPass = claimedPass + 1
+                                EL(("✅ %s / %s"):format(disp, qid))
+                            else
+                                fails[#fails+1] = dataKey.."/"..qid
+                            end
                         end
                     end
                 end
             end
         end
+        totalClaimed = totalClaimed + claimedPass
+        lastFails = fails
+        EL(("— รอบ %d: เคลม %d | ค้าง %d —"):format(pass, claimedPass, #fails))
+        if claimedPass == 0 then break end   -- ไม่มีอะไรเคลมได้เพิ่ม → หยุด
+        task.wait(0.4)
     end
-    EL(("สรุป: เคลมสำเร็จ %d/%d | พลาด %d"):format(claimed, attempted, #fails))
-    if #fails > 0 then EL("อันที่พลาด: "..table.concat(fails, ", ")) end
+    EL(("สรุปรวม: เคลม %d | ค้าง(ล็อก/ยังไม่ปลด) %d"):format(totalClaimed, #lastFails))
+    if #lastFails > 0 then EL("ค้าง: "..table.concat(lastFails, ", ")) end
     pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",
-        { Title="🎁 Event Claim", Text=("เคลม %d/%d อัน"):format(claimed, attempted), Duration=6 }) end)
-    return claimed
+        { Title="🎁 Event Claim", Text=("เคลม %d | ค้าง %d"):format(totalClaimed, #lastFails), Duration=6 }) end)
+    return totalClaimed
 end
 
 EL("พร้อม — เทส: _G.AE_EVENT_LIST() แล้ว _G.AE_EVENT_CLAIM_ALL()")
