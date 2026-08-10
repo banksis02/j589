@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.7"
+local SCRIPT_VERSION = "v10.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11718,7 +11718,16 @@ local function clickBtn(b)
     pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
     pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Up)) do c:Fire() end end)
     task.wait(0.08)
-    -- คลิกพิกัดจริง (เผื่อ fire ไม่พอ) — hover ก่อน + ลองทั้งมี/ไม่มี inset
+    local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+    local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset.Y
+    -- ⭐ คลิก "ธรรมดา" แบบ hardware จริง (เมาส์จริง) — ตรงสุด ถ้า executor รองรับ
+    pcall(function()
+        if mousemoveabs then mousemoveabs(cx, cy); task.wait(0.08) end
+        if mouse1click then mouse1click()
+        elseif mouse1press and mouse1release then mouse1press(); task.wait(0.05); mouse1release() end
+    end)
+    task.wait(0.05)
+    -- fallback: VIM (hover + คลิก) ลองทั้งมี/ไม่มี inset
     pcall(function()
         local x = b.AbsolutePosition.X + b.AbsoluteSize.X/2
         local y0 = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2
