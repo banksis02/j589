@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.11"
+local SCRIPT_VERSION = "v10.12"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8794,6 +8794,43 @@ local function findStartGameBtn()
     end
     return nil
 end
+-- ⭐ NPC Encounter (ด่านใหม่มี): กด Speak → Yes ให้ payload เดินต่อ | NPC ต่างกันทุกรอบ ใช้ข้อความจับ
+local function findBtnByText(want)
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and b.AbsoluteSize.X > 10 then
+                    local bt=""; pcall(function() bt=tostring(b.Text) end)
+                    if bt == want then return b end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and tostring(l.Text) == want then return b end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+local encStuckSince = nil
+local function handleEncounter()
+    local speak = findBtnByText("Speak")
+    local yes   = findBtnByText("Yes")
+    local no    = findBtnByText("No")
+    local engage= findBtnByText("Engage")
+    local leave = findBtnByText("Leave")
+    -- อยู่ใน encounter ไหม: หน้าแรก (Speak/Engage/Leave) หรือหน้าถัดไป (Yes/No)
+    local inEnc = (speak ~= nil) or (engage ~= nil) or (yes ~= nil and no ~= nil)
+    if not inEnc then encStuckSince = nil; return false end
+    encStuckSince = encStuckSince or tick()
+    if speak then clickHard(speak); print("[Exp] 🗣️ Encounter → Speak"); task.wait(1); return true end
+    if yes and no then clickHard(yes); print("[Exp] ✔️ Encounter → Yes"); task.wait(1); return true end
+    -- ค้างนานเกิน 10 วิ → Leave กันบอทติด
+    if leave and tick() - encStuckSince > 10 then
+        clickHard(leave); print("[Exp] 🚪 Encounter ค้าง → Leave (กันติด)"); encStuckSince = nil; task.wait(1); return true
+    end
+    return true
+end
+
 local function startAutoContinue()
     if contOn then return end
     contOn = true
@@ -8814,6 +8851,8 @@ local function startAutoContinue()
                     print(("[Exp] 🔁 Start Game ยังค้าง (แลค?) → กดซ้ำ #%d"):format(a))
                 end
             end
+            -- ⭐ NPC Encounter บนเส้นทาง → กด Speak→Yes ให้ payload เดินต่อ
+            handleEncounter()
             -- รถจอด = มีปุ่ม Continue โผล่
             if continueVisible() then
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
