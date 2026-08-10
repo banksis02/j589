@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.3"
+local SCRIPT_VERSION = "v10.4"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11773,9 +11773,184 @@ function _G.AE_GTU_START()
         GL("⏹ หยุด auto-ทายเงา")
     end)
 end
-function _G.AE_GTU_STOP() _G.AE_GTU_ACTIVE = false end
+-- ============ v10.4: SELF-LEARNING (จำ animId ↔ เฉลย, เซฟไฟล์, retry เก็บข้อมูล) ============
+local HttpService = game:GetService("HttpService")
+local MAP_FILE = "ae_gtu_map.json"
+local MAP = {}
+pcall(function()
+    if readfile and (not isfile or isfile(MAP_FILE)) then
+        local raw = readfile(MAP_FILE)
+        if raw and #raw > 0 then MAP = HttpService:JSONDecode(raw) end
+    end
+end)
+if type(MAP) ~= "table" then MAP = {} end
+local function mapCount() local n=0 for _ in pairs(MAP) do n=n+1 end return n end
+local function saveMap() pcall(function() if writefile then writefile(MAP_FILE, HttpService:JSONEncode(MAP)) end end) end
+local function learn(anim, answer)
+    if anim and answer and answer~="?" and MAP[anim] ~= answer then
+        MAP[anim] = answer; saveMap()
+        GL(("🧠 จำ: anim %s = '%s'  (รู้แล้ว %d ตัว)"):format(anim, answer, mapCount()))
+    end
+end
 
-GL("พร้อม — เทส: _G.AE_GTU_PEEK() (ดูเฉลย ไม่กด) | _G.AE_GTU_START() / _G.AE_GTU_STOP()")
+-- gold (สำหรับ floor ตอน retry)
+local function getGold()
+    local g = 0
+    pcall(function()
+        local reg
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up)=="table" then for kk in pairs(up) do if type(kk)=="number" then reg=up break end end if reg then break end end
+        end
+        if reg then for _, r in pairs(reg) do local ok,t=pcall(function() return r.Token end)
+            if ok and t=="PlayerData" then
+                local gd = r.Data and r.Data.ItemData and r.Data.ItemData.Gold
+                g = tonumber(type(gd)=="table" and gd.Amount or gd) or 0; break
+            end
+        end end
+    end)
+    return g
+end
+
+-- panel ที่มีทั้งปุ่ม + ViewportFrame(เงา)
+local function findPanel()
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return nil end
+    local label
+    for _, g in ipairs(pg:GetDescendants()) do
+        if g:IsA("TextLabel") and txt(g):find("belongs to this unit") then label = g; break end
+    end
+    if not label then return nil end
+    local node = label.Parent
+    for _=1,8 do
+        if not node then break end
+        local hasBtn, hasVF = false, false
+        for _, d in ipairs(node:GetDescendants()) do
+            if d:IsA("TextButton") then hasBtn = true end
+            if d:IsA("ViewportFrame") then hasVF = true end
+            if hasBtn and hasVF then break end
+        end
+        if hasBtn and hasVF then return node end
+        node = node.Parent
+    end
+    return nil
+end
+
+-- animId (Idle) ของเงา = ลายนิ้วมือ
+local function silhouetteAnim(panel)
+    panel = panel or findPanel(); if not panel then return nil end
+    for _, vf in ipairs(panel:GetDescendants()) do
+        if vf:IsA("ViewportFrame") then
+            for _, d in ipairs(vf:GetDescendants()) do
+                if d:IsA("Animation") and d.Name == "Idle" then
+                    local num = tostring(d.AnimationId):match("%d+")
+                    if num then return num end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- เฉลยจากปุ่มเขียว "CORRECT!"
+local function findCorrectText(btns)
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return nil end
+    local lbl
+    for _, g in ipairs(pg:GetDescendants()) do
+        if g:IsA("TextLabel") and g.Visible and txt(g):upper():find("CORRECT") then lbl = g; break end
+    end
+    if lbl then
+        local cp = lbl.AbsolutePosition + lbl.AbsoluteSize/2
+        local best, bd
+        for _, c in ipairs(btns) do
+            local bp = c.btn.AbsolutePosition + c.btn.AbsoluteSize/2
+            local d = (bp - cp).Magnitude
+            if not bd or d < bd then best, bd = c, d end
+        end
+        if best then return best.text end
+    end
+    for _, c in ipairs(btns) do
+        for _, d in ipairs(c.btn:GetDescendants()) do
+            if d:IsA("GuiObject") then
+                local ok, bg = pcall(function() return d.BackgroundColor3 end)
+                if ok and bg and bg.G > 0.55 and bg.G > bg.R + 0.15 and bg.G > bg.B + 0.15 then return c.text end
+            end
+        end
+    end
+    return nil
+end
+
+-- ปุ่ม Retry (หน้า FAILED)
+local function findRetry()
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return nil end
+    for _, g in ipairs(pg:GetDescendants()) do
+        if g:IsA("GuiButton") and g.Visible and g.AbsoluteSize.X > 3 then
+            if txt(g):find("Retry") then return g end
+            for _, l in ipairs(g:GetDescendants()) do if l:IsA("TextLabel") and txt(l):find("Retry") then return g end end
+        end
+    end
+    return nil
+end
+
+-- ============ AUTO ============
+_G.AE_GTU_ON = false
+function _G.AE_GTU_STATS() GL(("รู้แล้ว %d ตัว (ไฟล์ %s)"):format(mapCount(), MAP_FILE)); return mapCount() end
+function _G.AE_GTU_AUTO()
+    if _G.AE_GTU_ON then GL("ทำงานอยู่แล้ว"); return end
+    _G.AE_GTU_ON = true
+    _G.AE_GTU_ACTIVE = false
+    GL(("▶️ auto-ทายเงา self-learning เริ่ม (รู้แล้ว %d ตัว) — หยุด: _G.AE_GTU_STOP()"):format(mapCount()))
+    local myGen = _G.AE_SCRIPT_GEN
+    local answeredSig, answeredAnim, learnedSig
+    task.spawn(function()
+        while _G.AE_GTU_ON and myGen == _G.AE_SCRIPT_GEN do
+            pcall(function()
+                -- FAILED/จบเกม → Retry
+                local rb = findRetry()
+                if rb then
+                    if getGold() < (tonumber(_G.AE_GTU_GOLD_FLOOR) or 50000) then
+                        GL("💰 gold ต่ำกว่าขั้นต่ำ → หยุด retry"); _G.AE_GTU_ON = false; return
+                    end
+                    clickBtn(rb); GL("🔄 Retry → เล่นใหม่ (เก็บข้อมูลต่อ)")
+                    answeredSig, learnedSig = nil, nil
+                    task.wait(2); return
+                end
+                local panel = findPanel(); if not panel then return end
+                local raw = findChoiceButtons()
+                local real = {}
+                for _, c in ipairs(raw) do
+                    if c.text and c.text~="?" and c.text~="Loading..." and not c.text:find("Retry") then real[#real+1]=c end
+                end
+                if #real < 2 then return end
+                local names = {}; for _, c in ipairs(real) do names[#names+1]=c.text end
+                table.sort(names)
+                local sig = table.concat(names, "|")
+                local anim = silhouetteAnim(panel)
+                -- ตอบ (ครั้งเดียวต่อรอบ)
+                if sig ~= answeredSig then
+                    if anim and MAP[anim] then
+                        local hit
+                        for _, c in ipairs(real) do if c.text == MAP[anim] then hit = c; break end end
+                        if hit then clickBtn(hit.btn); GL("✅ '"..hit.text.."' (จำได้)")
+                        else clickBtn(real[1].btn); GL("⚠️ จำ '"..MAP[anim].."' แต่ไม่มีในปุ่ม → เดา") end
+                    else
+                        clickBtn(real[1].btn); GL("❓ ยังไม่รู้ (anim "..tostring(anim)..") → เดา '"..real[1].text.."'")
+                    end
+                    answeredSig, answeredAnim = sig, anim
+                end
+                -- เรียนรู้จากปุ่มเขียว
+                if sig ~= learnedSig then
+                    local correct = findCorrectText(real)
+                    if correct and answeredAnim then learn(answeredAnim, correct); learnedSig = sig end
+                end
+            end)
+            task.wait(0.3)
+        end
+        GL("⏹ หยุด auto-ทายเงา")
+    end)
+end
+function _G.AE_GTU_STOP() _G.AE_GTU_ON = false; _G.AE_GTU_ACTIVE = false end
+
+GL(("พร้อม (รู้แล้ว %d ตัว) — เริ่ม: _G.AE_GTU_AUTO() | หยุด: _G.AE_GTU_STOP() | สถิติ: _G.AE_GTU_STATS()"):format(mapCount()))
 
 end)
 if not okGTU then warn("[GTU FATAL] "..tostring(gtuErr)) end
