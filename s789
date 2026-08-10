@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.0"
+local SCRIPT_VERSION = "v10.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11554,7 +11554,59 @@ function _G.AE_EVENT_CLAIM_ALL(opts)
     return totalClaimed
 end
 
-EL("พร้อม — เทส: _G.AE_EVENT_LIST() แล้ว _G.AE_EVENT_CLAIM_ALL()")
+-- ---------- นับเควสที่รอเคลม (เร็ว ไม่ยิงอะไรขึ้น server) ----------
+local function countClaimable()
+    local d = pdata(); local qd = d and d.QuestData
+    if type(qd)~="table" then return 0 end
+    local n = 0
+    for dataKey in pairs(eventDataKeys()) do
+        local board = qd[dataKey]
+        if type(board)=="table" and type(board.Quests)=="table" then
+            for _, q in pairs(board.Quests) do
+                if q.Completed == true and not q.Claimed then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+_G.AE_EVENT_CLAIMABLE = countClaimable
+
+-- ---------- อยู่ล็อบบี้ไหม (ไม่ได้อยู่ในด่าน — กันเคลมกลางแมตช์ = popup เด้งกวน) ----------
+local function inLobby()
+    local inMatch = false
+    pcall(function()
+        local gs = findRep("GameState")
+        if gs and gs.Data and tonumber(gs.Data.Wave) and tonumber(gs.Data.Wave) > 0 then inMatch = true end
+    end)
+    pcall(function()
+        local en = workspace:FindFirstChild("Enemies")
+        if en and #en:GetChildren() > 0 then inMatch = true end
+    end)
+    return not inMatch
+end
+_G.AE_EVENT_IN_LOBBY = inLobby
+
+-- ---------- AUTO: อยู่ล็อบบี้ + มีของรอเคลม → เคลมเอง (เงียบถ้าไม่มี) ----------
+--   ปิด: _G.AE_EVENT_AUTO=false | ปรับรอบเช็ค: _G.AE_EVENT_AUTO_INTERVAL=120 (วินาที)
+_G.AE_EVENT_AUTO = (_G.AE_EVENT_AUTO ~= false)   -- default เปิด
+local myGen = _G.AE_SCRIPT_GEN
+task.spawn(function()
+    task.wait(15)   -- รอ replica พร้อมหลังโหลด
+    while _G.AE_EVENT_AUTO and myGen == _G.AE_SCRIPT_GEN do
+        pcall(function()
+            if inLobby() then
+                local n = countClaimable()
+                if n > 0 then
+                    EL(("🔔 เจอเควสรอเคลม %d อัน (ล็อบบี้) → เคลมอัตโนมัติ"):format(n))
+                    _G.AE_EVENT_CLAIM_ALL()
+                end
+            end
+        end)
+        task.wait(tonumber(_G.AE_EVENT_AUTO_INTERVAL) or 120)
+    end
+end)
+
+EL("พร้อม — auto-เคลมล็อบบี้ ON | เทส: _G.AE_EVENT_LIST() / _G.AE_EVENT_CLAIM_ALL()")
 
 end)
 if not okEvt then warn("[EVT FATAL] "..tostring(evtErr)) end
