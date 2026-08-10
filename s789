@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.1"
+local SCRIPT_VERSION = "v10.2"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11610,6 +11610,169 @@ EL("พร้อม — auto-เคลมล็อบบี้ ON | เทส: _
 
 end)
 if not okEvt then warn("[EVT FATAL] "..tostring(evtErr)) end
+
+-- ===================== [ae_guess_unit] =====================
+-- ============================================================
+-- 🕵️ AE GUESS THAT UNIT — auto-ทายเงา (GuessUnitEvent)
+--   เฉลย: client ยิง _updateNode(..,"REQUEST_ASSET_RequestNODE",node,<asset>,"Unit") เพื่อโหลดโมเดลเงา
+--   จับด้วย namecall hook → asset ไหนที่ Units[asset].DisplayName ตรงกับ 1 ใน 4 ปุ่ม = เฉลย → กดปุ่มนั้น
+--   ฟังก์ชัน: _G.AE_GTU_PEEK() ดูเฉลย(ไม่กด) | _G.AE_GTU_START() / _G.AE_GTU_STOP()
+-- ============================================================
+local okGTU, gtuErr = pcall(function()
+
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local VIM = game:GetService("VirtualInputManager")
+local inset = game:GetService("GuiService"):GetGuiInset()
+local function GL(s) s=tostring(s); print("[GTU] "..s) end
+
+-- Units config: asset -> DisplayName
+local UNITS
+pcall(function() UNITS = require(RS.Shared.Information.Units) end)
+local function displayOf(asset)
+    local u = UNITS and UNITS[asset]
+    return (type(u)=="table" and u.DisplayName) or nil
+end
+
+-- recent requested assets (จาก hook) — เก็บใน global กัน re-inject
+_G.__GTU_RECENT = _G.__GTU_RECENT or {}
+local RECENT = _G.__GTU_RECENT
+local function pushRecent(asset)
+    table.insert(RECENT, { asset = asset, t = tick() })
+    while #RECENT > 12 do table.remove(RECENT, 1) end
+end
+
+-- ---------- namecall hook (opt-in: ติดตั้งตอนเรียก PEEK/START) ----------
+local function installHook()
+    if _G.__GTU_HOOK then return true end
+    if not (getrawmetatable and setreadonly and newcclosure and getnamecallmethod) then GL("❌ executor ไม่รองรับ hook"); return false end
+    local ok = pcall(function()
+        local mt = getrawmetatable(game)
+        local oldNC = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local m = getnamecallmethod()
+            if m == "FireServer" then
+                local a = { ... }
+                if a[2] == "REQUEST_ASSET_RequestNODE" and a[5] == "Unit" and type(a[4]) == "string" then
+                    pushRecent(a[4])
+                end
+            end
+            return oldNC(self, ...)
+        end)
+    end)
+    if ok then _G.__GTU_HOOK = true; GL("✅ hook ติดตั้งแล้ว (จับเฉลย)"); return true end
+    GL("❌ ติดตั้ง hook ไม่ได้"); return false
+end
+
+-- ---------- หาปุ่มตัวเลือก + ข้อความ ----------
+local function txt(o) local ok,v=pcall(function() return o.Text end); return ok and tostring(v) or "" end
+local function findChoiceButtons()
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return {} end
+    local group
+    for _, g in ipairs(pg:GetDescendants()) do
+        if g:IsA("TextLabel") and txt(g):find("belongs to this unit") then
+            local p = g.Parent
+            if p then
+                local tb = {}
+                for _, ch in ipairs(p:GetChildren()) do if ch:IsA("TextButton") and ch.Visible then tb[#tb+1] = ch end end
+                if #tb >= 2 then group = tb; break end
+            end
+        end
+    end
+    local out = {}
+    if group then
+        for _, b in ipairs(group) do
+            local label
+            for _, l in ipairs(b:GetDescendants()) do
+                if l:IsA("TextLabel") then local t = txt(l); if t ~= "" and t ~= "Loading..." then label = t; break end end
+            end
+            out[#out+1] = { btn = b, text = label or "?" }
+        end
+    end
+    return out
+end
+
+-- ---------- หาเฉลย: asset ล่าสุดที่ DisplayName ตรงกับปุ่ม ----------
+local function detectAnswer(btns)
+    for i = #RECENT, 1, -1 do
+        local e = RECENT[i]
+        if tick() - e.t < 20 then
+            local dn = displayOf(e.asset)
+            if dn then
+                for _, c in ipairs(btns) do
+                    if c.text == dn then return c, dn, e.asset end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function clickBtn(b)
+    pcall(function() for _, c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _, c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    task.wait(0.1)
+    pcall(function()
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset.Y
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+
+-- ---------- PEEK: บอกเฉลยที่ตรวจได้ (ไม่กด) ----------
+function _G.AE_GTU_PEEK()
+    installHook()
+    local btns = findChoiceButtons()
+    local names = {}; for _, c in ipairs(btns) do names[#names+1] = c.text end
+    GL("ปุ่ม: "..(#names > 0 and table.concat(names, " | ") or "ไม่เจอ (อยู่ในรอบไหม?)"))
+    local c, dn, asset = detectAnswer(btns)
+    if c then GL(("🎯 เฉลย = '%s'  (asset %s)"):format(dn, asset))
+    else GL("❓ ยังตรวจไม่ได้ — hook ต้องจับ REQUEST_ASSET ของรอบนี้ก่อน (ลองใหม่ตอนเงาเพิ่งโผล่)") end
+    return dn
+end
+
+-- ---------- START: auto กดทุกรอบ ----------
+_G.AE_GTU_ACTIVE = false
+function _G.AE_GTU_START()
+    if not installHook() then return end
+    if _G.AE_GTU_ACTIVE then GL("กำลังทำงานอยู่แล้ว"); return end
+    _G.AE_GTU_ACTIVE = true
+    GL("▶️ เริ่ม auto-ทายเงา (หยุด: _G.AE_GTU_STOP())")
+    local myGen = _G.AE_SCRIPT_GEN
+    local lastSig
+    task.spawn(function()
+        while _G.AE_GTU_ACTIVE and myGen == _G.AE_SCRIPT_GEN do
+            pcall(function()
+                local btns = findChoiceButtons()
+                if #btns >= 2 then
+                    local names = {}; for _, c in ipairs(btns) do names[#names+1] = c.text end
+                    table.sort(names)
+                    local sig = table.concat(names, "|")
+                    if sig ~= lastSig then
+                        local c, dn = detectAnswer(btns)
+                        if c then
+                            clickBtn(c.btn)
+                            lastSig = sig
+                            GL(("✅ กด '%s'"):format(dn))
+                        end
+                    end
+                end
+            end)
+            task.wait(0.25)
+        end
+        GL("⏹ หยุด auto-ทายเงา")
+    end)
+end
+function _G.AE_GTU_STOP() _G.AE_GTU_ACTIVE = false end
+
+GL("พร้อม — เทส: _G.AE_GTU_PEEK() (ดูเฉลย ไม่กด) | _G.AE_GTU_START() / _G.AE_GTU_STOP()")
+
+end)
+if not okGTU then warn("[GTU FATAL] "..tostring(gtuErr)) end
 
 -- ===================== [ae_bounty_summon] =====================
 -- ============================================================
