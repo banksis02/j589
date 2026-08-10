@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.13"
+local SCRIPT_VERSION = "v10.14"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8818,7 +8818,8 @@ local function openEncounterPrompt()
     if not hrp then return false end
     local best, bestD
     for _, p in ipairs(workspace:GetDescendants()) do
-        if p:IsA("ProximityPrompt") and p.Enabled and tostring(p.ActionText) == "Speak" then
+        -- ⭐ encounter NPC ใช้ Key=World95 เท่านั้น (ตัวชอป/จ้างยูนิตใช้ E) → กรองกันคุยผิดตัว+บังวางตัว
+        if p:IsA("ProximityPrompt") and p.Enabled and p.KeyboardKeyCode == Enum.KeyCode.World95 then
             local par = p.Parent
             local ok, pos = pcall(function() return (par:IsA("BasePart") and par.Position) or par:GetPivot().Position end)
             if ok and pos then
