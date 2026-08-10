@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.12"
+local SCRIPT_VERSION = "v10.13"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8811,24 +8811,46 @@ local function findBtnByText(want)
     end
     return nil
 end
+-- เปิด dialog: NPC ใช้ ProximityPrompt (Key=World95 กด E ไม่ได้) → ต้อง fireproximityprompt
+--   NPC active อยู่ใกล้ (dist ~6) ตัวอื่นบนแมพไกล 3000+ → กรองด้วยระยะ
+local function openEncounterPrompt()
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local best, bestD
+    for _, p in ipairs(workspace:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and p.Enabled and tostring(p.ActionText) == "Speak" then
+            local par = p.Parent
+            local ok, pos = pcall(function() return (par:IsA("BasePart") and par.Position) or par:GetPivot().Position end)
+            if ok and pos then
+                local d = (pos - hrp.Position).Magnitude
+                if d < 40 and (not bestD or d < bestD) then best, bestD = p, d end
+            end
+        end
+    end
+    if best then
+        pcall(function() fireproximityprompt(best) end)
+        print(("[Exp] 👋 Encounter '%s' (dist %d) → เปิด dialog"):format(tostring(best.ObjectText), math.floor(bestD)))
+        return true
+    end
+    return false
+end
+
 local encStuckSince = nil
 local function handleEncounter()
     local speak = findBtnByText("Speak")
     local yes   = findBtnByText("Yes")
     local no    = findBtnByText("No")
-    local engage= findBtnByText("Engage")
     local leave = findBtnByText("Leave")
-    -- อยู่ใน encounter ไหม: หน้าแรก (Speak/Engage/Leave) หรือหน้าถัดไป (Yes/No)
-    local inEnc = (speak ~= nil) or (engage ~= nil) or (yes ~= nil and no ~= nil)
-    if not inEnc then encStuckSince = nil; return false end
-    encStuckSince = encStuckSince or tick()
-    if speak then clickHard(speak); print("[Exp] 🗣️ Encounter → Speak"); task.wait(1); return true end
-    if yes and no then clickHard(yes); print("[Exp] ✔️ Encounter → Yes"); task.wait(1); return true end
-    -- ค้างนานเกิน 10 วิ → Leave กันบอทติด
-    if leave and tick() - encStuckSince > 10 then
-        clickHard(leave); print("[Exp] 🚪 Encounter ค้าง → Leave (กันติด)"); encStuckSince = nil; task.wait(1); return true
+    -- ค้างนานเกิน 15 วิ → Leave กันบอทติด
+    if leave and encStuckSince and tick() - encStuckSince > 15 then
+        clickHard(leave); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1); return
     end
-    return true
+    -- dialog เปิดแล้ว → กด Speak → Yes
+    if speak then encStuckSince = encStuckSince or tick(); clickHard(speak); print("[Exp] 🗣️ Encounter → Speak"); task.wait(1); return end
+    if yes and no then encStuckSince = encStuckSince or tick(); clickHard(yes); print("[Exp] ✔️ Encounter → Yes"); task.wait(1); return end
+    -- ยังไม่เปิด → fire ProximityPrompt เปิด dialog
+    if openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1); return end
+    encStuckSince = nil
 end
 
 local function startAutoContinue()
