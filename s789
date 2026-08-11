@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.31"
+local SCRIPT_VERSION = "v10.32"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11097,19 +11097,20 @@ local function buildingLevel(name)
     if not ok or type(data) ~= "table" then return nil end
     return tonumber(data.Level or data.BuildingLevel or data.level), data
 end
-local function fireExpeditionNode(action, ...)
-    local remote = _G.AE_EXP_BUILDING_REMOTE
-    if not remote then return false end
-    local args = table.pack(...)
-    return pcall(function()
-        remote:FireServer({ Type = "Post" }, action, table.unpack(args, 1, args.n))
-    end)
+local function visibleInTree(el)
+    local n = el
+    while n and n ~= game do
+        if n:IsA("GuiObject") and not n.Visible then return false end
+        if (n:IsA("ScreenGui") or n:IsA("LayerCollector")) and not n.Enabled then return false end
+        n = n.Parent
+    end
+    return true
 end
 local function clickVisibleText(needle)
     local pg = RUN_player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
     needle = tostring(needle):lower()
     for _, el in ipairs(pg:GetDescendants()) do
-        if (el:IsA("TextButton") or el:IsA("ImageButton")) and el.Visible then
+        if (el:IsA("TextButton") or el:IsA("ImageButton")) and el.Visible and visibleInTree(el) then
             local text = el:IsA("TextButton") and tostring(el.Text):lower() or ""
             if text:find(needle, 1, true) then
                 pcall(function() el:Activate() end)
@@ -11119,50 +11120,44 @@ local function clickVisibleText(needle)
     end
     return false
 end
-local function openExpeditionCenter()
-    local best, bestScore = nil, 0
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            local full = obj:GetFullName():lower()
-            local action = tostring(obj.ActionText or ""):lower()
-            local object = tostring(obj.ObjectText or ""):lower()
-            local hay = full .. " " .. action .. " " .. object
-            local score = 0
-            if hay:find("expedition") then score = score + 2 end
-            if hay:find("center") then score = score + 5 end
-            if hay:find("building") then score = score + 2 end
-            if hay:find("play") or hay:find("queue") then score = score - 4 end
-            if score > bestScore then best, bestScore = obj, score end
-        end
-    end
-    if not best then return false end
-    pcall(function() fireproximityprompt(best, 1) end)
-    task.wait(1.5)
+local function closeBuildingUI()
+    local vim = game:GetService("VirtualInputManager")
+    pcall(function()
+        vim:SendKeyEvent(true, Enum.KeyCode.Escape, false, game)
+        task.wait(0.1)
+        vim:SendKeyEvent(false, Enum.KeyCode.Escape, false, game)
+    end)
+    task.wait(1)
+end
+local function openBuilding(name)
+    closeBuildingUI()
+    local prompt
+    pcall(function()
+        prompt = workspace.Lobby.Areas.Expeditions.Interactions[name]:FindFirstChildOfClass("ProximityPrompt")
+    end)
+    if not prompt then L("⚠️ ไม่พบ Prompt ฐาน "..tostring(name)); return false end
+    pcall(function() fireproximityprompt(prompt, 1) end)
+    task.wait(2)
     return true
 end
 local function upgradeBuildingViaUI(name)
-    openExpeditionCenter()
-    clickVisibleText(EXP_BUILDING_LABEL[name] or name)
-    task.wait(0.8)
+    if not openBuilding(name) then return false end
     -- First click opens requirements; second click confirms when requirements pass.
-    clickVisibleText("upgrade building")
-    task.wait(0.8)
-    clickVisibleText("upgrade building")
-    task.wait(1.2)
+    local clicked = clickVisibleText("upgrade building")
+    task.wait(1)
+    if clicked then clickVisibleText("upgrade building") end
+    task.wait(1.5)
+    closeBuildingUI()
+    return clicked
 end
 local function upgradeBuilding(name)
     local before = buildingLevel(name)
     if before == nil then return false end
     for _ = 1, 5 do
-        fireExpeditionNode("EXPEDITION_BUILDING_UPGRADE", name)
-        task.wait(1.2)
+        upgradeBuildingViaUI(name)
+        task.wait(1)
         local after = buildingLevel(name)
-        if after == nil or after <= before then
-            upgradeBuildingViaUI(name)
-            task.wait(1)
-            after = buildingLevel(name)
-            if after == nil or after <= before then break end
-        end
+        if after == nil or after <= before then break end
         L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
         before = after
     end
@@ -11170,19 +11165,11 @@ local function upgradeBuilding(name)
 end
 local function expeditionMaintenance()
     L("🏠 วนครบ 4 ด่าน → เคลมรางวัลและอัปฐาน Expedition")
-    -- Claim passive building rewards first so their materials can be used for upgrades.
-    for _, name in ipairs(EXP_BUILDING_ORDER) do
-        fireExpeditionNode("EXPEDITION_BUILDING_CLAIM_REWARDS", name)
-        openExpeditionCenter()
-        clickVisibleText(EXP_BUILDING_LABEL[name] or name)
-        task.wait(0.25)
-        clickVisibleText("claim rewards")
-        task.wait(0.25)
+    -- Only these buildings expose reward buttons in the current Expedition UI.
+    for _, name in ipairs({ "ResourceDrill", "GoldMine" }) do
+        if openBuilding(name) then clickVisibleText("claim rewards"); task.wait(1); closeBuildingUI() end
     end
-    fireExpeditionNode("EXPEDITION_QUEST_CLAIM_ALL")
-    clickVisibleText("claim all")
-    clickVisibleText("claim rewards")
-    task.wait(1)
+    if openBuilding("QuestBoard") then clickVisibleText("claim all"); task.wait(1); closeBuildingUI() end
 
     upgradeBuilding("ExpeditionCenter")
     for i = 2, #EXP_BUILDING_ORDER do upgradeBuilding(EXP_BUILDING_ORDER[i]) end
