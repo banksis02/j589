@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.41"
+local SCRIPT_VERSION = "v10.42"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11277,6 +11277,10 @@ end
 local function upgradeBuilding(name)
     local before = buildingLevel(name)
     local maxLevel = EXP_BUILDING_MAX[name]
+    if not before then
+        L("⚠️ อ่าน Level "..tostring(name).." ไม่ได้ — ข้ามเพื่อป้องกันการยิง Remote ซ้ำ")
+        return false
+    end
     if before and maxLevel and before >= maxLevel then
         L(("✅ %s Max แล้ว (Lv.%d/%d) — ข้าม"):format(name,before,maxLevel))
         return true
@@ -11311,10 +11315,17 @@ local function expeditionMaintenance()
         L("⚠️ ไม่พบฟังก์ชัน AE_ENTER_TP")
     end
     local allMax = true
+    local readable = 0
     for _, name in ipairs(EXP_BUILDING_ORDER) do
         local level = buildingLevel(name)
         local maxLevel = EXP_BUILDING_MAX[name]
-        if not level or not maxLevel or level < maxLevel then allMax=false; break end
+        if level then
+            readable = readable + 1
+            L(("🔎 %s = Lv.%d/%d"):format(name,level,maxLevel or 0))
+        else
+            L("⚠️ อ่าน Level "..name.." ไม่ได้")
+        end
+        if not level or not maxLevel or level < maxLevel then allMax=false end
     end
     if allMax then
         L("✅ ฐาน Expedition Max ครบทุกฐานแล้ว — ไม่ต้องเคลมหรืออัปฐาน")
@@ -11326,6 +11337,10 @@ local function expeditionMaintenance()
     if openBuilding("QuestBoard") then
         clickVisibleText("claim all"); task.wait(1)
         if not closeExpeditionWindow("Quest Board") then closeBuildingUI() end
+    end
+    if readable == 0 then
+        L("⛔ Replica ฐานยังไม่พร้อม — เคลมแล้วแต่ยกเลิกการอัปเพื่อไม่ยิง Remote มั่ว")
+        return false
     end
 
     upgradeBuilding("ExpeditionCenter")
