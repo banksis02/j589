@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.26"
+local SCRIPT_VERSION = "v10.27"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -6602,13 +6602,18 @@ _G.AE_VILLAIN_PLACE = function()
                 end
             end
             local slots = gameHotbarSlots()
-            if #slots == 0 then task.wait(2); else
-                local yen = 0
-                pcall(function() local g = getReplica("GamePlayerData"); yen = g and g.Data and tonumber(g.Data.Yen) or 0 end)
-                local didPlace = false
+            if #slots == 0 then
+                if round == 1 or round % 5 == 0 then print("[Villain] ⚠️ ไม่เจอ hotbar slot (registry/HotbarData/PlacementAllowed?)") end
+                task.wait(2)
+            else
+                local gpd = getReplica("GamePlayerData")
+                local yen = (gpd and gpd.Data and tonumber(gpd.Data.Yen)) or 0
+                local didPlace, affordable, placeFail, cheapest = false, 0, 0, math.huge
                 for _, s in ipairs(slots) do
                     if not pileOn then break end
+                    if s.cost < cheapest then cheapest = s.cost end
                     if s.cost <= yen then
+                        affordable = affordable + 1
                         -- เกาะกัน: จุดกลาง 60% + เยื้องเล็กน้อย (placeAt ลอง offset ให้อยู่แล้ว)
                         local frac = 0.55 + math.random() * 0.10   -- 55-65%
                         if placeAt(lane, s.slot, lane.total * frac) then
@@ -6617,10 +6622,19 @@ _G.AE_VILLAIN_PLACE = function()
                             yen = yen - s.cost
                             didPlace = true
                             task.wait(0.3)
+                        else
+                            placeFail = placeFail + 1
                         end
                     end
                 end
-                if not didPlace then task.wait(2) end
+                if not didPlace then
+                    -- ⭐ diagnostic: บอกเหตุผลที่ไม่วาง (yen หมด / getReplica nil / placeAt ยิงแล้วตัวไม่ขึ้น)
+                    if round == 1 or round % 5 == 0 then
+                        print(("[Villain] ⚠️ ไม่วาง: yen=%d ถูกสุด=¥%d ช่อง=%d จ่ายไหว=%d ยิงแล้วตัวไม่ขึ้น=%d GamePlayerData=%s")
+                            :format(yen, cheapest == math.huge and -1 or cheapest, #slots, affordable, placeFail, tostring(gpd ~= nil)))
+                    end
+                    task.wait(2)
+                end
             end
         end
         print("[Villain] 🏁 จบการวาง")
