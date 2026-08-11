@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.29"
+local SCRIPT_VERSION = "v10.31"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3547,6 +3547,7 @@ if GAME_ID == "anime_expeditions" then
                 if l:IsA("TextLabel") and l.Visible and l.Text ~= ""
                    and l.Text:find("[Ff]loor%s*%d") and l.Text:find("%-") then
                     mapName = l.Text
+                    _G.AE_TOWER_FLOOR = tonumber(l.Text:match("[Ff]loor%s*(%d+)")) or _G.AE_TOWER_FLOOR or 0
                     break
                 end
             end
@@ -3561,7 +3562,13 @@ if GAME_ID == "anime_expeditions" then
                         username = player.Name,
                         userId = player.UserId,
                         farming = farmingActive == true,
-                        stats = { gem = aeGetGem(), battlepass = bp, level = level, villainBattlepass = aeGetVillainBP() }
+                        stats = {
+                            gem = aeGetGem(), battlepass = bp, level = level, villainBattlepass = aeGetVillainBP(),
+                            towerFloor = _G.AE_TOWER_FLOOR or 0,
+                            towerConsecutiveLosses = _G.AE_TOWER_CONSECUTIVE_LOSSES or 0,
+                            towerLastResult = _G.AE_TOWER_LAST_RESULT or "",
+                            towerExhausted = _G.AE_TOWER_EXHAUSTED == true
+                        }
                     })
                 })
             end)
@@ -3572,7 +3579,12 @@ if GAME_ID == "anime_expeditions" then
             serviceName  = GAME_NAME,
             gameId       = GAME_ID,
             farming      = farmingActive,      -- ⭐ นับ farmTime เฉพาะตอนฟาร์มจริง
-            currentStats = { level = level, bp = bp, villainBp = aeGetVillainBP() },
+            currentStats = {
+                level = level, bp = bp, villainBp = aeGetVillainBP(),
+                towerFloor = _G.AE_TOWER_FLOOR or 0,
+                towerConsecutiveLosses = _G.AE_TOWER_CONSECUTIVE_LOSSES or 0,
+                towerExhausted = _G.AE_TOWER_EXHAUSTED == true
+            },
             matchInfo    = { map = mapName, wave = wave },
             -- ไม่ส่ง endScreen → backend เก็บ Last Round เดิมไว้
         }
@@ -3585,6 +3597,7 @@ if GAME_ID == "anime_expeditions" then
             })
         end)
     end
+    _G.AE_SEND_HEARTBEAT = sendHeartbeat
 
     -- heartbeat: ส่งทันทีตอนโหลด แล้วทุก 30 วิ
     task.spawn(function()
@@ -3676,6 +3689,13 @@ if GAME_ID == "anime_expeditions" then
                     end
                     -- ⭐ งาน Tower (หอคอย) — รับชนิด (Tower/Traitless) จากเว็บ (job.stage)
                     if wantMode == "tower" then
+                        if tostring(_G.AE_TOWER_JOB_ID or "") ~= tostring(job.id or "") then
+                            _G.AE_TOWER_JOB_ID = tostring(job.id or "")
+                            _G.AE_TOWER_FLOOR = 0
+                            _G.AE_TOWER_CONSECUTIVE_LOSSES = 0
+                            _G.AE_TOWER_LAST_RESULT = ""
+                            _G.AE_TOWER_EXHAUSTED = false
+                        end
                         _G.AE_TOWER_TYPE = job.stage or "Tower"
                         if changed then print(("[AE Remote] 🏰 Tower: %s"):format(tostring(_G.AE_TOWER_TYPE))) end
                     end
@@ -11059,6 +11079,117 @@ local function call(name, ...)
     return table.unpack(r, 2, r.n)
 end
 
+-- Expedition maintenance: run after one complete 4-map rotation.
+-- ExpeditionCenter must be upgraded first because it unlocks every other building.
+local EXP_BUILDING_ORDER = {
+    "ExpeditionCenter", "TrainingGrounds", "ResearchLab", "ResourceDrill",
+    "Armory", "ExpeditionShop", "GoldMine", "QuestBoard"
+}
+local EXP_BUILDING_LABEL = {
+    ExpeditionCenter="Expedition Center", TrainingGrounds="Training Grounds",
+    ResearchLab="Research Lab", ResourceDrill="Resource Drill", Armory="Armory",
+    ExpeditionShop="Expedition Shop", GoldMine="Gold Mine", QuestBoard="Quest Board"
+}
+local function buildingLevel(name)
+    local getter = _G.AE_EXP_GET_BUILDING
+    if type(getter) ~= "function" then return nil end
+    local ok, data = pcall(getter, name)
+    if not ok or type(data) ~= "table" then return nil end
+    return tonumber(data.Level or data.BuildingLevel or data.level), data
+end
+local function fireExpeditionNode(action, ...)
+    local remote = _G.AE_EXP_BUILDING_REMOTE
+    if not remote then return false end
+    local args = table.pack(...)
+    return pcall(function()
+        remote:FireServer({ Type = "Post" }, action, table.unpack(args, 1, args.n))
+    end)
+end
+local function clickVisibleText(needle)
+    local pg = RUN_player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
+    needle = tostring(needle):lower()
+    for _, el in ipairs(pg:GetDescendants()) do
+        if (el:IsA("TextButton") or el:IsA("ImageButton")) and el.Visible then
+            local text = el:IsA("TextButton") and tostring(el.Text):lower() or ""
+            if text:find(needle, 1, true) then
+                pcall(function() el:Activate() end)
+                return true
+            end
+        end
+    end
+    return false
+end
+local function openExpeditionCenter()
+    local best, bestScore = nil, 0
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            local full = obj:GetFullName():lower()
+            local action = tostring(obj.ActionText or ""):lower()
+            local object = tostring(obj.ObjectText or ""):lower()
+            local hay = full .. " " .. action .. " " .. object
+            local score = 0
+            if hay:find("expedition") then score = score + 2 end
+            if hay:find("center") then score = score + 5 end
+            if hay:find("building") then score = score + 2 end
+            if hay:find("play") or hay:find("queue") then score = score - 4 end
+            if score > bestScore then best, bestScore = obj, score end
+        end
+    end
+    if not best then return false end
+    pcall(function() fireproximityprompt(best, 1) end)
+    task.wait(1.5)
+    return true
+end
+local function upgradeBuildingViaUI(name)
+    openExpeditionCenter()
+    clickVisibleText(EXP_BUILDING_LABEL[name] or name)
+    task.wait(0.8)
+    -- First click opens requirements; second click confirms when requirements pass.
+    clickVisibleText("upgrade building")
+    task.wait(0.8)
+    clickVisibleText("upgrade building")
+    task.wait(1.2)
+end
+local function upgradeBuilding(name)
+    local before = buildingLevel(name)
+    if before == nil then return false end
+    for _ = 1, 5 do
+        fireExpeditionNode("EXPEDITION_BUILDING_UPGRADE", name)
+        task.wait(1.2)
+        local after = buildingLevel(name)
+        if after == nil or after <= before then
+            upgradeBuildingViaUI(name)
+            task.wait(1)
+            after = buildingLevel(name)
+            if after == nil or after <= before then break end
+        end
+        L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
+        before = after
+    end
+    return true
+end
+local function expeditionMaintenance()
+    L("🏠 วนครบ 4 ด่าน → เคลมรางวัลและอัปฐาน Expedition")
+    -- Claim passive building rewards first so their materials can be used for upgrades.
+    for _, name in ipairs(EXP_BUILDING_ORDER) do
+        fireExpeditionNode("EXPEDITION_BUILDING_CLAIM_REWARDS", name)
+        openExpeditionCenter()
+        clickVisibleText(EXP_BUILDING_LABEL[name] or name)
+        task.wait(0.25)
+        clickVisibleText("claim rewards")
+        task.wait(0.25)
+    end
+    fireExpeditionNode("EXPEDITION_QUEST_CLAIM_ALL")
+    clickVisibleText("claim all")
+    clickVisibleText("claim rewards")
+    task.wait(1)
+
+    upgradeBuilding("ExpeditionCenter")
+    for i = 2, #EXP_BUILDING_ORDER do upgradeBuilding(EXP_BUILDING_ORDER[i]) end
+    L("✅ ตรวจฐานและเคลมรางวัล Expedition เสร็จแล้ว → กลับไปวนด่านต่อ")
+end
+_G.AE_EXP_MAINTENANCE = expeditionMaintenance
+
 local running = false
 local settingsDone = false
 
@@ -11174,6 +11305,7 @@ _G.AE_EXP_RUN = function()
                        and (tick() - rotMapStart) >= rotMinutes() * 60 then
                         stopCombat()
                         local maps = rotMaps()
+                        local completedFullRotation = ((_G.AE_EXP_ROTIDX - 1) % #maps) + 1 == #maps
                         _G.AE_EXP_ROTIDX = (_G.AE_EXP_ROTIDX % #maps) + 1
                         rotSave()   -- ⭐ v9.80: เซฟลงไฟล์ทันที กันรีเซ็ต
                         rotMapStart = nil
@@ -11183,6 +11315,14 @@ _G.AE_EXP_RUN = function()
                         uiHide(true)
                         if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
                         uiHide(false)
+                        if completedFullRotation then
+                            task.wait(5)
+                            local lobbyDeadline = tick() + 30
+                            while tick() < lobbyDeadline and not workspace:FindFirstChild("InteractZones") do task.wait(1) end
+                            if running and workspace:FindFirstChild("InteractZones") and type(_G.AE_EXP_MAINTENANCE) == "function" then
+                                pcall(_G.AE_EXP_MAINTENANCE)
+                            end
+                        end
                         otherSince = tick()   -- ให้ลูปล็อบบี้รอ 20 วิ ก่อนเข้าด่านใหม่
                         task.wait(2)
                         return
@@ -13280,6 +13420,30 @@ local function inGameTower()
     end
     return false
 end
+_G.AE_EXP_GET_BUILDING = getBuildingFuel
+_G.AE_EXP_BUILDING_REMOTE = fuelRemote
+local function currentTowerFloor()
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return _G.AE_TOWER_FLOOR or 0 end
+    for _, d in ipairs(pg:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" and guiOnScreen(d) then
+            local n = tonumber(d.Text:match("[Ff]loor%s*(%d+)"))
+            if n and d.Text:find("%-") then return n end
+        end
+    end
+    return _G.AE_TOWER_FLOOR or 0
+end
+local function reportTowerResult(result)
+    _G.AE_TOWER_FLOOR = math.max(_G.AE_TOWER_FLOOR or 0, currentTowerFloor())
+    _G.AE_TOWER_LAST_RESULT = result
+    if result == "win" then
+        _G.AE_TOWER_CONSECUTIVE_LOSSES = 0
+        _G.AE_TOWER_EXHAUSTED = false
+    elseif result == "lose" then
+        _G.AE_TOWER_CONSECUTIVE_LOSSES = (_G.AE_TOWER_CONSECUTIVE_LOSSES or 0) + 1
+        _G.AE_TOWER_EXHAUSTED = _G.AE_TOWER_CONSECUTIVE_LOSSES >= 10
+    end
+    if _G.AE_SEND_HEARTBEAT then pcall(_G.AE_SEND_HEARTBEAT) end
+end
 -- ⭐ ผลแมตช์เฉพาะ Tower — ต้องเป็น label/button ที่โผล่บนจอจริง (guiOnScreen)
 --    ❌ ห้ามใช้ matchResult เดิม: มันเจอ label "Defeat"/"Victory" ที่ Visible=true แต่ parent ปิดอยู่
 --       → คืน "lose" ผิด → RUN loop กด Back to Lobby ทั้งที่ยังเล่นอยู่ (บัค v10.24)
@@ -13313,7 +13477,7 @@ _G.AE_TOWER_RUN = function(towerType)
     task.spawn(function()
         local inGame = inGameTower   -- ⭐ ใช้ตัว detect ที่ทน Tower (ไม่งั้นวาปซ้ำ)
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
-        local floor=0
+        local floor=_G.AE_TOWER_FLOOR or 0
         while running and MYGEN==_G.AE_SCRIPT_GEN do
             -- 1) เข้าด่าน (ถ้ายังไม่อยู่ในด่าน)
             if not inGame() then
@@ -13322,7 +13486,7 @@ _G.AE_TOWER_RUN = function(towerType)
                 pcall(_G.AE_TOWER_ENTER, towerType)
                 local t0=tick()
                 while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
-                if not inGame() then L("⚠️ ไม่เข้าด่าน → ลองใหม่"); task.wait(3); else floor=floor+1 end
+                if not inGame() then L("⚠️ ไม่เข้าด่าน → ลองใหม่"); task.wait(3); else floor=currentTowerFloor(); _G.AE_TOWER_FLOOR=math.max(_G.AE_TOWER_FLOOR or 0,floor) end
             end
             if not inGame() then task.wait(2)
             else
@@ -13348,6 +13512,7 @@ _G.AE_TOWER_RUN = function(towerType)
                 if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
                 -- 4) จบด่าน
                 if won then
+                    floor=currentTowerFloor(); reportTowerResult("win")
                     L(("🏆 ชนะชั้น #%d → กด Next Floor (ไต่ต่อ)"):format(floor))
                     notify("🏰 Tower","✅ ชนะ → Next Floor",5)
                     task.wait(2.5)
@@ -13357,11 +13522,18 @@ _G.AE_TOWER_RUN = function(towerType)
                     end
                     task.wait(5)   -- รอชั้นถัดไปโหลด (เข้าตรง=inGame / หรือกลับ select แล้ว loop เข้าใหม่)
                 else
-                    L(("💀 แพ้ที่ชั้น #%d → ออก (Tower จบ)"):format(floor))
-                    notify("🏰 Tower","💀 แพ้ชั้น "..floor,6)
+                    floor=currentTowerFloor(); reportTowerResult("lose")
+                    local losses=_G.AE_TOWER_CONSECUTIVE_LOSSES or 0
+                    L(("💀 แพ้ที่ชั้น #%d — แพ้ติดกัน %d/10"):format(floor,losses))
+                    notify("🏰 Tower",("💀 แพ้ติดกัน %d/10"):format(losses),6)
                     task.wait(2)
                     if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
-                    break   -- แพ้ = ไต่ต่อไม่ได้ → หยุด
+                    if _G.AE_TOWER_EXHAUSTED then
+                        L("⛔ ทีมไปต่อไม่ไหวแล้ว — แพ้ติดกันครบ 10 รอบ")
+                        notify("🏰 Tower","ไม่ไหว — แพ้ติดกันครบ 10 รอบ",10)
+                        break
+                    end
+                    task.wait(5)
                 end
             end
         end
