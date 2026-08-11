@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.49"
+local SCRIPT_VERSION = "v10.50"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8951,6 +8951,23 @@ local function findContinueBtn()
     return candidates[1], #candidates > 1, trulyVisible
 end
 
+-- Continue is handled with a real cursor move/click. AbsolutePosition is
+-- already in VIM screen coordinates here; adding GuiInset again moves the
+-- click below the button. Do not pre-fire local connections on this path.
+local function clickContinuePhysical(button)
+    if not button or not button.Parent then return false end
+    local x = button.AbsolutePosition.X + button.AbsoluteSize.X / 2
+    local y = button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2
+    local ok = pcall(function()
+        VIM_EXP:SendMouseMoveEvent(x, y, game)
+        task.wait(0.35)
+        VIM_EXP:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.15)
+        VIM_EXP:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+    return ok
+end
+
 local function findStartGameBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
         if root:IsA("ScreenGui") and root.Enabled then
@@ -9075,7 +9092,7 @@ local function startAutoContinue()
                     else
                         print("[Exp] ⏳ กด Continue ด้านล่าง → รอ 5 วินาทีให้กล่องยืนยันขึ้น")
                     end
-                    clickHard(continueBtn)
+                    clickContinuePhysical(continueBtn)
                     -- Give the confirmation modal/next-node transition enough
                     -- time to render on slower bot machines before scanning again.
                     task.wait(5)
