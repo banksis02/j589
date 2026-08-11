@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.18"
+local SCRIPT_VERSION = "v10.19"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8201,20 +8201,27 @@ _G.AE_EXP_ISSUPPORT = isSupportUnit
 
 local function placeRandomFromHotbar(skipSlots)
     local rep = getReplica("GamePlayerData")
-    if not rep then return 0 end
+    if not rep then print("[Exp Place] ⚠️ ข้ามการวาง — ไม่เจอ GamePlayerData replica"); return 0 end
     local hb = gameHotbarSlots()
+    local nHb = 0; for _ in pairs(hb) do nHb = nHb + 1 end
     local slots = {}
     for slot = 1, 10 do
         if hb[slot] and not (skipSlots and skipSlots[slot]) then table.insert(slots, slot) end
     end
+    local nLob = 0
     if #slots == 0 then
         -- สำรอง: อ่านจากทีมล็อบบี้ (เผื่อ hotbar ในด่านยังไม่มา)
         local assets = getHotbarAssets()
+        for _ in pairs(assets) do nLob = nLob + 1 end
         for slot = 1, 10 do
             if assets[slot] and not (skipSlots and skipSlots[slot]) then table.insert(slots, slot) end
         end
     end
-    if #slots == 0 then return 0 end
+    if #slots == 0 then
+        print(("[Exp Place] ⚠️ ข้ามการวาง — gameHotbar=%d ทีมล็อบบี้=%d registry=%s (อ่าน slot ตัวละครไม่ได้)")
+            :format(nHb, nLob, tostring(registry ~= nil)))
+        return 0
+    end
 
     -- ⭐ เรียงลำดับ: ตัวตีก่อน (ไปยืนจุด 1 ได้) → ตัวระยะไกล → ตัวหาเงินท้ายสุด
     table.sort(slots, function(a, b)
