@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.19"
+local SCRIPT_VERSION = "v10.20"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7240,26 +7240,46 @@ local YEN_ONLY_MIN = 2
 
 -- ---------- replica (ยิง SetNodeQueue โดยไม่ต้องเดา opcode) ----------
 local registry
-pcall(function()
-    local RC = require(RS.Shared.ReplicaClient)
-    for _, up in pairs(debug.getupvalues(RC.FromId)) do
-        if type(up)=="table" then
-            for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end
-            if registry then break end
+local function captureRegistry()
+    pcall(function()
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up)=="table" then
+                for kk in pairs(up) do if type(kk)=="number" then registry=up; break end end
+                if registry then break end
+            end
         end
-    end
-end)
+    end)
+end
+captureRegistry()
 local function getReplica(token)
-    if not registry then return nil end
-    local cand
-    for _, rep in pairs(registry) do
-        local ok,t = pcall(function() return rep.Token end)
-        if ok and t==token then
-            if rawget(rep,"write_lib") then return rep end
-            cand = cand or rep
+    local function search()
+        if not registry then return nil end
+        local cand
+        for _, rep in pairs(registry) do
+            local ok,t = pcall(function() return rep.Token end)
+            if ok and t==token then
+                if rawget(rep,"write_lib") then return rep end
+                cand = cand or rep
+            end
         end
+        return cand
     end
-    return cand
+    local r = search()
+    -- ⭐ re-capture เมื่อไม่เจอ/ไม่ใช่ตัวยิงได้ (registry อาจ stale หลังเปลี่ยนด่าน)
+    if not (r and rawget(r, "write_lib")) then
+        captureRegistry()
+        local r2 = search(); if r2 then return r2 end
+    end
+    return r
+end
+-- debug: ดู token ทั้งหมดใน registry
+_G.AE_EXP_TOKENS = function()
+    captureRegistry()
+    local toks = {}
+    if registry then for id, r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t then toks[#toks+1]=tostring(id)..":"..tostring(t) end end end
+    print("[Exp] tokens: "..(#toks>0 and table.concat(toks, ", ") or "(ว่าง)"))
+    return toks
 end
 
 -- ---------- เช็คแมพ (scan + graph + pathfind) ----------
@@ -8201,7 +8221,12 @@ _G.AE_EXP_ISSUPPORT = isSupportUnit
 
 local function placeRandomFromHotbar(skipSlots)
     local rep = getReplica("GamePlayerData")
-    if not rep then print("[Exp Place] ⚠️ ข้ามการวาง — ไม่เจอ GamePlayerData replica"); return 0 end
+    if not rep then
+        local toks = {}
+        if registry then for _, r in pairs(registry) do local ok,t=pcall(function() return r.Token end); if ok and t then toks[#toks+1]=tostring(t) end end end
+        print("[Exp Place] ⚠️ ข้ามการวาง — ไม่เจอ GamePlayerData. tokens: "..(#toks>0 and table.concat(toks, ", ") or "(ว่าง)"))
+        return 0
+    end
     local hb = gameHotbarSlots()
     local nHb = 0; for _ in pairs(hb) do nHb = nHb + 1 end
     local slots = {}
