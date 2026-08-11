@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.15"
+local SCRIPT_VERSION = "v10.16"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8817,8 +8817,10 @@ end
 local function openEncounterPrompt()
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
+    -- ⭐ สแกนแค่โฟลเดอร์ NPCS (เล็ก) ไม่สแกน workspace ทั้งหมด (หนัก → เครื่องแลค → Continue กดซ้ำ)
+    local scope = workspace:FindFirstChild("NPCS") or workspace
     local best, bestD
-    for _, p in ipairs(workspace:GetDescendants()) do
+    for _, p in ipairs(scope:GetDescendants()) do
         -- ⭐ encounter NPC ใช้ Key=World95 เท่านั้น (ตัวชอป/จ้างยูนิตใช้ E) → กรองกันคุยผิดตัว+บังวางตัว
         if p:IsA("ProximityPrompt") and p.Enabled and p.KeyboardKeyCode == Enum.KeyCode.World95 then
             local par = p.Parent
@@ -10961,31 +10963,31 @@ _G.AE_EXP_RUN = function()
                         task.wait(2)
                         return
                     end
-                    -- [1] ตั้งค่าแบบ background: ห้ามรอจนตั้งค่าเสร็จ เพราะ wave เริ่มแล้ว
-                    -- การวางตัวด้านล่างต้องเริ่มทันทีพร้อมกับการตั้งค่า เพื่อไม่ให้แพ้ต้นเกม
+                    -- [1] ตั้งค่า (background) + ตั้งธง done ให้ [2] รอ (รถ/เกมใหม่ทำพร้อมกันแล้วบัค → ทำทีละสเต็ป)
                     if not settingsDone and has("AE_EXP_SETTINGS") then
-                        settingsDone = true -- ล็อกก่อน spawn กันลูปถัดไปเปิด Settings ซ้ำ
-                        L("[1] ตั้งค่าเบื้องหลัง พร้อมเริ่มวางตัวทันที")
+                        settingsDone = true
+                        _G.AE_EXP_SET_OK = false
+                        L("[1] ตั้งค่า...")
                         task.spawn(function()
-                            local ok, err = pcall(function()
-                                call("AE_EXP_SETTINGS")
-                            end)
-                            if not ok then
-                                settingsDone = false -- ให้ลองใหม่ได้ ถ้า thread ตั้งค่าพังจริง
-                                warn("[AE Settings] background error: " .. tostring(err))
-                            else
-                                L("[1] ตั้งค่าเบื้องหลังเสร็จแล้ว")
-                            end
+                            pcall(function() call("AE_EXP_SETTINGS") end)
+                            _G.AE_EXP_SET_OK = true
+                            L("[1] ตั้งค่าเสร็จ")
                         end)
                     end
-                    -- [2] วางตัว + อัพเกรด + เฝ้ากด Continue ทันที (ทำพร้อมกับ Settings)
+                    -- [2] ทีละสเต็ป: รอตั้งค่าเสร็จ → กด Continue เริ่มด่าน → รอแป๊บ → ค่อยวางตัว
                     if not placed then
                         if has("AE_EXP_RESETRUN") then call("AE_EXP_RESETRUN") end
-                        L("[2] วางตัวละคร + อัพเกรด + เฝ้ากด Continue")
+                        L("[2] รอตั้งค่าเสร็จก่อน...")
+                        local t0 = tick()
+                        while not _G.AE_EXP_SET_OK and tick() - t0 < 10 do task.wait(0.5) end
+                        L("[2] ▶️ กด Continue เริ่มด่าน")
+                        if has("AE_EXP_CONTINUE") then call("AE_EXP_CONTINUE") end
+                        call("AE_EXP_AUTOCONT")           -- เปิดลูปเฝ้ากด Continue ตลอด
+                        task.wait(3)                      -- ให้ด่านเริ่ม + payload เดิน ก่อนวางตัว
+                        L("[2] 🎯 วางตัว + อัพเกรด")
                         call("AE_EXP_PLACE")
                         call("AE_EXP_PRIORITY")
                         call("AE_EXP_UPGRADE")
-                        call("AE_EXP_AUTOCONT")
                         call("AE_EXP_KEEPER")
                         placed = true
                         L("   ✅ ระบบในด่านทำงานครบแล้ว")
