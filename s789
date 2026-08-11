@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.40"
+local SCRIPT_VERSION = "v10.41"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11108,6 +11108,9 @@ local function buildingLevel(name)
             if type(v) == "number" and (key == "level" or key == "buildinglevel" or key == "upgradelevel") then
                 return tonumber(v)
             end
+            -- PlayerData.ExpeditionData.Buildings uses Upgrade=0/1/2,
+            -- while the UI displays Building Level 1/2/3.
+            if type(v) == "number" and key == "upgrade" then return tonumber(v) + 1 end
         end
         for _, v in pairs(t) do
             if type(v) == "table" then local found=findLevel(v,depth+1); if found then return found end end
