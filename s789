@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.46"
+local SCRIPT_VERSION = "v10.47"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8908,26 +8908,47 @@ end
 -- Return the exact visible checkpoint button. This path always uses clickHard
 -- because firing only local connections can fail to notify the game server.
 local function findContinueBtn()
-    -- The original checkpoint button remains Visible behind the confirmation
-    -- modal. Always prefer the Continue button inside "Continue Expedition".
-    local dialogBtn = findDialogBtn("Continue Expedition", "Continue")
-    if dialogBtn then return dialogBtn, true end
+    local candidates = {}
+    local function isContinueText(value)
+        local text = tostring(value or ""):lower()
+        return text == "continue" or text:find("ดำเนินต่อ", 1, true) ~= nil
+    end
+    local function trulyVisible(gui)
+        local node = gui
+        while node and node ~= player.PlayerGui do
+            if node:IsA("GuiObject") and not node.Visible then return false end
+            if node:IsA("ScreenGui") and not node.Enabled then return false end
+            node = node.Parent
+        end
+        return true
+    end
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
         if root:IsA("ScreenGui") and root.Enabled then
             for _, b in ipairs(root:GetDescendants()) do
-                if b:IsA("GuiButton") and b.Visible and b.Active ~= false
+                if b:IsA("GuiButton") and trulyVisible(b) and b.Active ~= false
                    and b.AbsoluteSize.X > 20 and b.AbsoluteSize.Y > 15 then
                     local text = ""
                     if b:IsA("TextButton") then pcall(function() text=tostring(b.Text) end) end
-                    if text == "Continue" then return b, false end
-                    for _, l in ipairs(b:GetDescendants()) do
-                        if l:IsA("TextLabel") and l.Visible and tostring(l.Text) == "Continue" then return b, false end
+                    local hit = isContinueText(text)
+                    if not hit then
+                        for _, l in ipairs(b:GetDescendants()) do
+                            if l:IsA("TextLabel") and trulyVisible(l) and isContinueText(l.Text) then hit=true; break end
+                        end
                     end
+                    if hit then candidates[#candidates+1] = b end
                 end
             end
         end
     end
-    return nil
+    if #candidates == 0 then return nil, false end
+    -- The confirmation button is above the checkpoint button on screen.
+    -- Position is more reliable than ZIndex because these two GUIs use
+    -- separate ScreenGuis whose local ZIndex values are not comparable.
+    table.sort(candidates, function(a, b)
+        if a.AbsolutePosition.Y ~= b.AbsolutePosition.Y then return a.AbsolutePosition.Y < b.AbsolutePosition.Y end
+        return a.ZIndex > b.ZIndex
+    end)
+    return candidates[1], #candidates > 1, trulyVisible
 end
 
 local function findStartGameBtn()
@@ -9047,11 +9068,11 @@ local function startAutoContinue()
                 -- ⭐ v9.93: กด Continue "ยืนยัน" — กดซ้ำจนปุ่มหายจริง (กันเครื่องแลค กดไม่ติด/พลาด)
                 print("[Exp] 🚚 รถจอด → กด Continue")
                 for attempt = 1, 5 do
-                    local continueBtn, isConfirm = findContinueBtn()
+                    local continueBtn, isConfirm, isStillVisible = findContinueBtn()
                     if not contOn or not continueBtn then break end
                     clickHard(continueBtn)
                     task.wait(1.5)
-                    if isConfirm and not findDialogBtn("Continue Expedition", "Continue") then break end
+                    if isConfirm and (not continueBtn.Parent or not isStillVisible(continueBtn)) then break end
                     if not findContinueBtn() then break end   -- ปุ่มหาย = กดติดแล้ว
                     print(("[Exp] 🔁 Continue ยังค้าง (เครื่องแลค?) → กดซ้ำ #%d"):format(attempt))
                 end
