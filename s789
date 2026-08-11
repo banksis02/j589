@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.36"
+local SCRIPT_VERSION = "v10.37"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11137,6 +11137,23 @@ local function closeBuildingUI()
     clickVisibleText("back")
     task.wait(0.8)
 end
+local function collectBuildingRewards(name)
+    local remote = _G.AE_EXP_BUILDING_REMOTE
+    if not remote then
+        pcall(function()
+            remote = game:GetService("ReplicatedStorage"):WaitForChild("Nodes")
+                :WaitForChild("Network"):WaitForChild("NetworkEvents"):WaitForChild("_updateNode")
+        end)
+    end
+    if not remote then L("⚠️ ไม่พบ Remote เคลมฐาน "..tostring(name)); return false end
+    local ok, err = pcall(function()
+        remote:FireServer({ Type = "Post" }, "EXPEDITION_BUILDING_COLLECT", name)
+    end)
+    if ok then L("🎁 ส่งคำสั่งเคลม "..tostring(name).." แล้ว")
+    else L("❌ เคลม "..tostring(name).." ไม่สำเร็จ: "..tostring(err)) end
+    task.wait(0.7)
+    return ok
+end
 local function openBuilding(name)
     local prompt
     local wantedName = tostring(name):lower():gsub("[%s_%-]", "")
@@ -11214,10 +11231,9 @@ local function upgradeBuilding(name)
 end
 local function expeditionMaintenance()
     L("🏠 วนครบ 4 ด่าน → เคลมรางวัลและอัปฐาน Expedition")
-    -- Only these buildings expose reward buttons in the current Expedition UI.
-    for _, name in ipairs({ "ResourceDrill", "GoldMine" }) do
-        if openBuilding(name) then clickVisibleText("claim rewards"); task.wait(1); closeBuildingUI() end
-    end
+    -- Confirmed from the game's real Claim Rewards button remote.
+    collectBuildingRewards("ResourceDrill")
+    collectBuildingRewards("GoldMine")
     if openBuilding("QuestBoard") then clickVisibleText("claim all"); task.wait(1); closeBuildingUI() end
 
     upgradeBuilding("ExpeditionCenter")
