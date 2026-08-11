@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.53"
+local SCRIPT_VERSION = "v10.54"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9020,17 +9020,15 @@ local function startAutoContinue()
                         task.wait(1)
                     end
                 end
-                -- กดปุ่มเดิมหนึ่งครั้ง แล้วกดปุ่มในกล่องยืนยันอีกหนึ่งครั้ง
+                -- Remote Continue เดินต่อโดยตรง ไม่ต้องเปิด/กดกล่องยืนยัน
                 print("[Exp] 🚚 รถจอด → กด Continue")
-                clickByText("Continue", 3)
-                task.wait(2)
                 local remoteOk, remoteErr = pcall(function()
                     RS:WaitForChild("RemoteEvents"):WaitForChild("ReplicaSignal")
                         :FireServer(67, "Continue")
                 end)
-                if remoteOk then print("[Exp] ✅ ยืนยัน Continue ผ่าน ReplicaSignal(67)")
+                if remoteOk then print("[Exp] ✅ เดินต่อผ่าน ReplicaSignal(67) โดยตรง")
                 else warn("[Exp] ❌ ยืนยัน Continue Remote ไม่สำเร็จ: " .. tostring(remoteErr)) end
-                task.wait(1.5)
+                task.wait(3)
             end
         end
         print("[Exp] ⏹️ หยุดเฝ้ารถจอด")
