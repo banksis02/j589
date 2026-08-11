@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.34"
+local SCRIPT_VERSION = "v10.35"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11110,10 +11110,22 @@ local function clickVisibleText(needle)
     local pg = RUN_player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
     needle = tostring(needle):lower()
     for _, el in ipairs(pg:GetDescendants()) do
-        if (el:IsA("TextButton") or el:IsA("ImageButton")) and el.Visible and visibleInTree(el) then
-            local text = el:IsA("TextButton") and tostring(el.Text):lower() or ""
+        if (el:IsA("TextButton") or el:IsA("TextLabel")) and el.Visible and visibleInTree(el) then
+            local text = tostring(el.Text or ""):lower()
             if text:find(needle, 1, true) then
-                pcall(function() el:Activate() end)
+                local target = el
+                while target and not target:IsA("GuiButton") do target = target.Parent end
+                target = target or el
+                pcall(function() if target:IsA("GuiButton") then target:Activate() end end)
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    local p, s = target.AbsolutePosition, target.AbsoluteSize
+                    local x, y = p.X + s.X/2, p.Y + s.Y/2
+                    vim:SendMouseMoveEvent(x, y, game)
+                    vim:SendMouseButtonEvent(x, y, 0, true, game, 0)
+                    task.wait(0.08)
+                    vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+                end)
                 return true
             end
         end
@@ -11140,6 +11152,16 @@ local function openBuilding(name)
         end
     end
     if not prompt then L("⚠️ ไม่พบ Prompt ฐาน "..tostring(name)); return false end
+    pcall(function()
+        local part = prompt.Parent
+        while part and not part:IsA("BasePart") do part = part.Parent end
+        local char = RUN_player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if part and hrp then
+            hrp.CFrame = part.CFrame * CFrame.new(0, 0, -4)
+            task.wait(0.8)
+        end
+    end)
     pcall(function() fireproximityprompt(prompt, 1) end)
     task.wait(2)
     return true
@@ -11156,14 +11178,22 @@ local function upgradeBuildingViaUI(name)
 end
 local function upgradeBuilding(name)
     local before = buildingLevel(name)
-    if before == nil then return false end
-    for _ = 1, 5 do
-        upgradeBuildingViaUI(name)
+    for attempt = 1, 4 do
+        local clicked = upgradeBuildingViaUI(name)
+        if not clicked then
+            if attempt == 1 then L("ℹ️ "..name.." ไม่มีปุ่ม Upgrade หรืออัปเต็มแล้ว") end
+            break
+        end
         task.wait(1)
         local after = buildingLevel(name)
-        if after == nil or after <= before then break end
-        L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
-        before = after
+        if before and after and after > before then
+            L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
+            before = after
+        elseif before and after and after <= before then
+            break
+        else
+            L(("🏗️ ส่งคำสั่งอัป %s รอบ %d แล้ว"):format(name, attempt))
+        end
     end
     return true
 end
