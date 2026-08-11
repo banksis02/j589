@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.28"
+local SCRIPT_VERSION = "v10.29"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -1055,6 +1055,7 @@ if GAME_ID == "anime_expeditions" then
                                 end
                             end
                         end)
+                        _G.AE_CUR_STAGE = mapName   -- ⭐ เก็บชื่อด่านล่าสุด (ให้ end screen ใช้ fallback ตอน stage = N/A)
                         print(("[AE] 🌊 Wave %d → ส่งขึ้นเว็บ (%s)"):format(w, mapName))
                         sendLiveWave(w, mapName)
                     end
@@ -2769,6 +2770,7 @@ if GAME_ID == "anime_expeditions" then
                 if t == "Victory" or t == "Defeat" then
                     stats.result = t; hasEndText = true
                 elseif t:find(" %- Act ") then stats.stage = t
+                elseif t:find("[Ff]loor%s*%d") and t:find("%-") then stats.stage = t   -- ⭐ Tower: "Floor 5 - East Town"
                 elseif t == "Story" or t == "Endless" or t == "Challenge" or t == "Raid" then stats.mode = t
                 elseif t:find("Mode$") then stats.difficulty = t
                 elseif t == "Clear Time" or t == "Total Yen" or t == "Total Kills" or t == "Total Damage" then
@@ -2825,6 +2827,9 @@ if GAME_ID == "anime_expeditions" then
 
     local function sendAEDataToWeb(stats)
         local ts = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        -- ⭐ Tower: end screen ไม่มี label " - Act " → stats.stage = "N/A"
+        --    ใช้ชื่อด่านล่าสุดที่จับได้ระหว่างเล่น (Floor N - <map>) แทน จะได้ไม่โชว์ N/A ใน Mission Log
+        if (stats.stage == "N/A" or stats.stage == "") and _G.AE_CUR_STAGE then stats.stage = _G.AE_CUR_STAGE end
         local actFull = stats.stage
         if stats.mode ~= "N/A" then actFull = actFull .. " - " .. stats.mode end
         if stats.difficulty ~= "N/A" then actFull = actFull .. " " .. stats.difficulty end
