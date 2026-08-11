@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.31"
+local SCRIPT_VERSION = "v10.30"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11079,117 +11079,6 @@ local function call(name, ...)
     return table.unpack(r, 2, r.n)
 end
 
--- Expedition maintenance: run after one complete 4-map rotation.
--- ExpeditionCenter must be upgraded first because it unlocks every other building.
-local EXP_BUILDING_ORDER = {
-    "ExpeditionCenter", "TrainingGrounds", "ResearchLab", "ResourceDrill",
-    "Armory", "ExpeditionShop", "GoldMine", "QuestBoard"
-}
-local EXP_BUILDING_LABEL = {
-    ExpeditionCenter="Expedition Center", TrainingGrounds="Training Grounds",
-    ResearchLab="Research Lab", ResourceDrill="Resource Drill", Armory="Armory",
-    ExpeditionShop="Expedition Shop", GoldMine="Gold Mine", QuestBoard="Quest Board"
-}
-local function buildingLevel(name)
-    local getter = _G.AE_EXP_GET_BUILDING
-    if type(getter) ~= "function" then return nil end
-    local ok, data = pcall(getter, name)
-    if not ok or type(data) ~= "table" then return nil end
-    return tonumber(data.Level or data.BuildingLevel or data.level), data
-end
-local function fireExpeditionNode(action, ...)
-    local remote = _G.AE_EXP_BUILDING_REMOTE
-    if not remote then return false end
-    local args = table.pack(...)
-    return pcall(function()
-        remote:FireServer({ Type = "Post" }, action, table.unpack(args, 1, args.n))
-    end)
-end
-local function clickVisibleText(needle)
-    local pg = RUN_player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
-    needle = tostring(needle):lower()
-    for _, el in ipairs(pg:GetDescendants()) do
-        if (el:IsA("TextButton") or el:IsA("ImageButton")) and el.Visible then
-            local text = el:IsA("TextButton") and tostring(el.Text):lower() or ""
-            if text:find(needle, 1, true) then
-                pcall(function() el:Activate() end)
-                return true
-            end
-        end
-    end
-    return false
-end
-local function openExpeditionCenter()
-    local best, bestScore = nil, 0
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            local full = obj:GetFullName():lower()
-            local action = tostring(obj.ActionText or ""):lower()
-            local object = tostring(obj.ObjectText or ""):lower()
-            local hay = full .. " " .. action .. " " .. object
-            local score = 0
-            if hay:find("expedition") then score = score + 2 end
-            if hay:find("center") then score = score + 5 end
-            if hay:find("building") then score = score + 2 end
-            if hay:find("play") or hay:find("queue") then score = score - 4 end
-            if score > bestScore then best, bestScore = obj, score end
-        end
-    end
-    if not best then return false end
-    pcall(function() fireproximityprompt(best, 1) end)
-    task.wait(1.5)
-    return true
-end
-local function upgradeBuildingViaUI(name)
-    openExpeditionCenter()
-    clickVisibleText(EXP_BUILDING_LABEL[name] or name)
-    task.wait(0.8)
-    -- First click opens requirements; second click confirms when requirements pass.
-    clickVisibleText("upgrade building")
-    task.wait(0.8)
-    clickVisibleText("upgrade building")
-    task.wait(1.2)
-end
-local function upgradeBuilding(name)
-    local before = buildingLevel(name)
-    if before == nil then return false end
-    for _ = 1, 5 do
-        fireExpeditionNode("EXPEDITION_BUILDING_UPGRADE", name)
-        task.wait(1.2)
-        local after = buildingLevel(name)
-        if after == nil or after <= before then
-            upgradeBuildingViaUI(name)
-            task.wait(1)
-            after = buildingLevel(name)
-            if after == nil or after <= before then break end
-        end
-        L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
-        before = after
-    end
-    return true
-end
-local function expeditionMaintenance()
-    L("🏠 วนครบ 4 ด่าน → เคลมรางวัลและอัปฐาน Expedition")
-    -- Claim passive building rewards first so their materials can be used for upgrades.
-    for _, name in ipairs(EXP_BUILDING_ORDER) do
-        fireExpeditionNode("EXPEDITION_BUILDING_CLAIM_REWARDS", name)
-        openExpeditionCenter()
-        clickVisibleText(EXP_BUILDING_LABEL[name] or name)
-        task.wait(0.25)
-        clickVisibleText("claim rewards")
-        task.wait(0.25)
-    end
-    fireExpeditionNode("EXPEDITION_QUEST_CLAIM_ALL")
-    clickVisibleText("claim all")
-    clickVisibleText("claim rewards")
-    task.wait(1)
-
-    upgradeBuilding("ExpeditionCenter")
-    for i = 2, #EXP_BUILDING_ORDER do upgradeBuilding(EXP_BUILDING_ORDER[i]) end
-    L("✅ ตรวจฐานและเคลมรางวัล Expedition เสร็จแล้ว → กลับไปวนด่านต่อ")
-end
-_G.AE_EXP_MAINTENANCE = expeditionMaintenance
-
 local running = false
 local settingsDone = false
 
@@ -11305,7 +11194,6 @@ _G.AE_EXP_RUN = function()
                        and (tick() - rotMapStart) >= rotMinutes() * 60 then
                         stopCombat()
                         local maps = rotMaps()
-                        local completedFullRotation = ((_G.AE_EXP_ROTIDX - 1) % #maps) + 1 == #maps
                         _G.AE_EXP_ROTIDX = (_G.AE_EXP_ROTIDX % #maps) + 1
                         rotSave()   -- ⭐ v9.80: เซฟลงไฟล์ทันที กันรีเซ็ต
                         rotMapStart = nil
@@ -11315,14 +11203,6 @@ _G.AE_EXP_RUN = function()
                         uiHide(true)
                         if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
                         uiHide(false)
-                        if completedFullRotation then
-                            task.wait(5)
-                            local lobbyDeadline = tick() + 30
-                            while tick() < lobbyDeadline and not workspace:FindFirstChild("InteractZones") do task.wait(1) end
-                            if running and workspace:FindFirstChild("InteractZones") and type(_G.AE_EXP_MAINTENANCE) == "function" then
-                                pcall(_G.AE_EXP_MAINTENANCE)
-                            end
-                        end
                         otherSince = tick()   -- ให้ลูปล็อบบี้รอ 20 วิ ก่อนเข้าด่านใหม่
                         task.wait(2)
                         return
@@ -13420,8 +13300,6 @@ local function inGameTower()
     end
     return false
 end
-_G.AE_EXP_GET_BUILDING = getBuildingFuel
-_G.AE_EXP_BUILDING_REMOTE = fuelRemote
 local function currentTowerFloor()
     local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return _G.AE_TOWER_FLOOR or 0 end
     for _, d in ipairs(pg:GetDescendants()) do
