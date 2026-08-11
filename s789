@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.37"
+local SCRIPT_VERSION = "v10.38"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11154,6 +11154,21 @@ local function collectBuildingRewards(name)
     task.wait(0.7)
     return ok
 end
+local function sendBuildingUpgrade(name)
+    local remote = _G.AE_EXP_BUILDING_REMOTE
+    if not remote then
+        pcall(function()
+            remote = game:GetService("ReplicatedStorage"):WaitForChild("Nodes")
+                :WaitForChild("Network"):WaitForChild("NetworkEvents"):WaitForChild("_updateNode")
+        end)
+    end
+    if not remote then L("⚠️ ไม่พบ Remote อัปฐาน "..tostring(name)); return false end
+    local ok, err = pcall(function()
+        remote:FireServer({ Type = "Post" }, "EXPEDITION_BUILDING_UPGRADE", name)
+    end)
+    if not ok then L("❌ ส่งคำสั่งอัป "..tostring(name).." ไม่สำเร็จ: "..tostring(err)) end
+    return ok
+end
 local function openBuilding(name)
     local prompt
     local wantedName = tostring(name):lower():gsub("[%s_%-]", "")
@@ -11210,21 +11225,18 @@ local function upgradeBuildingViaUI(name)
 end
 local function upgradeBuilding(name)
     local before = buildingLevel(name)
-    for attempt = 1, 4 do
-        local clicked = upgradeBuildingViaUI(name)
-        if not clicked then
-            if attempt == 1 then L("ℹ️ "..name.." ไม่มีปุ่ม Upgrade หรืออัปเต็มแล้ว") end
-            break
-        end
-        task.wait(1)
+    for attempt = 1, 3 do
+        if not sendBuildingUpgrade(name) then break end
+        task.wait(1.2)
         local after = buildingLevel(name)
         if before and after and after > before then
             L(("🏗️ อัป %s: Lv.%d → Lv.%d"):format(name, before, after))
             before = after
         elseif before and after and after <= before then
+            if attempt == 1 then L("ℹ️ "..name.." อัปไม่ได้ วัตถุดิบไม่พอ หรือเต็มแล้ว") end
             break
         else
-            L(("🏗️ ส่งคำสั่งอัป %s รอบ %d แล้ว"):format(name, attempt))
+            L(("🏗️ ส่ง Remote อัป %s รอบ %d แล้ว"):format(name, attempt))
         end
     end
     return true
