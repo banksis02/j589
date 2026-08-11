@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.35"
+local SCRIPT_VERSION = "v10.36"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11152,16 +11152,31 @@ local function openBuilding(name)
         end
     end
     if not prompt then L("⚠️ ไม่พบ Prompt ฐาน "..tostring(name)); return false end
+    local warped = false
+    local warpError = "ไม่พบตำแหน่งฐาน"
     pcall(function()
-        local part = prompt.Parent
-        while part and not part:IsA("BasePart") do part = part.Parent end
+        local root = prompt.Parent
+        local targetCF
+        if root:IsA("BasePart") then
+            targetCF = root.CFrame
+        elseif root:IsA("Model") then
+            targetCF = root:GetPivot()
+        else
+            local part = root:FindFirstChildWhichIsA("BasePart", true)
+            if part then targetCF = part.CFrame end
+        end
         local char = RUN_player.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if part and hrp then
-            hrp.CFrame = part.CFrame * CFrame.new(0, 0, -4)
-            task.wait(0.8)
+        if targetCF and char then
+            char:PivotTo(targetCF * CFrame.new(0, 3, -4))
+            warped = true
+            task.wait(1)
         end
     end)
+    if warped then
+        L("📍 วาร์ปใกล้ฐาน "..tostring(name).." แล้ว")
+    else
+        L("⚠️ วาร์ปฐาน "..tostring(name).." ไม่สำเร็จ: "..warpError)
+    end
     pcall(function() fireproximityprompt(prompt, 1) end)
     task.wait(2)
     return true
