@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.23"
+local SCRIPT_VERSION = "v10.24"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3269,6 +3269,17 @@ if GAME_ID == "anime_expeditions" then
             return
         end
 
+        -- ⭐ โหมด Tower (หอคอย) → เข้าชั้นสูงสุด → วาง Villain → ชนะกด Next Floor ไต่ต่อ | ชนิดจากเว็บ _G.AE_TOWER_TYPE
+        if farmMode == "tower" then
+            if _G.AE_TOWER_RUN then
+                print(("[AE Farm] 🏰 Tower — %s"):format(tostring(_G.AE_TOWER_TYPE or "Tower")))
+                pcall(_G.AE_TOWER_RUN, tostring(_G.AE_TOWER_TYPE or "Tower"))
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Tower (_G.AE_TOWER_RUN)")
+            end
+            return
+        end
+
         -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
         if farmMode == "quest" then
             if _G.AE_QUEST_RUN then
@@ -3635,6 +3646,11 @@ if GAME_ID == "anime_expeditions" then
                             print(("[AE Remote] 😈 Villain Invasion: Act %d"):format(newAct))
                         end
                         _G.AE_VILLAIN_ACT = newAct
+                    end
+                    -- ⭐ งาน Tower (หอคอย) — รับชนิด (Tower/Traitless) จากเว็บ (job.stage)
+                    if wantMode == "tower" then
+                        _G.AE_TOWER_TYPE = job.stage or "Tower"
+                        if changed then print(("[AE Remote] 🏰 Tower: %s"):format(tostring(_G.AE_TOWER_TYPE))) end
                     end
                     -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
                     if wantMode == "quest" then
@@ -13199,6 +13215,15 @@ end
 -- 🏰 AE TOWER RUN — reuse โครง Raid: settings→เข้า Tower→วาง Villain→ชนะกด "Next Floor" ไต่ต่อ
 --   _G.AE_TOWER_RUN("Tower")  หรือ  _G.AE_TOWER_RUN("Traitless")
 -- ============================================================
+-- ⭐ in-game detection แบบทน (Tower HUD อาจต่างจาก Raid) — GameUI.HUD / Enemies / _G.AE_IN_GAME
+local function inGameTower()
+    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
+    local gu = pg:FindFirstChild("GameUI")
+    if gu and gu:FindFirstChild("HUD") then return true end
+    if workspace:FindFirstChild("Enemies") then return true end
+    return false
+end
 _G.AE_TOWER_STOP = function()
     running=false
     if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
@@ -13210,6 +13235,7 @@ _G.AE_TOWER_RUN = function(towerType)
     if running then L("กำลังทำงานอยู่"); return end
     running=true
     task.spawn(function()
+        local inGame = inGameTower   -- ⭐ ใช้ตัว detect ที่ทน Tower (ไม่งั้นวาปซ้ำ)
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         local floor=0
         while running and MYGEN==_G.AE_SCRIPT_GEN do
