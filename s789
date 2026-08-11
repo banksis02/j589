@@ -3298,12 +3298,8 @@ if GAME_ID == "anime_expeditions" then
 
         -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
         if farmMode == "quest" then
-            if _G.AE_QUEST_RUN then
-                print("[AE Farm] 🎯 โหมดทำเควส (Bounty Board)")
-                pcall(_G.AE_QUEST_RUN)
-            else
-                warn("[AE Farm] ❌ ไม่เจอระบบเควส (_G.AE_QUEST_RUN) — โหลดสคริปต์ยังไม่ครบ")
-            end
+            farmingActive = false
+            warn("[AE Farm] ⛔ โหมด Quest ถูกปิดใช้งานแล้ว — เกมนำระบบนี้ออก")
             return
         end
         -- ⭐ เช็คว่า Victory UI ยังเปิดอยู่ไหม (ห้ามวางตัวถ้าเปิด)
@@ -3661,6 +3657,10 @@ if GAME_ID == "anime_expeditions" then
                     -- ⭐ มีงาน → ฟาร์มตามที่สั่ง (ถ้ายังไม่ได้ฟาร์ม หรือโหมด/ด่านเปลี่ยน)
                     local wantMode  = job.mode or "act1"
                     local wantStage = job.stage or "School Grounds"
+                    if wantMode == "quest" then
+                        if changed then warn("[AE Remote] ⛔ ข้ามงาน Quest ที่ค้างอยู่ — โหมดนี้ถูกปิดใช้งานแล้ว") end
+                        return
+                    end
                     -- ⭐ v8.5: งาน Expedition — รับความยาก 1/2/3 + แมพ จากเว็บ
                     if wantMode == "expedition" then
                         local newDiff = tonumber(job.difficulty) or 3
@@ -11712,8 +11712,7 @@ L("พร้อม — "..status)
 if cfgErr then L("cfgErr: "..tostring(cfgErr)) end
 notify("🎯 Bounty Core พร้อม", status, 6)
 
--- auto-scan ทันที (ให้เห็นผลเลย)
-task.spawn(function() task.wait(0.5); pcall(_G.AE_BOUNTY_SCAN) end)
+-- Quest/Bounty ถูกนำออกจากเกม: ห้าม scan/reroll อัตโนมัติตอนโหลดสคริปต์
 
 end)  -- จบ pcall ทั้งไฟล์
 
