@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.38"
+local SCRIPT_VERSION = "v10.39"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -11243,6 +11243,17 @@ local function upgradeBuilding(name)
 end
 local function expeditionMaintenance()
     L("🏠 วนครบ 4 ด่าน → เคลมรางวัลและอัปฐาน Expedition")
+    if type(_G.AE_ENTER_TP) == "function" then
+        L("🚀 วาร์ปไปโซน Expedition ก่อนเริ่มจัดการฐาน")
+        local ok, result = pcall(_G.AE_ENTER_TP)
+        if not ok or result == false then
+            L("⚠️ วาร์ป Expedition ไม่สำเร็จ: "..tostring(result))
+        else
+            task.wait(2)
+        end
+    else
+        L("⚠️ ไม่พบฟังก์ชัน AE_ENTER_TP")
+    end
     -- Confirmed from the game's real Claim Rewards button remote.
     collectBuildingRewards("ResourceDrill")
     collectBuildingRewards("GoldMine")
