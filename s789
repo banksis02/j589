@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.22"
+local SCRIPT_VERSION = "v10.23"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13192,6 +13192,75 @@ _G.AE_RAID_RUN=function(mapName, actNum)
         if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
         if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
         running=false
+    end)
+end
+
+-- ============================================================
+-- 🏰 AE TOWER RUN — reuse โครง Raid: settings→เข้า Tower→วาง Villain→ชนะกด "Next Floor" ไต่ต่อ
+--   _G.AE_TOWER_RUN("Tower")  หรือ  _G.AE_TOWER_RUN("Traitless")
+-- ============================================================
+_G.AE_TOWER_STOP = function()
+    running=false
+    if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+    if _G.AE_VILLAIN_UPGRADE_STOP then pcall(_G.AE_VILLAIN_UPGRADE_STOP) end
+    L("⏹ หยุด Tower")
+end
+_G.AE_TOWER_RUN = function(towerType)
+    towerType = towerType or "Tower"
+    if running then L("กำลังทำงานอยู่"); return end
+    running=true
+    task.spawn(function()
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        local floor=0
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            -- 1) เข้าด่าน (ถ้ายังไม่อยู่ในด่าน)
+            if not inGame() then
+                L(("🏰 เข้า Tower %s (ชั้นสูงสุด)"):format(towerType))
+                if not _G.AE_TOWER_ENTER then L("❌ ไม่เจอ AE_TOWER_ENTER (รันสคริปต์หลักก่อน)"); break end
+                pcall(_G.AE_TOWER_ENTER, towerType)
+                local t0=tick()
+                while running and not inGame() and tick()-t0<90 do L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3) end
+                if not inGame() then L("⚠️ ไม่เข้าด่าน → ลองใหม่"); task.wait(3); else floor=floor+1 end
+            end
+            if not inGame() then task.wait(2)
+            else
+                -- 2) วาง Villain (เหมือนที่ user สั่ง) + auto-upgrade เกม (APPLY เปิดไว้)
+                L(("✅ อยู่ในด่าน (ชั้น #%d) → วาง Villain"):format(floor))
+                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("❌ ไม่เจอ AE_VILLAIN_PLACE") end
+                task.wait(3)
+                -- 3) เล่นจนจบ (วางซ้ำเรื่อยๆ)
+                local won=false; local t0=tick(); local tick2=0
+                while running and MYGEN==_G.AE_SCRIPT_GEN do
+                    local r=matchResult()
+                    if r=="win" then won=true; break end
+                    if r=="lose" then break end
+                    if not inGame() and tick()-t0>30 then break end
+                    tick2=tick2+1
+                    if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
+                    task.wait(3)
+                end
+                if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+                -- 4) จบด่าน
+                if won then
+                    L(("🏆 ชนะชั้น #%d → กด Next Floor (ไต่ต่อ)"):format(floor))
+                    notify("🏰 Tower","✅ ชนะ → Next Floor",5)
+                    task.wait(2.5)
+                    if not clickText("Next Floor",false,8) then
+                        L("⚠️ ไม่เจอ Next Floor → กลับล็อบบี้เข้าใหม่")
+                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                    end
+                    task.wait(5)   -- รอชั้นถัดไปโหลด (เข้าตรง=inGame / หรือกลับ select แล้ว loop เข้าใหม่)
+                else
+                    L(("💀 แพ้ที่ชั้น #%d → ออก (Tower จบ)"):format(floor))
+                    notify("🏰 Tower","💀 แพ้ชั้น "..floor,6)
+                    task.wait(2)
+                    if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                    break   -- แพ้ = ไต่ต่อไม่ได้ → หยุด
+                end
+            end
+        end
+        running=false
+        L("⏹ Tower จบการทำงาน")
     end)
 end
 
