@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.50"
+local SCRIPT_VERSION = "v10.51"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7929,7 +7929,7 @@ end
 
 -- หาปุ่มในกล่องยืนยันที่มีหัวข้อระบุ (เช่น "Continue Expedition")
 local function findDialogBtn(dialogText, btnText)
-    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    local prompt = player.PlayerGui
     if not prompt then return nil end
     local hasDialog = false
     for _, l in ipairs(prompt:GetDescendants()) do
@@ -8905,69 +8905,6 @@ local function continueVisible()
     return false
 end
 -- ⭐ v9.94: หาปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) — คืนปุ่ม/nil
--- Return the exact visible checkpoint button. This path always uses clickHard
--- because firing only local connections can fail to notify the game server.
-local function findContinueBtn()
-    local candidates = {}
-    local function isContinueText(value)
-        local text = tostring(value or ""):lower()
-        return text == "continue" or text:find("ดำเนินต่อ", 1, true) ~= nil
-    end
-    local function trulyVisible(gui)
-        local node = gui
-        while node and node ~= player.PlayerGui do
-            if node:IsA("GuiObject") and not node.Visible then return false end
-            if node:IsA("ScreenGui") and not node.Enabled then return false end
-            node = node.Parent
-        end
-        return true
-    end
-    for _, root in ipairs(player.PlayerGui:GetChildren()) do
-        if root:IsA("ScreenGui") and root.Enabled then
-            for _, b in ipairs(root:GetDescendants()) do
-                if b:IsA("GuiButton") and trulyVisible(b) and b.Active ~= false
-                   and b.AbsoluteSize.X > 20 and b.AbsoluteSize.Y > 15 then
-                    local text = ""
-                    if b:IsA("TextButton") then pcall(function() text=tostring(b.Text) end) end
-                    local hit = isContinueText(text)
-                    if not hit then
-                        for _, l in ipairs(b:GetDescendants()) do
-                            if l:IsA("TextLabel") and trulyVisible(l) and isContinueText(l.Text) then hit=true; break end
-                        end
-                    end
-                    if hit then candidates[#candidates+1] = b end
-                end
-            end
-        end
-    end
-    if #candidates == 0 then return nil, false end
-    -- The confirmation button is above the checkpoint button on screen.
-    -- Position is more reliable than ZIndex because these two GUIs use
-    -- separate ScreenGuis whose local ZIndex values are not comparable.
-    table.sort(candidates, function(a, b)
-        if a.AbsolutePosition.Y ~= b.AbsolutePosition.Y then return a.AbsolutePosition.Y < b.AbsolutePosition.Y end
-        return a.ZIndex > b.ZIndex
-    end)
-    return candidates[1], #candidates > 1, trulyVisible
-end
-
--- Continue is handled with a real cursor move/click. AbsolutePosition is
--- already in VIM screen coordinates here; adding GuiInset again moves the
--- click below the button. Do not pre-fire local connections on this path.
-local function clickContinuePhysical(button)
-    if not button or not button.Parent then return false end
-    local x = button.AbsolutePosition.X + button.AbsoluteSize.X / 2
-    local y = button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2
-    local ok = pcall(function()
-        VIM_EXP:SendMouseMoveEvent(x, y, game)
-        task.wait(0.35)
-        VIM_EXP:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.15)
-        VIM_EXP:SendMouseButtonEvent(x, y, 0, false, game, 0)
-    end)
-    return ok
-end
-
 local function findStartGameBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
         if root:IsA("ScreenGui") and root.Enabled then
@@ -9082,23 +9019,14 @@ local function startAutoContinue()
                         task.wait(1)
                     end
                 end
-                -- ⭐ v9.93: กด Continue "ยืนยัน" — กดซ้ำจนปุ่มหายจริง (กันเครื่องแลค กดไม่ติด/พลาด)
+                -- กดปุ่มเดิมหนึ่งครั้ง แล้วกดปุ่มในกล่องยืนยันอีกหนึ่งครั้ง
                 print("[Exp] 🚚 รถจอด → กด Continue")
-                for attempt = 1, 5 do
-                    local continueBtn, isConfirm, isStillVisible = findContinueBtn()
-                    if not contOn or not continueBtn then break end
-                    if isConfirm then
-                        print("[Exp] ✅ พบกล่องยืนยัน → กด Continue ด้านบน")
-                    else
-                        print("[Exp] ⏳ กด Continue ด้านล่าง → รอ 5 วินาทีให้กล่องยืนยันขึ้น")
-                    end
-                    clickContinuePhysical(continueBtn)
-                    -- Give the confirmation modal/next-node transition enough
-                    -- time to render on slower bot machines before scanning again.
-                    task.wait(5)
-                    if isConfirm and (not continueBtn.Parent or not isStillVisible(continueBtn)) then break end
-                    if not findContinueBtn() then break end   -- ปุ่มหาย = กดติดแล้ว
-                    print(("[Exp] 🔁 Continue ยังค้าง (เครื่องแลค?) → กดซ้ำ #%d"):format(attempt))
+                clickByText("Continue", 3)
+                task.wait(2)
+                local confirmBtn = findDialogBtn("Continue Expedition", "Continue")
+                if confirmBtn then
+                    print("[Exp] ✅ กด Continue ในกล่องยืนยัน 1 ครั้ง")
+                    clickHard(confirmBtn)
                 end
                 task.wait(1.5)
             end
