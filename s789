@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.25"
+local SCRIPT_VERSION = "v10.26"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3521,6 +3521,17 @@ if GAME_ID == "anime_expeditions" then
                 if p.MapName then
                     mapName = tostring(p.MapName)
                     if p.ActName then mapName = mapName .. " - " .. tostring(p.ActName) end
+                end
+            end
+        end)
+        -- ⭐ Tower: GameState ไม่บอกชั้น (ส่งมาเป็น "SchoolGrounds - Competitive")
+        --    → อ่านป้าย "Tower Floor N - <map>" บนจอมาแทน จะได้โชว์ด่าน/ชั้นจริงบนหน้าเช็คงาน
+        pcall(function()
+            for _, l in ipairs(player.PlayerGui:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible and l.Text ~= ""
+                   and l.Text:find("[Ff]loor%s*%d") and l.Text:find("%-") then
+                    mapName = l.Text
+                    break
                 end
             end
         end)
@@ -13239,6 +13250,26 @@ local function inGameTower()
     end
     return false
 end
+-- ⭐ ผลแมตช์เฉพาะ Tower — ต้องเป็น label/button ที่โผล่บนจอจริง (guiOnScreen)
+--    ❌ ห้ามใช้ matchResult เดิม: มันเจอ label "Defeat"/"Victory" ที่ Visible=true แต่ parent ปิดอยู่
+--       → คืน "lose" ผิด → RUN loop กด Back to Lobby ทั้งที่ยังเล่นอยู่ (บัค v10.24)
+--    ชนะ = เจอปุ่ม "Next Floor"/"Victory" บนจอ | แพ้ = "Defeat" บนจอ
+local function towerResult()
+    local res
+    local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return nil end
+    for _,g in ipairs(pg:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Text ~= "" and l.Visible and guiOnScreen(l) then
+                    local t = l.Text
+                    if t == "Victory" or t == "You Win!" or t == "Next Floor" then return "win" end
+                    if t == "Defeat" or t == "You Lose" or t == "You Lost" then res = "lose" end
+                end
+            end
+        end
+    end
+    return res
+end
 _G.AE_TOWER_STOP = function()
     running=false
     if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
@@ -13272,9 +13303,13 @@ _G.AE_TOWER_RUN = function(towerType)
                 -- 3) เล่นจนจบ (วางซ้ำเรื่อยๆ)
                 local won=false; local t0=tick(); local tick2=0
                 while running and MYGEN==_G.AE_SCRIPT_GEN do
-                    local r=matchResult()
+                    local r=towerResult()
                     if r=="win" then won=true; break end
-                    if r=="lose" then break end
+                    if r=="lose" then
+                        -- ⭐ ยืนยันซ้ำ กัน false-positive ชั่ววูบ (จอ Defeat จริงจะค้างอยู่)
+                        task.wait(2)
+                        if towerResult()=="lose" then break end
+                    end
                     if not inGame() and tick()-t0>30 then break end
                     tick2=tick2+1
                     if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
