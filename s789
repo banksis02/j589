@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.43"
+local SCRIPT_VERSION = "v10.44"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -5892,6 +5892,19 @@ local function getBuildingFuel(name)
     return nil
 end
 
+-- These exports must stay beside the Replica helpers so their local
+-- registry/remote references remain available.
+_G.AE_EXP_GET_BUILDING = getBuildingFuel
+_G.AE_EXP_GET_BUILDINGS = function()
+    for _, e in ipairs(eachRep("PlayerData")) do
+        local d = e.data
+        local buildings = d and d.ExpeditionData and d.ExpeditionData.Buildings
+        if type(buildings) == "table" then return buildings end
+    end
+    return nil
+end
+_G.AE_EXP_BUILDING_REMOTE = fuelRemote
+
 _G.AE_FUEL_DUMP = function()
     local out = { "===== AE FUEL DUMP =====" }
     local function ser(v, depth, seen)
@@ -11080,19 +11093,6 @@ local function call(name, ...)
     if not r[1] then L("❌ " .. name .. " error: " .. tostring(r[2])); return nil end
     return table.unpack(r, 2, r.n)
 end
-
--- Export while these locals are still in scope.  The old exports near the
--- end of the file were outside this block and therefore exported nil.
-_G.AE_EXP_GET_BUILDING = getBuildingFuel
-_G.AE_EXP_GET_BUILDINGS = function()
-    for _, e in ipairs(eachRep("PlayerData")) do
-        local d = e.data
-        local buildings = d and d.ExpeditionData and d.ExpeditionData.Buildings
-        if type(buildings) == "table" then return buildings end
-    end
-    return nil
-end
-_G.AE_EXP_BUILDING_REMOTE = fuelRemote
 
 -- Expedition maintenance: run after one complete 4-map rotation.
 -- ExpeditionCenter must be upgraded first because it unlocks every other building.
