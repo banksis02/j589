@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.44"
+local SCRIPT_VERSION = "v10.45"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8905,6 +8905,27 @@ local function continueVisible()
     return false
 end
 -- ⭐ v9.94: หาปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) — คืนปุ่ม/nil
+-- Return the exact visible checkpoint button. This path always uses clickHard
+-- because firing only local connections can fail to notify the game server.
+local function findContinueBtn()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and b.Active ~= false
+                   and b.AbsoluteSize.X > 20 and b.AbsoluteSize.Y > 15 then
+                    local text = ""
+                    if b:IsA("TextButton") then pcall(function() text=tostring(b.Text) end) end
+                    if text == "Continue" then return b end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and tostring(l.Text) == "Continue" then return b end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
 local function findStartGameBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
         if root:IsA("ScreenGui") and root.Enabled then
@@ -9022,10 +9043,11 @@ local function startAutoContinue()
                 -- ⭐ v9.93: กด Continue "ยืนยัน" — กดซ้ำจนปุ่มหายจริง (กันเครื่องแลค กดไม่ติด/พลาด)
                 print("[Exp] 🚚 รถจอด → กด Continue")
                 for attempt = 1, 5 do
-                    if not contOn or not continueVisible() then break end
-                    pressContinue()
-                    task.wait(1.2)
-                    if not continueVisible() then break end   -- ปุ่มหาย = กดติดแล้ว
+                    local continueBtn = findContinueBtn()
+                    if not contOn or not continueBtn then break end
+                    clickHard(continueBtn)
+                    task.wait(1.5)
+                    if not findContinueBtn() then break end   -- ปุ่มหาย = กดติดแล้ว
                     print(("[Exp] 🔁 Continue ยังค้าง (เครื่องแลค?) → กดซ้ำ #%d"):format(attempt))
                 end
                 task.wait(1.5)
