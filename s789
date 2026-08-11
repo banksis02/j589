@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.20"
+local SCRIPT_VERSION = "v10.21"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -10677,8 +10677,78 @@ _G.AE_ENTER_RUN = function(mapName, diff)
     return true
 end
 
+-- ============================================================
+-- ⭐ เข้าโหมด Tower (หอคอย) — วาป→E→เลือกชนิด→ชั้น→Select Stage→Start
+--   towerType: "Tower" (ปกติ) | "Traitless"   | floorNum: ชั้น (default 1)
+-- ============================================================
+local TOWER_CFRAME = CFrame.new(2752.617431640625, 19.300037384033203, -299.7922058105469)
+local function clickTowerCard(isTraitless)
+    for _, e in ipairs(visibleButtons()) do
+        local t = e.text:lower()
+        if isTraitless then
+            if t:find("traitless") then clickHard(e.btn); print("[Tower] 👆 การ์ด Traitless Tower"); return true end
+        else
+            if t:find("tower") and not t:find("traitless") and t:find("ends upd") then clickHard(e.btn); print("[Tower] 👆 การ์ด Tower"); return true end
+        end
+    end
+    return false
+end
+local function clickFloorBadge(floorNum)
+    floorNum = tostring(floorNum or 1)
+    -- badge ชั้น = มี "floor" + ตัวคูณ (x) + ลงท้ายด้วยเลขชั้น
+    for _, e in ipairs(visibleButtons()) do
+        local t = e.text:lower()
+        if t:find("floor") and t:find("x") and (t:match("(%d+)%s*$") == floorNum) then
+            clickHard(e.btn); print("[Tower] 👆 ชั้น "..floorNum); return true
+        end
+    end
+    for _, e in ipairs(visibleButtons()) do
+        if e.text:lower():find("floor") and e.text:find(floorNum) then clickHard(e.btn); print("[Tower] 👆 ชั้น "..floorNum.." (fallback)"); return true end
+    end
+    return false
+end
+
+_G.AE_TOWER_ENTER = function(towerType, floorNum)
+    local isTraitless = tostring(towerType or ""):lower():find("traitless") ~= nil
+    floorNum = tonumber(floorNum) or 1
+    print(("[Tower] ▶️ เข้าหอคอย %s ชั้น %d"):format(isTraitless and "Traitless" or "Tower", floorNum))
+    task.wait(1.5)
+    -- 1) วาป
+    local ch = player.Character or player.CharacterAdded:Wait()
+    local hrp = ch:WaitForChild("HumanoidRootPart", 5)
+    if not hrp then warn("[Tower] ❌ ไม่เจอ HRP"); return false end
+    hrp.CFrame = TOWER_CFRAME
+    print("[Tower] 🚀 วาปไปจุด Tower")
+    task.wait(2)
+    -- 2) กด E เปิดหน้าเลือก (prompt: Tower / View Gamemode)
+    pcall(function()
+        for _, p in ipairs(workspace:GetDescendants()) do
+            if p:IsA("ProximityPrompt") and p.Enabled and (tostring(p.ObjectText):find("Tower") or tostring(p.ActionText):find("Gamemode")) then
+                pcall(function() fireproximityprompt(p, 1) end)
+            end
+        end
+    end)
+    VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(0.9); VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    print("[Tower] ⌨️ กด E")
+    task.wait(2.5)
+    -- 3) เลือกชนิดหอคอย (การ์ดซ้าย)
+    if not clickTowerCard(isTraitless) then print("[Tower] ⚠️ ไม่เจอการ์ดหอคอย") end
+    task.wait(1.5)
+    -- 4) คลิกเลขชั้น (badge กลางจอ)
+    if not clickFloorBadge(floorNum) then print("[Tower] ⚠️ ไม่เจอชั้น "..floorNum) end
+    task.wait(1.5)
+    -- 5) Select Stage
+    if not clickText("Select Stage", 6) then print("[Tower] ❌ ไม่เจอ Select Stage"); return false end
+    task.wait(2.5)
+    -- 6) Start
+    if not clickText("Start", 8) then task.wait(2); clickText("Start", 5) end
+    print("[Tower] ✅ กด Start — รอเข้าด่าน")
+    return true
+end
+
 print("[Enter] ✅ พร้อม — เทส: _G.AE_ENTER_RUN(\"School Grounds\", 3)")
 print("[Enter]    ทีละขั้น: _G.AE_ENTER_TP() → _G.AE_ENTER_PROMPT() → _G.AE_ENTER_MAP(\"School Grounds\") → _G.AE_ENTER_DIFF(3) → _G.AE_ENTER_SELECT() → _G.AE_ENTER_START()")
+print("[Tower] ✅ พร้อม — เทส: _G.AE_TOWER_ENTER(\"Tower\", 1) หรือ _G.AE_TOWER_ENTER(\"Traitless\", 1)")
 
 end
 do -- [EXP 5] END
