@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.24"
+local SCRIPT_VERSION = "v10.25"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13215,13 +13215,28 @@ end
 -- 🏰 AE TOWER RUN — reuse โครง Raid: settings→เข้า Tower→วาง Villain→ชนะกด "Next Floor" ไต่ต่อ
 --   _G.AE_TOWER_RUN("Tower")  หรือ  _G.AE_TOWER_RUN("Traitless")
 -- ============================================================
--- ⭐ in-game detection แบบทน (Tower HUD อาจต่างจาก Raid) — GameUI.HUD / Enemies / _G.AE_IN_GAME
+-- ⭐ in-game detection สำหรับ Tower — ต้องเจอป้าย "Tower Floor N - <map>" ที่โผล่บนจอจริง
+--    ❌ ห้ามเช็คแค่ Enemies/GameUI.HUD — ล็อบบี้ก็มี Enemies เดินอยู่ + HUD ค้าง → false positive
+--       (v10.24 บัค: return true ตั้งแต่ล็อบบี้ → ข้ามวาปเข้าด่าน → วาง Villain มั่วไม่มี path)
+--    ป้ายชื่อด่าน Tower = "Tower Floor 1 - Rose Kingdom" (มี "Floor <เลข>" + " - ") มีเฉพาะในด่าน
+local function guiOnScreen(el)
+    local n = el
+    while n and n ~= game do
+        if n:IsA("GuiObject") and n.Visible == false then return false end
+        if (n:IsA("ScreenGui") or n:IsA("LayerCollector")) and n.Enabled == false then return false end
+        n = n.Parent
+    end
+    return true
+end
 local function inGameTower()
-    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
     local pg = player:FindFirstChildOfClass("PlayerGui"); if not pg then return false end
-    local gu = pg:FindFirstChild("GameUI")
-    if gu and gu:FindFirstChild("HUD") then return true end
-    if workspace:FindFirstChild("Enemies") then return true end
+    for _, d in ipairs(pg:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" then
+            local t = d.Text
+            -- "Tower Floor 1 - Rose Kingdom" → มี "Floor <เลข>" และ " - " (badge เฉยๆ "Floor 1" ไม่ผ่าน)
+            if t:find("[Ff]loor%s*%d") and t:find("%-") and guiOnScreen(d) then return true end
+        end
+    end
     return false
 end
 _G.AE_TOWER_STOP = function()
