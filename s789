@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.57"
+local SCRIPT_VERSION = "v10.58"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -6096,6 +6096,24 @@ local function clickVIM(b)
         VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
 end
+-- Villain card needs a real pointer move/hover before the click on slower clients.
+-- Keep this separate so other established VIM flows are unchanged.
+local function clickVillainLabel(label)
+    local ok, err = pcall(function()
+        local cx = label.AbsolutePosition.X + label.AbsoluteSize.X / 2
+        local cy = label.AbsolutePosition.Y + label.AbsoluteSize.Y / 2 + inset.Y
+        VIM:SendMouseMoveEvent(cx, cy, game)
+        task.wait(1)
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+        task.wait(0.15)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        print(("[Villain] 🎯 click label x=%.0f y=%.0f (รวม inset %.0f)"):format(cx, cy, inset.Y))
+    end)
+    if not ok then
+        warn("[Villain] ❌ คลิกข้อความ Villain ไม่สำเร็จ: " .. tostring(err))
+    end
+    return ok
+end
 local function clickHard(b)
     fireConns(b)
     clickVIM(b)
@@ -6305,8 +6323,8 @@ _G.AE_VILLAIN_ENTER = function(act)
         warn("[Villain] ❌ ไม่เจอข้อความ 'Villain Invasion'")
         return false
     end
-    clickVIM(villainLabel)
-    print("[Villain] 👆 กดข้อความ 'Villain Invasion' ช่องที่ 2 (VIM + GuiInset)")
+    if not clickVillainLabel(villainLabel) then return false end
+    print("[Villain] 👆 เลื่อนเมาส์และกดข้อความ 'Villain Invasion' ช่องที่ 2")
     task.wait(1.5)
     -- ⭐ v9.22: รอ content ของ event โหลดเสร็จก่อน (ปุ่ม Event Gamemode โผล่หลัง content โหลด)
     --    รอจนเจอปุ่ม Event Gamemode สูงสุด 15 วิ (เกมโหลด require ช้า)
