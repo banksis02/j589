@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.62"
+local SCRIPT_VERSION = "v10.63"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7455,10 +7455,10 @@ local function getReplica(token)
     return r
 end
 
--- Continue ยิง MAP_TELEPORT_PLAYER_CLIENT ด้วย id ของ replica "MapData" ปัจจุบัน
--- ⭐ v10.62: เดิมใช้ GamePlayerData ผิด (id=82) — recon ยืนยัน 70 = Token MapData
---    (สอดคล้อง learnedNodeToken = "MapData" ที่ SetNodeQueue ใช้)
--- id เปลี่ยนได้ตาม session จึงอ่านจาก registry ทุกครั้ง ห้ามล็อก 67/70
+-- Continue = ReplicaSignal:FireServer(<GameState id>, "Continue")
+-- ⭐ v10.63: hook ปุ่มจริงเจอว่าใช้ remote ReplicaSignal (ไม่ใช่ _updateNode) + action "Continue"
+--    opcode = id ของ replica Token "GameState" (recon: 68=GameState, MapData=70, GamePlayerData=82)
+--    v10.62 ใช้ _updateNode/MapData ผิด → ปุ่มไม่หาย. id เปลี่ยนตาม session อ่านสดทุกครั้ง
 local function currentReplicaId(rep)
     if not rep then return nil end
     local id
@@ -7473,36 +7473,35 @@ local function currentReplicaId(rep)
 end
 
 local function expeditionContinueRemote()
-    local mapData = getReplica("MapData")
-    local id = currentReplicaId(mapData)
+    local gameState = getReplica("GameState")
+    local id = currentReplicaId(gameState)
     if not id then
         captureRegistry()
-        mapData = getReplica("MapData")
-        id = currentReplicaId(mapData)
+        gameState = getReplica("GameState")
+        id = currentReplicaId(gameState)
     end
     if not id then
-        warn("[Exp] ❌ หา MapData replica id ปัจจุบันไม่พบ")
+        warn("[Exp] ❌ หา GameState replica id ปัจจุบันไม่พบ")
         return false
     end
 
     local remote
     pcall(function()
-        remote = RS:WaitForChild("Nodes", 5):WaitForChild("Network", 5)
-            :WaitForChild("NetworkEvents", 5):WaitForChild("_updateNode", 5)
+        remote = RS:WaitForChild("RemoteEvents", 5):WaitForChild("ReplicaSignal", 5)
     end)
     if not remote then
-        warn("[Exp] ❌ ไม่เจอ _updateNode สำหรับ Continue")
+        warn("[Exp] ❌ ไม่เจอ ReplicaSignal สำหรับ Continue")
         return false
     end
 
     local ok, err = pcall(function()
-        remote:FireServer({ Type = "Post" }, "MAP_TELEPORT_PLAYER_CLIENT", tostring(id))
+        remote:FireServer(id, "Continue")
     end)
     if not ok then
         warn("[Exp] ❌ ส่ง Continue Remote ไม่สำเร็จ: " .. tostring(err))
         return false
     end
-    print(("[Exp] 📤 ส่ง MAP_TELEPORT_PLAYER_CLIENT id=%d (MapData)"):format(id))
+    print(("[Exp] 📤 ส่ง ReplicaSignal(%d, \"Continue\") (GameState)"):format(id))
     return true, id
 end
 -- debug: ดู token ทั้งหมดใน registry
