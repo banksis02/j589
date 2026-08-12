@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.70"
+local SCRIPT_VERSION = "v10.71"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9446,18 +9446,9 @@ _G.AE_EXP_UNITS = function()
     print("📋 ก๊อปผลเข้าคลิปบอร์ดแล้ว — Ctrl+V ส่งมา")
 end
 _G.AE_EXP_PLACE = placeAll
-local function continueByRemote()
-    local ok = expeditionContinueRemote()
-    if ok then
-        local t0 = tick()
-        while continueVisible() and tick() - t0 < 6 do task.wait(0.4) end
-        ok = not continueVisible()
-        if ok then print("[Exp] ✅ Continue สำเร็จ — รถเดินต่อแล้ว")
-        else warn("[Exp] ⚠️ ส่งรีโมทแล้วแต่รถยังไม่เดิน") end
-    end
-    return ok
-end
-_G.AE_EXP_CONTINUE = continueByRemote
+-- ⭐ v10.71: ใช้ระบบคลิกเก่า v10.51 ทุก flow
+-- เก็บ expeditionContinueRemote() ไว้สำหรับตรวจสอบ แต่ระบบหลักจะไม่เรียกใช้
+_G.AE_EXP_CONTINUE = pressContinue
 -- คืน: passed(bool), notReady(bool)  — notReady=true คือแมพยังโหลดไม่เสร็จ (อย่า restart!)
 _G.AE_EXP_CHECK = function()
     print("[Exp] 🔍 เช็คแมพ...")
@@ -9504,7 +9495,7 @@ _G.AE_EXP_AUTO = function()
                 print(("[Exp] ✅ เจอแมพดี! Defense=%d Yen=%d"):format(best.def, best.yen))
                 setRoute(best.path)
                 task.wait(1.5)
-                continueByRemote()
+                pressContinue()
                 print("[Exp] 🏁 เริ่ม expedition แล้ว")
                 return
             end
