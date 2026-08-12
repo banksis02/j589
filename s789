@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.67"
+local SCRIPT_VERSION = "v10.68"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9089,22 +9089,22 @@ local function findConfirmContinueBtn()
     end
     return nil
 end
--- ⭐ v10.66: คลิก "เมาส์จริง" (mousemoveabs + mouse1click) — ปุ่ม Continue ที่ checkpoint ไม่รับ VIM/fireConns
+-- ⭐ v10.68: คลิกปุ่ม checkpoint = fireConns + VIM ที่ "พิกัด raw" (IgnoreGuiInset=true → ไม่บวก inset)
+--    เดิม clickHard บวก inset 58px → คลิกต่ำกว่าปุ่ม (สูง 30px) พลาด | mousemoveabs พิกัดเพี้ยน (คนละ space)
 local function clickRealMouse(b)
     if not b then return end
+    -- 1) ยิง connection ของปุ่ม (ถ้ามี) — เทียบเท่ากดจริง
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire() end end)
+    pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire() end end)
+    -- 2) คลิกพิกัดจริงผ่าน VIM (viewport coords — ไม่มีปัญหา scale)
     pcall(function()
         local sg = b
         while sg and not sg:IsA("ScreenGui") do sg = sg.Parent end
-        local addInset = (sg and sg.IgnoreGuiInset) and 0 or inset_exp.Y
+        local addY = (sg and sg.IgnoreGuiInset) and 0 or inset_exp.Y
         local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
-        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + addInset
-        if mousemoveabs and (mouse1click or (mouse1press and mouse1release)) then
-            mousemoveabs(cx, cy); task.wait(0.09)
-            if mouse1click then mouse1click() else mouse1press(); task.wait(0.05); mouse1release() end
-        else
-            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05)
-            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-        end
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + addY
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.06)
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
 end
 -- ⭐ v10.66: ตรวจ checkpoint จาก UI จริง (ปุ่ม Extract / กล่อง leave checkpoint) — ไม่พึ่ง GameState.Status
@@ -9237,24 +9237,26 @@ local function startAutoContinue()
                     task.wait(1)
                 end
                 if isCheckpoint then
-                    -- ⭐ v10.67: remote เดินได้อยู่แล้ว แต่ยิงเร็วไป = ปุ่มหายแต่ payload ไม่เดิน (ค้าง)
-                    --    → รอปุ่ม/สถานะนิ่ง ~10 วิ ก่อนยิง แล้วค่อยยิง remote (ตามที่ user วิเคราะห์)
-                    print("[Exp] 🛑 Checkpoint → รอปุ่มนิ่ง ~10 วิ ก่อนยิง Continue (remote)")
-                    local waited = 0
-                    while contOn and waited < 10 and checkpointUI() do task.wait(1); waited = waited + 1 end
-                    local okCp = not checkpointUI()
-                    for attempt = 1, 5 do
-                        if okCp or not contOn or not checkpointUI() then break end
-                        print(("[Exp] 📤 ยิง Continue (remote) หลังรอ %d วิ — checkpoint #%d"):format(waited, attempt))
-                        expeditionContinueRemote()
-                        local t0 = tick()
-                        while checkpointUI() and tick()-t0 < 6 do task.wait(0.5) end
+                    -- ⭐ v10.68: ที่ checkpoint "ห้ามยิง remote" (บัค: กล่องหายแต่ payload ไม่เดิน) — คลิกเท่านั้น
+                    --    กดมือ/เล่นปกติกล่องไม่เคยหายแบบนั้น → เลียนแบบ = คลิกปุ่มล่าง → ปุ่มในกล่องยืนยัน
+                    print("[Exp] 🛑 Checkpoint → คลิก Continue (ปุ่มล่าง → ปุ่มในกล่อง) — ไม่ยิง remote")
+                    local okCp = false
+                    for attempt = 1, 12 do
+                        if not contOn then break end
+                        local confirm = findConfirmContinueBtn()
+                        if confirm then
+                            clickRealMouse(confirm)          -- ปุ่มในกล่องยืนยัน (คู่ Cancel) → ออกจริง
+                            task.wait(1.3)
+                        else
+                            local cbtn = findContinueBtn()   -- ยังไม่มีกล่อง → กดปุ่มล่างเปิดกล่อง
+                            if cbtn then clickRealMouse(cbtn) end
+                            task.wait(1.0)
+                        end
                         if not checkpointUI() then okCp = true; break end
-                        print("[Exp] ⚠️ Checkpoint ยังค้าง → รอ 5 วิ ยิงใหม่")
-                        task.wait(5)
+                        print(("[Exp] ⚠️ ยังค้างที่ Checkpoint → คลิกใหม่ #%d"):format(attempt))
                     end
                     if okCp then print("[Exp] ✅ ออกจาก Checkpoint แล้ว")
-                    else warn("[Exp] ⚠️ Checkpoint ยังไม่ออก (ยิง remote หลายครั้งแล้ว)") end
+                    else warn("[Exp] ⚠️ คลิก Continue (Checkpoint) ไม่สำเร็จ") end
                 else
                     -- mid-route stop ปกติ → ยิง remote ReplicaSignal(GameState,"Continue")
                     print("[Exp] 🚚 รถจอด → กด Continue (remote)")
