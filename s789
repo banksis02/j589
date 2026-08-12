@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.71"
+local SCRIPT_VERSION = "v10.72"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9237,15 +9237,23 @@ local function startAutoContinue()
                         task.wait(1)
                     end
                 end
-                -- ⭐ v10.70: revert กลับ flow เก่า v10.51 (ไม่มีปัญหา) — clickByText ยิง "connection ของปุ่ม"
-                --    ตรงๆ (fireBtn) ไม่พึ่งพิกัด/remote → กดปุ่มล่าง 1 ครั้ง แล้วกดในกล่องยืนยัน 1 ครั้ง
+                -- ⭐ v10.72: กดปุ่มล่าง (clickByText→fireBtn) เปิดกล่อง แล้วกด "ปุ่มในกล่อง" ด้วย clickBtnSmart
+                --    (fireBtn เหมือนกัน) — clickHard เดิมคลิกพิกัด (ปุ่ม IgnoreGuiInset=true บวก inset 58px → พลาด)
+                --    หา confirm ด้วย findConfirmContinueBtn (ปุ่มคู่ Cancel = ในกล่องแน่ๆ ไม่ใช่ปุ่มล่าง) + กดซ้ำจนปิด
                 print("[Exp] 🚚 รถจอด → กด Continue")
                 clickByText("Continue", 3)
                 task.wait(2)
-                local confirmBtn = findDialogBtn("Continue Expedition", "Continue")
+                local confirmBtn = findConfirmContinueBtn()
                 if confirmBtn then
-                    print("[Exp] ✅ กด Continue ในกล่องยืนยัน 1 ครั้ง")
-                    clickHard(confirmBtn)
+                    print("[Exp] ✅ กด Continue ในกล่องยืนยัน")
+                    for i = 1, 4 do
+                        if not contOn then break end
+                        clickBtnSmart(confirmBtn)
+                        task.wait(1)
+                        confirmBtn = findConfirmContinueBtn()
+                        if not confirmBtn then break end
+                        print(("[Exp] ⚠️ กล่องยืนยันยังอยู่ → กดซ้ำ #%d"):format(i))
+                    end
                 end
                 task.wait(1.5)
             end
