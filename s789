@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.61"
+local SCRIPT_VERSION = "v10.62"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7455,7 +7455,9 @@ local function getReplica(token)
     return r
 end
 
--- Continue ใช้ id ของ GamePlayerData ปัจจุบันเหมือนงานวางตัว
+-- Continue ยิง MAP_TELEPORT_PLAYER_CLIENT ด้วย id ของ replica "MapData" ปัจจุบัน
+-- ⭐ v10.62: เดิมใช้ GamePlayerData ผิด (id=82) — recon ยืนยัน 70 = Token MapData
+--    (สอดคล้อง learnedNodeToken = "MapData" ที่ SetNodeQueue ใช้)
 -- id เปลี่ยนได้ตาม session จึงอ่านจาก registry ทุกครั้ง ห้ามล็อก 67/70
 local function currentReplicaId(rep)
     if not rep then return nil end
@@ -7471,15 +7473,15 @@ local function currentReplicaId(rep)
 end
 
 local function expeditionContinueRemote()
-    local playerData = getReplica("GamePlayerData")
-    local id = currentReplicaId(playerData)
+    local mapData = getReplica("MapData")
+    local id = currentReplicaId(mapData)
     if not id then
         captureRegistry()
-        playerData = getReplica("GamePlayerData")
-        id = currentReplicaId(playerData)
+        mapData = getReplica("MapData")
+        id = currentReplicaId(mapData)
     end
     if not id then
-        warn("[Exp] ❌ หา GamePlayerData replica id ปัจจุบันไม่พบ")
+        warn("[Exp] ❌ หา MapData replica id ปัจจุบันไม่พบ")
         return false
     end
 
@@ -7500,7 +7502,7 @@ local function expeditionContinueRemote()
         warn("[Exp] ❌ ส่ง Continue Remote ไม่สำเร็จ: " .. tostring(err))
         return false
     end
-    print(("[Exp] 📤 ส่ง MAP_TELEPORT_PLAYER_CLIENT id=%d (GamePlayerData)"):format(id))
+    print(("[Exp] 📤 ส่ง MAP_TELEPORT_PLAYER_CLIENT id=%d (MapData)"):format(id))
     return true, id
 end
 -- debug: ดู token ทั้งหมดใน registry
