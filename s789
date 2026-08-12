@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.77"
+local SCRIPT_VERSION = "v10.78"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9188,17 +9188,23 @@ end
 
 local encStuckSince = nil
 local function handleEncounter()
+    -- ⭐ v10.78: dialog จ้างยูนิต (มีปุ่ม Hire/จ้าง) = NPC gate → กด Leave/ออก ผ่านไป (ไม่จ้าง ไม่เสียเงิน)
+    local hireBtn = findBtnByText("Hire") or findBtnByText("จ้าง")
+    if hireBtn then
+        local lv = findBtnByText("Leave") or findBtnByText("ออก")
+        if lv then encStuckSince = nil; clickBtnSmart(lv); print("[Exp] 🚪 dialog จ้างยูนิต → Leave (ไม่จ้าง)"); task.wait(1); return end
+    end
     local speak = findBtnByText("Speak")
     local yes   = findBtnByText("Yes")
     local no    = findBtnByText("No")
-    local leave = findBtnByText("Leave")
+    local leave = findBtnByText("Leave") or findBtnByText("ออก")
     -- ค้างนานเกิน 15 วิ → Leave กันบอทติด
     if leave and encStuckSince and tick() - encStuckSince > 15 then
-        clickHard(leave); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1); return
+        clickBtnSmart(leave); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1); return
     end
     -- dialog เปิดแล้ว → กด Speak → Yes
-    if speak then encStuckSince = encStuckSince or tick(); clickHard(speak); print("[Exp] 🗣️ Encounter → Speak"); task.wait(1); return end
-    if yes and no then encStuckSince = encStuckSince or tick(); clickHard(yes); print("[Exp] ✔️ Encounter → Yes"); task.wait(1); return end
+    if speak then encStuckSince = encStuckSince or tick(); clickBtnSmart(speak); print("[Exp] 🗣️ Encounter → Speak"); task.wait(1); return end
+    if yes and no then encStuckSince = encStuckSince or tick(); clickBtnSmart(yes); print("[Exp] ✔️ Encounter → Yes"); task.wait(1); return end
     -- ยังไม่เปิด → fire ProximityPrompt เปิด dialog
     if openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1); return end
     encStuckSince = nil
