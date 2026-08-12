@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.55"
+local SCRIPT_VERSION = "v10.56"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -6145,6 +6145,37 @@ local function findBtn(needle, exact)
     end
     return best
 end
+-- Event cards can sit under one large parent button. Searching every descendant and
+-- choosing the largest button can therefore click the first card even when the
+-- matching label belongs to Villain Invasion. Resolve the visible label first and
+-- return its nearest clickable ancestor (the actual card).
+local function findCardByLabel(needle)
+    local want = tostring(needle):lower()
+    local best, bestArea
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, label in ipairs(g:GetDescendants()) do
+                if (label:IsA("TextLabel") or label:IsA("TextButton")) and reallyVisible(label) then
+                    local text = tostring(label.Text or ""):gsub("<[^>]->", ""):lower()
+                    if text:find(want, 1, true) then
+                        local node = label
+                        while node and node ~= g do
+                            if (node:IsA("TextButton") or node:IsA("ImageButton")) and reallyVisible(node) then
+                                local area = node.AbsoluteSize.X * node.AbsoluteSize.Y
+                                if not bestArea or area < bestArea then
+                                    best, bestArea = node, area
+                                end
+                                break
+                            end
+                            node = node.Parent
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
 -- กดปุ่มตามข้อความ — vimOnly=true คลิกพิกัดจริงอย่างเดียว (กัน require พัง ตอนกด Events)
 local function clickText(needle, timeout, exact, vimOnly)
     local t0 = tick()
@@ -6277,7 +6308,13 @@ _G.AE_VILLAIN_ENTER = function(act)
     end
 
     -- 2) เลือก Villain Invasion (ลิสต์ซ้าย) — ⭐ VIM click จริง (โหลด content event)
-    if not clickText("Villain Invasion", 6, false, true) then return false end
+    local villainCard = findCardByLabel("Villain Invasion")
+    if not villainCard then
+        warn("[Villain] ❌ ไม่เจอการ์ด 'Villain Invasion'")
+        return false
+    end
+    clickVIM(villainCard)
+    print("[Villain] 👆 กดการ์ด 'Villain Invasion' ช่องที่ 2 (VIM)")
     task.wait(1.5)
     -- ⭐ v9.22: รอ content ของ event โหลดเสร็จก่อน (ปุ่ม Event Gamemode โผล่หลัง content โหลด)
     --    รอจนเจอปุ่ม Event Gamemode สูงสุด 15 วิ (เกมโหลด require ช้า)
