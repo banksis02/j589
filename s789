@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.65"
+local SCRIPT_VERSION = "v10.66"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9089,6 +9089,39 @@ local function findConfirmContinueBtn()
     end
     return nil
 end
+-- ⭐ v10.66: คลิก "เมาส์จริง" (mousemoveabs + mouse1click) — ปุ่ม Continue ที่ checkpoint ไม่รับ VIM/fireConns
+local function clickRealMouse(b)
+    if not b then return end
+    pcall(function()
+        local sg = b
+        while sg and not sg:IsA("ScreenGui") do sg = sg.Parent end
+        local addInset = (sg and sg.IgnoreGuiInset) and 0 or inset_exp.Y
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + addInset
+        if mousemoveabs and (mouse1click or (mouse1press and mouse1release)) then
+            mousemoveabs(cx, cy); task.wait(0.09)
+            if mouse1click then mouse1click() else mouse1press(); task.wait(0.05); mouse1release() end
+        else
+            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.05)
+            VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end
+    end)
+end
+-- ⭐ v10.66: ตรวจ checkpoint จาก UI จริง (ปุ่ม Extract / กล่อง leave checkpoint) — ไม่พึ่ง GameState.Status
+--    (Status อัปเดตช้า → บางจังหวะ isCheckpoint=false → เผลอยิง remote ทำปุ่มหายแต่ไม่เดินต่อ = ค้าง)
+local function checkpointUI()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if (b:IsA("TextLabel") or b:IsA("TextButton")) and b.Visible then
+                    local t=""; pcall(function() t=tostring(b.Text) end)
+                    if t=="Extract" or t:find("leave this checkpoint",1,true) or t:find("Continue Expedition",1,true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
 -- ⭐ v9.94: หาปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) — คืนปุ่ม/nil
 local function findStartGameBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
@@ -9192,7 +9225,9 @@ local function startAutoContinue()
             if continueVisible() then
                 local gs = getReplica("GameState")
                 local status = gs and gs.Data and tostring(gs.Data.Status) or ""
-                local isCheckpoint = (status == "Checkpoint")
+                -- ⭐ v10.66: เป็น checkpoint ถ้า Status=Checkpoint "หรือ" เจอ UI checkpoint (Extract/กล่อง)
+                --    → ที่ checkpoint ห้ามยิง remote (ทำปุ่มหายแต่ไม่เดินต่อ = ค้าง) ต้องคลิกเมาส์จริง
+                local isCheckpoint = (status == "Checkpoint") or checkpointUI()
                 -- ⭐ ถ้าเป็น checkpoint (ปลดจ้างแล้ว) → จ้างตัว + วางบนรถก่อน
                 if isCheckpoint and _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY and _G.AE_EXP_UPG1_DONE then
                     _G.AE_HIRE_BUSY = true
@@ -9202,22 +9237,22 @@ local function startAutoContinue()
                     task.wait(1)
                 end
                 if isCheckpoint then
-                    -- ⭐ v10.65: Checkpoint มี 2 ปุ่ม — ปุ่มล่าง (เปิดกล่อง) + ปุ่มในกล่องยืนยัน (คู่ Cancel)
-                    --    ต้องกด "ปุ่มในกล่อง" ถึงจะออก | กดปุ่มล่างซ้ำ = กล่องค้าง (บัค v10.64 เมาส์คลิกที่เดิม)
-                    print("[Exp] 🛑 Checkpoint → เปิดกล่อง + ยืนยัน Continue")
+                    -- ⭐ v10.66: Checkpoint = คลิกเมาส์จริง (ปุ่มล่างเปิดกล่อง → ปุ่มในกล่องยืนยัน คู่ Cancel)
+                    --    ปุ่มพวกนี้ไม่รับ VIM/fireConns → ใช้ clickRealMouse (mousemoveabs+mouse1click)
+                    print("[Exp] 🛑 Checkpoint → คลิกเมาส์จริง เปิดกล่อง + ยืนยัน Continue")
                     local okCp = false
-                    for attempt = 1, 8 do
+                    for attempt = 1, 10 do
                         if not contOn then break end
                         local confirm = findConfirmContinueBtn()
                         if confirm then
-                            clickHard(confirm)          -- กดยืนยันในกล่อง → ออกจาก checkpoint จริง
+                            clickRealMouse(confirm)     -- กดยืนยันในกล่อง → ออกจาก checkpoint จริง
                             task.wait(1.3)
                         else
                             local cbtn = findContinueBtn()   -- ยังไม่มีกล่อง → กดปุ่มล่างเปิดกล่องก่อน
-                            if cbtn then clickHard(cbtn) end
+                            if cbtn then clickRealMouse(cbtn) end
                             task.wait(1.0)
                         end
-                        if not continueVisible() then okCp = true; break end
+                        if not continueVisible() and not checkpointUI() then okCp = true; break end
                         print(("[Exp] ⚠️ ยังค้างที่ Checkpoint → ลองใหม่ #%d"):format(attempt))
                     end
                     if okCp then print("[Exp] ✅ ออกจาก Checkpoint แล้ว")
