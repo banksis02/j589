@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.64"
+local SCRIPT_VERSION = "v10.65"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9044,7 +9044,7 @@ local function continueVisible()
     end
     return false
 end
--- ⭐ v10.64: คืน "ปุ่ม Continue" ที่กดได้ (ใช้คลิกกล่อง Continue ตอน Checkpoint — remote ไม่ปิดกล่อง)
+-- ⭐ v10.64: คืน "ปุ่ม Continue" ที่กดได้ (ปุ่มล่างของ checkpoint คู่กับ Extract — กดเปิดกล่องยืนยัน)
 local function findContinueBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
         if root:IsA("ScreenGui") and root.Enabled then
@@ -9058,6 +9058,34 @@ local function findContinueBtn()
                 end
             end
         end
+    end
+    return nil
+end
+-- ⭐ v10.65: ปุ่ม Continue ใน "กล่องยืนยัน" (Continue Expedition) = ปุ่มที่อยู่คู่กับ Cancel
+--    (ปุ่มล่างคู่กับ Extract — แยกกันด้วย Cancel ที่มีเฉพาะในกล่อง) → กดตัวนี้ถึงจะออก checkpoint จริง
+local function btnHasText(b, want)
+    if b:IsA("TextButton") then local ok,t=pcall(function() return tostring(b.Text) end); if ok and t==want then return true end end
+    for _, l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text==want then return true end end
+    return false
+end
+local function findConfirmContinueBtn()
+    local cancelBtn
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible and btnHasText(b, "Cancel") then cancelBtn=b; break end
+            end
+        end
+        if cancelBtn then break end
+    end
+    if not cancelBtn then return nil end
+    local box = cancelBtn.Parent
+    for _=1,5 do
+        if not box then break end
+        for _, b in ipairs(box:GetDescendants()) do
+            if b:IsA("GuiButton") and b.Visible and b~=cancelBtn and btnHasText(b, "Continue") then return b end
+        end
+        box = box.Parent
     end
     return nil
 end
@@ -9174,19 +9202,26 @@ local function startAutoContinue()
                     task.wait(1)
                 end
                 if isCheckpoint then
-                    -- ⭐ v10.64: Checkpoint มี "กล่อง Continue" ต้อง "คลิกปุ่ม" (ยิง remote ที่นี่กล่องไม่ปิด → ค้าง)
-                    print("[Exp] 🛑 Checkpoint → คลิกปุ่ม Continue ในกล่อง")
+                    -- ⭐ v10.65: Checkpoint มี 2 ปุ่ม — ปุ่มล่าง (เปิดกล่อง) + ปุ่มในกล่องยืนยัน (คู่ Cancel)
+                    --    ต้องกด "ปุ่มในกล่อง" ถึงจะออก | กดปุ่มล่างซ้ำ = กล่องค้าง (บัค v10.64 เมาส์คลิกที่เดิม)
+                    print("[Exp] 🛑 Checkpoint → เปิดกล่อง + ยืนยัน Continue")
                     local okCp = false
-                    for attempt = 1, 6 do
+                    for attempt = 1, 8 do
                         if not contOn then break end
-                        local cbtn = findContinueBtn()
-                        if cbtn then clickHard(cbtn) end
-                        task.wait(1.2)
+                        local confirm = findConfirmContinueBtn()
+                        if confirm then
+                            clickHard(confirm)          -- กดยืนยันในกล่อง → ออกจาก checkpoint จริง
+                            task.wait(1.3)
+                        else
+                            local cbtn = findContinueBtn()   -- ยังไม่มีกล่อง → กดปุ่มล่างเปิดกล่องก่อน
+                            if cbtn then clickHard(cbtn) end
+                            task.wait(1.0)
+                        end
                         if not continueVisible() then okCp = true; break end
-                        print(("[Exp] ⚠️ กล่อง Continue ยังค้าง → คลิกซ้ำ #%d"):format(attempt))
+                        print(("[Exp] ⚠️ ยังค้างที่ Checkpoint → ลองใหม่ #%d"):format(attempt))
                     end
                     if okCp then print("[Exp] ✅ ออกจาก Checkpoint แล้ว")
-                    else warn("[Exp] ⚠️ คลิกกล่อง Continue (Checkpoint) ไม่สำเร็จ") end
+                    else warn("[Exp] ⚠️ ยืนยัน Continue (Checkpoint) ไม่สำเร็จ") end
                 else
                     -- mid-route stop ปกติ → ยิง remote ReplicaSignal(GameState,"Continue")
                     print("[Exp] 🚚 รถจอด → กด Continue (remote)")
