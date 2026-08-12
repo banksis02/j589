@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.74"
+local SCRIPT_VERSION = "v10.75"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9156,31 +9156,50 @@ local function findBtnByText(want)
 end
 -- เปิด dialog: NPC ใช้ ProximityPrompt (Key=World95 กด E ไม่ได้) → ต้อง fireproximityprompt
 --   NPC active อยู่ใกล้ (dist ~6) ตัวอื่นบนแมพไกล 3000+ → กรองด้วยระยะ
+-- ⭐ v10.75: ชื่อ NPC ที่เป็น checkpoint hireable/shop (NPCData.Section="Checkpoint") — ห้ามคุย
+local function checkpointNpcNames()
+    local set = {}
+    if not registry then return set end
+    for _, rep in pairs(registry) do
+        local ok, t = pcall(function() return rep.Token end)
+        if ok and t == "NPCData" then
+            local d; pcall(function() d = rep.Data end)
+            if type(d) == "table" and d.ExtraData and tostring(d.ExtraData.SectionName) == "Checkpoint" and d.Name then
+                set[tostring(d.Name)] = true
+            end
+        end
+    end
+    return set
+end
 local function openEncounterPrompt()
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
     -- ⭐ สแกนแค่โฟลเดอร์ NPCS (เล็ก) ไม่สแกน workspace ทั้งหมด (หนัก → เครื่องแลค → Continue กดซ้ำ)
     local scope = workspace:FindFirstChild("NPCS") or workspace
-    local best, bestD
+    local skip = checkpointNpcNames()   -- ตัว hireable/shop (Section=Checkpoint) → ข้าม
+    local cands = {}
     for _, p in ipairs(scope:GetDescendants()) do
-        -- ⭐ v10.73: encounter/ตัวที่ต้องคุย = ActionText "Speak" (ไม่ว่า key World95 หรือ E — NPC เปลี่ยนตัวได้)
-        --    ตัวชอป/จ้างยูนิต ActionText เป็นอื่น (Hire/Shop) → ไม่โดน | ระยะ 40→90 (8th Sword ยืนไกล 67)
+        -- ตัวที่ต้องคุย = ActionText "Speak" (key E/World95) — ตัวจ้าง/shop ข้ามด้วยชื่อ (Section=Checkpoint)
         if p:IsA("ProximityPrompt") and p.Enabled
-           and (tostring(p.ActionText) == "Speak" or p.KeyboardKeyCode == Enum.KeyCode.World95) then
+           and (tostring(p.ActionText) == "Speak" or p.KeyboardKeyCode == Enum.KeyCode.World95)
+           and not skip[tostring(p.ObjectText)] then
             local par = p.Parent
             local ok, pos = pcall(function() return (par:IsA("BasePart") and par.Position) or par:GetPivot().Position end)
             if ok and pos then
                 local d = (pos - hrp.Position).Magnitude
-                if d < 90 and (not bestD or d < bestD) then best, bestD = p, d end
+                if d < 90 then cands[#cands+1] = { p = p, d = d, nm = tostring(p.ObjectText) } end
             end
         end
     end
-    if best then
-        pcall(function() fireproximityprompt(best) end)
-        print(("[Exp] 👋 Encounter '%s' (act=%s, dist %d) → เปิด dialog"):format(tostring(best.ObjectText), tostring(best.ActionText), math.floor(bestD)))
-        return true
+    -- ⭐ เหลือตัวเดียว = blocker จริง → คุย | 0 หรือ >1 (shop/NPC เยอะ) → ไม่คุย (กันคุยผิดตัว)
+    if #cands ~= 1 then
+        if #cands > 1 then print(("[Exp] ⏭️ มี NPC Speak ในระยะ %d ตัว (shop?) → ไม่คุย"):format(#cands)) end
+        return false
     end
-    return false
+    local best = cands[1]
+    pcall(function() fireproximityprompt(best.p) end)
+    print(("[Exp] 👋 Encounter '%s' (dist %d) → เปิด dialog"):format(best.nm, math.floor(best.d)))
+    return true
 end
 
 local encStuckSince = nil
