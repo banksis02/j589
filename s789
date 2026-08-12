@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.76"
+local SCRIPT_VERSION = "v10.77"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9245,6 +9245,8 @@ local function startAutoContinue()
                 --    หา confirm ด้วย findConfirmContinueBtn (ปุ่มคู่ Cancel = ในกล่องแน่ๆ ไม่ใช่ปุ่มล่าง) + กดซ้ำจนปิด
                 print("[Exp] 🚚 รถจอด → กด Continue")
                 clickByText("Continue", 3)
+                -- ⭐ v10.77: ยิง remote ReplicaSignal(GameState,"Continue") เสริมด้วย (คลิก + remote คู่กัน) — user ขอเทส
+                if expeditionContinueRemote then pcall(expeditionContinueRemote) end
                 task.wait(2)
                 local confirmBtn = findConfirmContinueBtn()
                 if confirmBtn then
