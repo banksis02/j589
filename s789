@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.59"
+local SCRIPT_VERSION = "v10.60"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3579,6 +3579,7 @@ if GAME_ID == "anime_expeditions" then
                 level = level, bp = bp, villainBp = aeGetVillainBP(),
                 towerFloor = _G.AE_TOWER_FLOOR or 0,
                 towerConsecutiveLosses = _G.AE_TOWER_CONSECUTIVE_LOSSES or 0,
+                towerLastResult = _G.AE_TOWER_LAST_RESULT or "",
                 towerExhausted = _G.AE_TOWER_EXHAUSTED == true
             },
             matchInfo    = { map = mapName, wave = wave },
@@ -3616,7 +3617,27 @@ if GAME_ID == "anime_expeditions" then
         end)
         if okAuto and type(autoResp) == "table" and autoResp.Success then
             local okAutoDec, autoJob = pcall(function() return HttpService:JSONDecode(autoResp.Body) end)
-            if okAutoDec and type(autoJob) == "table" and autoJob.status ~= "idle" then return autoJob end
+            if okAutoDec and type(autoJob) == "table" and autoJob.status ~= "idle" then
+                if autoJob.mode == "tower" then
+                    pcall(function()
+                        local legacyResp = HttpService:RequestAsync({
+                            Url = BACKEND_URL .. "/api/job/" .. tostring(player.UserId),
+                            Method = "GET",
+                        })
+                        if legacyResp.Success then
+                            local legacy = HttpService:JSONDecode(legacyResp.Body)
+                            local recovered = math.max(0, tonumber(legacy.towerConsecutiveLosses) or 0)
+                            if recovered > (tonumber(autoJob.towerConsecutiveLosses) or 0) then
+                                autoJob.towerConsecutiveLosses = recovered
+                                autoJob.towerFloor = math.max(tonumber(autoJob.towerFloor) or 0, tonumber(legacy.towerFloor) or 0)
+                                autoJob.towerLastResult = tostring(legacy.towerLastResult or "lose")
+                                autoJob.towerExhausted = legacy.towerExhausted == true or recovered >= 10
+                            end
+                        end
+                    end)
+                end
+                return autoJob
+            end
         end
         local ok, resp = pcall(function()
             return HttpService:RequestAsync({
@@ -3689,14 +3710,27 @@ if GAME_ID == "anime_expeditions" then
                     end
                     -- ⭐ งาน Tower (หอคอย) — รับชนิด (Tower/Traitless) จากเว็บ (job.stage)
                     if wantMode == "tower" then
+                        local savedFloor = math.max(0, tonumber(job.towerFloor) or 0)
+                        local savedLosses = math.max(0, tonumber(job.towerConsecutiveLosses) or 0)
                         if tostring(_G.AE_TOWER_JOB_ID or "") ~= tostring(job.id or "") then
                             _G.AE_TOWER_JOB_ID = tostring(job.id or "")
-                            _G.AE_TOWER_FLOOR = 0
-                            _G.AE_TOWER_CONSECUTIVE_LOSSES = 0
-                            _G.AE_TOWER_LAST_RESULT = ""
-                            _G.AE_TOWER_EXHAUSTED = false
+                            _G.AE_TOWER_FLOOR = savedFloor
+                            _G.AE_TOWER_CONSECUTIVE_LOSSES = savedLosses
+                            _G.AE_TOWER_LAST_RESULT = tostring(job.towerLastResult or "")
+                            _G.AE_TOWER_EXHAUSTED = job.towerExhausted == true or savedLosses >= 10
+                            print(("[AE Remote] 🏰 โหลดสถานะ Tower: ชั้น %d | แพ้ติดกัน %d/10")
+                                :format(_G.AE_TOWER_FLOOR, _G.AE_TOWER_CONSECUTIVE_LOSSES))
+                        elseif savedLosses > (_G.AE_TOWER_CONSECUTIVE_LOSSES or 0) then
+                            -- Backend is the durable source after a Roblox teleport.
+                            _G.AE_TOWER_CONSECUTIVE_LOSSES = savedLosses
+                            _G.AE_TOWER_EXHAUSTED = job.towerExhausted == true or savedLosses >= 10
                         end
                         _G.AE_TOWER_TYPE = job.stage or "Tower"
+                        if _G.AE_TOWER_EXHAUSTED then
+                            if _G.AE_SEND_HEARTBEAT then pcall(_G.AE_SEND_HEARTBEAT) end
+                            if changed then print("[AE Remote] ⛔ Tower แพ้ติดกันครบ 10 รอบแล้ว — รอระบบจบงาน") end
+                            return
+                        end
                         if changed then print(("[AE Remote] 🏰 Tower: %s"):format(tostring(_G.AE_TOWER_TYPE))) end
                     end
                     -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
