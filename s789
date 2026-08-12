@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.66"
+local SCRIPT_VERSION = "v10.67"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9237,26 +9237,24 @@ local function startAutoContinue()
                     task.wait(1)
                 end
                 if isCheckpoint then
-                    -- ⭐ v10.66: Checkpoint = คลิกเมาส์จริง (ปุ่มล่างเปิดกล่อง → ปุ่มในกล่องยืนยัน คู่ Cancel)
-                    --    ปุ่มพวกนี้ไม่รับ VIM/fireConns → ใช้ clickRealMouse (mousemoveabs+mouse1click)
-                    print("[Exp] 🛑 Checkpoint → คลิกเมาส์จริง เปิดกล่อง + ยืนยัน Continue")
-                    local okCp = false
-                    for attempt = 1, 10 do
-                        if not contOn then break end
-                        local confirm = findConfirmContinueBtn()
-                        if confirm then
-                            clickRealMouse(confirm)     -- กดยืนยันในกล่อง → ออกจาก checkpoint จริง
-                            task.wait(1.3)
-                        else
-                            local cbtn = findContinueBtn()   -- ยังไม่มีกล่อง → กดปุ่มล่างเปิดกล่องก่อน
-                            if cbtn then clickRealMouse(cbtn) end
-                            task.wait(1.0)
-                        end
-                        if not continueVisible() and not checkpointUI() then okCp = true; break end
-                        print(("[Exp] ⚠️ ยังค้างที่ Checkpoint → ลองใหม่ #%d"):format(attempt))
+                    -- ⭐ v10.67: remote เดินได้อยู่แล้ว แต่ยิงเร็วไป = ปุ่มหายแต่ payload ไม่เดิน (ค้าง)
+                    --    → รอปุ่ม/สถานะนิ่ง ~10 วิ ก่อนยิง แล้วค่อยยิง remote (ตามที่ user วิเคราะห์)
+                    print("[Exp] 🛑 Checkpoint → รอปุ่มนิ่ง ~10 วิ ก่อนยิง Continue (remote)")
+                    local waited = 0
+                    while contOn and waited < 10 and checkpointUI() do task.wait(1); waited = waited + 1 end
+                    local okCp = not checkpointUI()
+                    for attempt = 1, 5 do
+                        if okCp or not contOn or not checkpointUI() then break end
+                        print(("[Exp] 📤 ยิง Continue (remote) หลังรอ %d วิ — checkpoint #%d"):format(waited, attempt))
+                        expeditionContinueRemote()
+                        local t0 = tick()
+                        while checkpointUI() and tick()-t0 < 6 do task.wait(0.5) end
+                        if not checkpointUI() then okCp = true; break end
+                        print("[Exp] ⚠️ Checkpoint ยังค้าง → รอ 5 วิ ยิงใหม่")
+                        task.wait(5)
                     end
                     if okCp then print("[Exp] ✅ ออกจาก Checkpoint แล้ว")
-                    else warn("[Exp] ⚠️ ยืนยัน Continue (Checkpoint) ไม่สำเร็จ") end
+                    else warn("[Exp] ⚠️ Checkpoint ยังไม่ออก (ยิง remote หลายครั้งแล้ว)") end
                 else
                     -- mid-route stop ปกติ → ยิง remote ReplicaSignal(GameState,"Continue")
                     print("[Exp] 🚚 รถจอด → กด Continue (remote)")
