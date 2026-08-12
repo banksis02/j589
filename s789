@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.73"
+local SCRIPT_VERSION = "v10.74"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9221,9 +9221,7 @@ local function startAutoContinue()
                     print(("[Exp] 🔁 Start Game ยังค้าง (แลค?) → กดซ้ำ #%d"):format(a))
                 end
             end
-            -- ⭐ NPC Encounter บนเส้นทาง → กด Speak→Yes ให้ payload เดินต่อ
-            handleEncounter()
-            -- รถจอด = มีปุ่ม Continue โผล่
+            -- รถจอด = มีปุ่ม Continue โผล่ (checkpoint/shop มีปุ่มนี้เสมอ)
             if continueVisible() then
                 -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
                 if _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY then
@@ -9258,6 +9256,10 @@ local function startAutoContinue()
                     end
                 end
                 task.wait(1.5)
+            else
+                -- ⭐ v10.74: ไม่มีปุ่ม Continue = ไม่ใช่ checkpoint/shop → ถ้าติด NPC ที่ต้องคุย ค่อยคุย
+                --    (กันไปคุยผิดตัวที่ checkpoint shop ที่ NPC เยอะ — จุดนั้นมีปุ่ม Continue จะเข้า if ข้างบนแทน)
+                handleEncounter()
             end
         end
         print("[Exp] ⏹️ หยุดเฝ้ารถจอด")
