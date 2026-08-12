@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.63"
+local SCRIPT_VERSION = "v10.64"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9044,6 +9044,23 @@ local function continueVisible()
     end
     return false
 end
+-- ⭐ v10.64: คืน "ปุ่ม Continue" ที่กดได้ (ใช้คลิกกล่อง Continue ตอน Checkpoint — remote ไม่ปิดกล่อง)
+local function findContinueBtn()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("GuiButton") and b.Visible then
+                    local bt=""; if b:IsA("TextButton") then pcall(function() bt=tostring(b.Text) end) end
+                    if bt == "Continue" then return b end
+                    for _, l in ipairs(b:GetDescendants()) do
+                        if l:IsA("TextLabel") and l.Visible and l.Text == "Continue" then return b end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
 -- ⭐ v9.94: หาปุ่ม "Start Game" (โหวตเริ่มเวฟ 50%) — คืนปุ่ม/nil
 local function findStartGameBtn()
     for _, root in ipairs(player.PlayerGui:GetChildren()) do
@@ -9145,30 +9162,43 @@ local function startAutoContinue()
             handleEncounter()
             -- รถจอด = มีปุ่ม Continue โผล่
             if continueVisible() then
-                -- ⭐ ถ้าเป็น checkpoint → จ้างตัว + วางบนรถให้เสร็จก่อน ค่อยกด Continue
-                if _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY then
-                    local gs = getReplica("GameState")
-                    local status = gs and gs.Data and tostring(gs.Data.Status) or ""
-                    if status == "Checkpoint" and not _G.AE_EXP_UPG1_DONE then
-                        -- ยังไม่จ้าง (รอ Cursed Student ขั้น 6) → กด Continue เดินต่อเลย
-                    elseif status == "Checkpoint" then
-                        _G.AE_HIRE_BUSY = true
-                        print("[Exp] 🛒 ถึง Checkpoint → จ้างตัวก่อน")
-                        pcall(_G.AE_HIRE_RUN)
-                        _G.AE_HIRE_BUSY = false
-                        task.wait(1)
-                    end
+                local gs = getReplica("GameState")
+                local status = gs and gs.Data and tostring(gs.Data.Status) or ""
+                local isCheckpoint = (status == "Checkpoint")
+                -- ⭐ ถ้าเป็น checkpoint (ปลดจ้างแล้ว) → จ้างตัว + วางบนรถก่อน
+                if isCheckpoint and _G.AE_HIRE_RUN and not _G.AE_HIRE_BUSY and _G.AE_EXP_UPG1_DONE then
+                    _G.AE_HIRE_BUSY = true
+                    print("[Exp] 🛒 ถึง Checkpoint → จ้างตัวก่อน")
+                    pcall(_G.AE_HIRE_RUN)
+                    _G.AE_HIRE_BUSY = false
+                    task.wait(1)
                 end
-                -- Remote Continue เดินต่อโดยตรง ใช้ GamePlayerData replica id ปัจจุบัน
-                print("[Exp] 🚚 รถจอด → กด Continue")
-                local remoteOk = expeditionContinueRemote()
-                if remoteOk then
-                    local t0 = tick()
-                    while continueVisible() and tick() - t0 < 6 do task.wait(0.4) end
-                    if not continueVisible() then
-                        print("[Exp] ✅ Continue สำเร็จ — รถเดินต่อแล้ว")
-                    else
-                        warn("[Exp] ⚠️ ส่งรีโมทแล้วแต่ปุ่ม Continue ยังอยู่ — จะอ่าน id ใหม่รอบถัดไป")
+                if isCheckpoint then
+                    -- ⭐ v10.64: Checkpoint มี "กล่อง Continue" ต้อง "คลิกปุ่ม" (ยิง remote ที่นี่กล่องไม่ปิด → ค้าง)
+                    print("[Exp] 🛑 Checkpoint → คลิกปุ่ม Continue ในกล่อง")
+                    local okCp = false
+                    for attempt = 1, 6 do
+                        if not contOn then break end
+                        local cbtn = findContinueBtn()
+                        if cbtn then clickHard(cbtn) end
+                        task.wait(1.2)
+                        if not continueVisible() then okCp = true; break end
+                        print(("[Exp] ⚠️ กล่อง Continue ยังค้าง → คลิกซ้ำ #%d"):format(attempt))
+                    end
+                    if okCp then print("[Exp] ✅ ออกจาก Checkpoint แล้ว")
+                    else warn("[Exp] ⚠️ คลิกกล่อง Continue (Checkpoint) ไม่สำเร็จ") end
+                else
+                    -- mid-route stop ปกติ → ยิง remote ReplicaSignal(GameState,"Continue")
+                    print("[Exp] 🚚 รถจอด → กด Continue (remote)")
+                    local remoteOk = expeditionContinueRemote()
+                    if remoteOk then
+                        local t0 = tick()
+                        while continueVisible() and tick() - t0 < 6 do task.wait(0.4) end
+                        if not continueVisible() then
+                            print("[Exp] ✅ Continue สำเร็จ — รถเดินต่อแล้ว")
+                        else
+                            warn("[Exp] ⚠️ ส่งรีโมทแล้วแต่ปุ่ม Continue ยังอยู่ — จะอ่าน id ใหม่รอบถัดไป")
+                        end
                     end
                 end
                 task.wait(2)
