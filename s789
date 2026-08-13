@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.85"
+local SCRIPT_VERSION = "v10.86"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9281,6 +9281,10 @@ local function handleEncounter()
         clickEnc(leaveB); encCooldown = tick() + 7; encStuckSince = nil
         print("[Exp] 🚪 Encounter → Leave"); task.wait(1.5); return
     end
+    -- ⭐ v10.86: ScreenGui "Prompt" ยังเปิด = บทสนทนากำลังเล่น (ช่วงเปลี่ยนบรรทัด ปุ่มหายชั่ววูบ)
+    --    → ห้ามยิง prompt ซ้ำเด็ดขาด (ยิงซ้ำ = reset บท → คุยไม่จบวน) รอปุ่มถัดไปโผล่แล้วกด
+    local pg = player.PlayerGui:FindFirstChild("Prompt")
+    if pg and pg.Enabled then encStuckSince = encStuckSince or tick(); return end
     -- ไม่มี dialog เปิด + พ้น cooldown → fire ProximityPrompt (กันยิงซ้ำก่อนรถวิ่งพ้น)
     if tick() >= encCooldown and openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1.5); return end
     encStuckSince = nil
