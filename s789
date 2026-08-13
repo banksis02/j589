@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.80"
+local SCRIPT_VERSION = "v10.81"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9190,29 +9190,71 @@ local function openEncounterPrompt()
 end
 
 local encStuckSince = nil
--- ⭐ v10.79: ปุ่มใน dialog ที่กดแล้ว "ไปต่อ" ได้ (บาง NPC ไม่มี Speak เช่น The Hero = Discuss/Barter/Engage)
---    ไม่รวม Barter (เปิดร้าน) / Engage (สู้) — เลือกตัวปลอดภัยที่คุยจบเร็ว
+local encCooldown = 0
 local ENC_ACTIONS = { "Speak", "Yes", "Discuss", "Talk", "Continue", "Accept", "Chat" }
+-- ⭐ v10.81: คลิกปุ่ม encounter แบบ "ทั้งคู่" — ยิง connection (fireBtn) + คลิกพิกัด raw (IgnoreGuiInset ไม่บวก inset)
+--    เดิม clickBtnSmart return หลัง fireBtn ถ้า connection มี (แต่บาง connection = no-op → ไม่ติด) → เลยยิงพิกัดด้วยเสมอ
+local function clickEnc(b)
+    if not b then return end
+    pcall(function() fireBtn(b) end)
+    pcall(function()
+        local sg = b; while sg and not sg:IsA("ScreenGui") do sg = sg.Parent end
+        local addY = (sg and sg.IgnoreGuiInset) and 0 or inset_exp.Y
+        local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + addY
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.06)
+        VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+end
+-- ⭐ v10.81: ปุ่ม "ไล่บทสนทนา" (•••) = TextButton ว่างขนาดใหญ่ใน ScreenGui "Prompt" (คลิกที่ไหนก็ได้เพื่อเลื่อนบท)
+local function findDialogAdvanceBtn()
+    local prompt = player.PlayerGui:FindFirstChild("Prompt")
+    if not prompt or not prompt.Enabled then return nil end
+    local best, bestArea
+    for _, b in ipairs(prompt:GetDescendants()) do
+        if b:IsA("TextButton") and b.Visible then
+            local t=""; pcall(function() t=tostring(b.Text) end)
+            if t == "" then
+                local area = b.AbsoluteSize.X * b.AbsoluteSize.Y
+                if area > 30000 and (not bestArea or area > bestArea) then best, bestArea = b, area end  -- เอาปุ่มใหญ่สุด (เต็มจอ)
+            end
+        end
+    end
+    return best
+end
 local function handleEncounter()
-    local hire   = findBtnByText("Hire") or findBtnByText("จ้าง")
+    -- 1) dialog จ้างยูนิต (Hire/จ้าง) → Leave (ไม่จ้าง)
+    if findBtnByText("Hire") or findBtnByText("จ้าง") then
+        local lv = findBtnByText("Leave") or findBtnByText("ออก")
+        if lv then clickEnc(lv); encCooldown = tick() + 7; encStuckSince = nil; print("[Exp] 🚪 จ้างยูนิต → Leave"); task.wait(1.5); return end
+    end
     local leaveB = findBtnByText("Leave") or findBtnByText("ออก")
     local actionB
     for _, txt in ipairs(ENC_ACTIONS) do local bb = findBtnByText(txt); if bb then actionB = bb; break end end
-    -- ⭐ v10.80: มีปุ่มพวกนี้ = "dialog เปิดอยู่" → กดปุ่มให้จบ "ห้าม fire prompt ซ้ำ" (จะ reset วนไม่จบ)
-    if hire or actionB or leaveB then
-        -- 1) จ้างยูนิต → Leave (ไม่จ้าง)
-        if hire and leaveB then encStuckSince = nil; clickBtnSmart(leaveB); print("[Exp] 🚪 dialog จ้างยูนิต → Leave"); task.wait(1.2); return end
-        -- 2) กดปุ่มแล้วไม่จบเกิน 10 วิ → Leave กันลูป
-        if encStuckSince and tick() - encStuckSince > 10 and leaveB then
-            clickBtnSmart(leaveB); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1.2); return
+    local advanceB = (not actionB) and findDialogAdvanceBtn() or nil   -- ไล่บท เฉพาะตอนไม่มีปุ่มตัวเลือก
+    -- มีปุ่ม/บทเปิดอยู่ → กดให้จบ "ห้าม fire prompt ซ้ำ"
+    if leaveB or actionB or advanceB then
+        -- ค้าง/บทวนไม่จบเกิน 25 วิ → Leave ปิดจบ
+        if leaveB and encStuckSince and tick() - encStuckSince > 25 then
+            clickEnc(leaveB); encCooldown = tick() + 7; encStuckSince = nil
+            print("[Exp] 🚪 Encounter ค้างนาน → Leave"); task.wait(1.5); return
         end
-        -- 3) กดปุ่ม action ที่ไปต่อได้ (Speak/Yes/Discuss/...)
-        if actionB then encStuckSince = encStuckSince or tick(); clickBtnSmart(actionB); print("[Exp] 💬 Encounter → กดปุ่มคุย"); task.wait(1.2); return end
-        -- 4) มีแค่ Leave → Leave ผ่าน
-        if leaveB then encStuckSince = nil; clickBtnSmart(leaveB); print("[Exp] 🚪 Encounter → Leave"); task.wait(1.2); return end
+        -- 1) มีตัวเลือก (Speak/Discuss/...) → กด "คุย"
+        if actionB then
+            clickEnc(actionB); encStuckSince = encStuckSince or tick(); encCooldown = tick() + 4
+            print("[Exp] 💬 Encounter → กดปุ่มคุย"); task.wait(1); return
+        end
+        -- 2) NPC กำลังพูด (•••) → คลิกไล่บทจนจบ
+        if advanceB then
+            clickEnc(advanceB); encStuckSince = encStuckSince or tick(); encCooldown = tick() + 4
+            print("[Exp] ⏩ ไล่บทสนทนา (•••)"); task.wait(0.6); return
+        end
+        -- 3) มีแค่ Leave → Leave
+        clickEnc(leaveB); encCooldown = tick() + 7; encStuckSince = nil
+        print("[Exp] 🚪 Encounter → Leave"); task.wait(1.5); return
     end
-    -- 5) ไม่มี dialog เปิด → fire ProximityPrompt เปิด dialog
-    if openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1.2); return end
+    -- ไม่มี dialog เปิด + พ้น cooldown → fire ProximityPrompt (กันยิงซ้ำก่อนรถวิ่งพ้น)
+    if tick() >= encCooldown and openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1.5); return end
     encStuckSince = nil
 end
 
