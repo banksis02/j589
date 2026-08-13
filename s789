@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.82"
+local SCRIPT_VERSION = "v10.83"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9206,17 +9206,25 @@ local function clickEnc(b)
         VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
 end
--- ⭐ v10.81: ปุ่ม "ไล่บทสนทนา" (•••) = TextButton ว่างขนาดใหญ่ใน ScreenGui "Prompt" (คลิกที่ไหนก็ได้เพื่อเลื่อนบท)
+-- ⭐ v10.83: ปุ่มไล่บท (▼) = "กล่อง dialog" (TextButton ว่าง) — "ไม่ใช่" ตัวเต็มจอ (ตัวเต็มจอ = คลิกนอก=ปิด!)
+--    เดิม v10.81 กดตัวใหญ่สุด (เต็มจอ) → ปิด dialog → เปิด/ปิดวน. เลือกกล่อง dialog (เล็กกว่า viewport) แทน
 local function findDialogAdvanceBtn()
     local prompt = player.PlayerGui:FindFirstChild("Prompt")
     if not prompt or not prompt.Enabled then return nil end
+    local vpX, vpY = 99999, 99999
+    local cam = workspace.CurrentCamera
+    if cam then vpX, vpY = cam.ViewportSize.X, cam.ViewportSize.Y end
     local best, bestArea
     for _, b in ipairs(prompt:GetDescendants()) do
         if b:IsA("TextButton") and b.Visible then
             local t=""; pcall(function() t=tostring(b.Text) end)
             if t == "" then
-                local area = b.AbsoluteSize.X * b.AbsoluteSize.Y
-                if area > 30000 and (not bestArea or area > bestArea) then best, bestArea = b, area end  -- เอาปุ่มใหญ่สุด (เต็มจอ)
+                local sx, sy = b.AbsoluteSize.X, b.AbsoluteSize.Y
+                local fullscreen = (sx >= vpX - 8 and sy >= vpY - 8)   -- ตัวเต็มจอ = overlay ปิด → ข้าม
+                if not fullscreen and sx > 120 and sy > 30 then
+                    local area = sx * sy
+                    if not bestArea or area > bestArea then best, bestArea = b, area end  -- กล่อง dialog ใหญ่สุดที่ไม่เต็มจอ
+                end
             end
         end
     end
