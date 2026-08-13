@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.81"
+local SCRIPT_VERSION = "v10.82"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -9222,7 +9222,26 @@ local function findDialogAdvanceBtn()
     end
     return best
 end
+-- ⭐ v10.82: เผลอเปิด Checkpoint Shop (คุยกับ NPC ขายของ) → เช็คจากป้าย/ปุ่ม Refresh Shop
+local function shopOpen()
+    for _, root in ipairs(player.PlayerGui:GetChildren()) do
+        if root:IsA("ScreenGui") and root.Enabled then
+            for _, l in ipairs(root:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local t = tostring(l.Text)
+                    if t:find("Checkpoint Shop", 1, true) or t:find("Refresh Shop", 1, true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
 local function handleEncounter()
+    -- ⭐ v10.82: เผลอเปิดร้านขายของ → กด Back ปิด (ไม่ซื้อ)
+    if shopOpen() then
+        local back = findBtnByText("Back")
+        if back then clickEnc(back); encCooldown = tick() + 7; encStuckSince = nil; print("[Exp] 🚪 เผลอเปิด Shop → Back"); task.wait(1.5); return end
+    end
     -- 1) dialog จ้างยูนิต (Hire/จ้าง) → Leave (ไม่จ้าง)
     if findBtnByText("Hire") or findBtnByText("จ้าง") then
         local lv = findBtnByText("Leave") or findBtnByText("ออก")
