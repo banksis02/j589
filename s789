@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.79"
+local SCRIPT_VERSION = "v10.80"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7777,8 +7777,11 @@ end
 local function clickBtnSmart(b)
     if fireBtn(b) > 0 then return true end
     pcall(function()
+        -- ⭐ v10.80: ปุ่ม IgnoreGuiInset=true (dialog/encounter/checkpoint) ห้ามบวก inset (พลาดปุ่ม)
+        local sg = b; while sg and not sg:IsA("ScreenGui") do sg = sg.Parent end
+        local addY = (sg and sg.IgnoreGuiInset) and 0 or inset_exp.Y
         local cx = b.AbsolutePosition.X + b.AbsoluteSize.X/2
-        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + inset_exp.Y
+        local cy = b.AbsolutePosition.Y + b.AbsoluteSize.Y/2 + addY
         VIM_EXP:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
         task.wait(0.06)
         VIM_EXP:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
@@ -9171,7 +9174,7 @@ local function openEncounterPrompt()
             local ok, pos = pcall(function() return (par:IsA("BasePart") and par.Position) or par:GetPivot().Position end)
             if ok and pos then
                 local d = (pos - hrp.Position).Magnitude
-                if d < 90 then cands[#cands+1] = { p = p, d = d, nm = tostring(p.ObjectText) } end
+                if d < 150 then cands[#cands+1] = { p = p, d = d, nm = tostring(p.ObjectText) } end  -- ⭐ v10.80: 90→150 (NPC ยืนไกล)
             end
         end
     end
@@ -9191,26 +9194,25 @@ local encStuckSince = nil
 --    ไม่รวม Barter (เปิดร้าน) / Engage (สู้) — เลือกตัวปลอดภัยที่คุยจบเร็ว
 local ENC_ACTIONS = { "Speak", "Yes", "Discuss", "Talk", "Continue", "Accept", "Chat" }
 local function handleEncounter()
-    -- 1) dialog จ้างยูนิต (มีปุ่ม Hire/จ้าง) = gate → กด Leave/ออก ผ่านไป (ไม่จ้าง ไม่เสียเงิน)
-    if findBtnByText("Hire") or findBtnByText("จ้าง") then
-        local lv = findBtnByText("Leave") or findBtnByText("ออก")
-        if lv then encStuckSince = nil; clickBtnSmart(lv); print("[Exp] 🚪 dialog จ้างยูนิต → Leave (ไม่จ้าง)"); task.wait(1); return end
+    local hire   = findBtnByText("Hire") or findBtnByText("จ้าง")
+    local leaveB = findBtnByText("Leave") or findBtnByText("ออก")
+    local actionB
+    for _, txt in ipairs(ENC_ACTIONS) do local bb = findBtnByText(txt); if bb then actionB = bb; break end end
+    -- ⭐ v10.80: มีปุ่มพวกนี้ = "dialog เปิดอยู่" → กดปุ่มให้จบ "ห้าม fire prompt ซ้ำ" (จะ reset วนไม่จบ)
+    if hire or actionB or leaveB then
+        -- 1) จ้างยูนิต → Leave (ไม่จ้าง)
+        if hire and leaveB then encStuckSince = nil; clickBtnSmart(leaveB); print("[Exp] 🚪 dialog จ้างยูนิต → Leave"); task.wait(1.2); return end
+        -- 2) กดปุ่มแล้วไม่จบเกิน 10 วิ → Leave กันลูป
+        if encStuckSince and tick() - encStuckSince > 10 and leaveB then
+            clickBtnSmart(leaveB); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1.2); return
+        end
+        -- 3) กดปุ่ม action ที่ไปต่อได้ (Speak/Yes/Discuss/...)
+        if actionB then encStuckSince = encStuckSince or tick(); clickBtnSmart(actionB); print("[Exp] 💬 Encounter → กดปุ่มคุย"); task.wait(1.2); return end
+        -- 4) มีแค่ Leave → Leave ผ่าน
+        if leaveB then encStuckSince = nil; clickBtnSmart(leaveB); print("[Exp] 🚪 Encounter → Leave"); task.wait(1.2); return end
     end
-    -- 2) ค้างนานเกิน 12 วิ (กดปุ่มแล้วไม่จบ) → Leave กันลูป
-    if encStuckSince and tick() - encStuckSince > 12 then
-        local lv = findBtnByText("Leave") or findBtnByText("ออก")
-        if lv then clickBtnSmart(lv); print("[Exp] 🚪 Encounter ค้างนาน → Leave"); encStuckSince = nil; task.wait(1); return end
-    end
-    -- 3) dialog encounter → กดปุ่มที่ไปต่อได้ (Speak/Yes/Discuss/...)
-    for _, txt in ipairs(ENC_ACTIONS) do
-        local b = findBtnByText(txt)
-        if b then encStuckSince = encStuckSince or tick(); clickBtnSmart(b); print("[Exp] 💬 Encounter → "..txt); task.wait(1); return end
-    end
-    -- 4) ไม่มีปุ่ม action ที่รู้จัก แต่มี Leave/ออก → Leave ผ่านไป (สุ่มเลือก = เอาตัวปลอดภัยสุด)
-    local leave = findBtnByText("Leave") or findBtnByText("ออก")
-    if leave then encStuckSince = nil; clickBtnSmart(leave); print("[Exp] 🚪 Encounter (ไม่มีปุ่มรู้จัก) → Leave"); task.wait(1); return end
-    -- 5) ยังไม่เปิด dialog → fire ProximityPrompt เปิด dialog
-    if openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1); return end
+    -- 5) ไม่มี dialog เปิด → fire ProximityPrompt เปิด dialog
+    if openEncounterPrompt() then encStuckSince = encStuckSince or tick(); task.wait(1.2); return end
     encStuckSince = nil
 end
 
