@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.3
+-- ANIME ORIGINS TEST UI v1.4
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.3"
+local AO_TEST_VERSION = "1.4"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -460,22 +460,12 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    enterButton.Text = "TELEPORTING TO POD..."
-    local entered, enterMessage = teleportThroughNearestDoor()
+    -- ปิดการขยับ CFrame: เกมไม่ถือว่าเป็นการชน Trigger จริง
+    status.Text = "เลือกด่านแล้ว — ใช้มือเดินเข้าประตูเพื่อบันทึก Trigger จริง"
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
+    enterButton.Text = "STAGE SELECTED"
 
-    if not entered then
-        status.Text = "เข้า Pod ไม่สำเร็จ: " .. tostring(enterMessage)
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        busy = false
-        enterButton.Text = "SELECT STAGE"
-        return
-    end
-
-    status.Text = enterMessage .. " — รอเกมเริ่ม"
-    status.TextColor3 = Color3.fromRGB(122, 224, 150)
-    enterButton.Text = "WAITING FOR GAME..."
-
-    task.wait(30)
+    task.wait(3)
     busy = false
     enterButton.Text = "SELECT STAGE"
 end)
