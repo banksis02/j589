@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v0.9
+-- ANIME ORIGINS TEST UI v1.0
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "0.9"
+local AO_TEST_VERSION = "1.0"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -351,21 +351,23 @@ local function teleportThroughNearestDoor()
         return false, distanceOrError
     end
 
-    local flatDirection = Vector3.new(
-        door.Position.X - root.Position.X,
-        0,
-        door.Position.Z - root.Position.Z
-    )
+    -- DoorUIPart คือป้ายหน้าห้องและเยื้องจากช่องประตูจริง
+    -- เกมหันตัวละครตรงเข้าช่องประตูหลัง StartSelection จึงใช้ LookVector เป็นหลัก
+    local flatDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
 
     if flatDirection.Magnitude < 0.1 then
-        flatDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+        flatDirection = Vector3.new(
+            door.Position.X - root.Position.X,
+            0,
+            door.Position.Z - root.Position.Z
+        )
     end
 
     flatDirection = flatDirection.Unit
 
     -- วาร์ปเลย DoorUIPart เข้าไปด้านใน โดยรักษาระดับ Y ของตัวละคร
-    local doorFloorPosition = Vector3.new(door.Position.X, root.Position.Y, door.Position.Z)
-    local target = doorFloorPosition + flatDirection * 12
+    local travelDistance = math.max(28, distanceOrError + 12)
+    local target = root.Position + flatDirection * travelDistance
 
     status.Text = string.format("กำลังวาร์ปเข้าประตูที่ใกล้ที่สุด (%.1f studs)", distanceOrError)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
