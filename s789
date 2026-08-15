@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.86"
+local SCRIPT_VERSION = "v10.87"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -39,6 +39,9 @@ elseif placeId == 91255392593879 then
 elseif placeId == 84515722934860 then
     GAME_NAME = "Anime Expeditions"
     GAME_ID   = "anime_expeditions"
+elseif placeId == 129932912185311 or placeId == 116173040971120 then
+    GAME_NAME = "Anime Origins"
+    GAME_ID   = "anime_origins"
 else
     GAME_NAME = "Unknown (" .. placeId .. ")"
     GAME_ID   = "unknown"
@@ -3777,6 +3780,220 @@ end
 -- ============================================================
 -- [Anime Squadron] Victory Trigger — EndScreen.Visible = true
 -- ============================================================
+-- ============================================================
+-- [Anime Origins] Headless Gem Farm -- website/bot controlled only
+-- ============================================================
+if GAME_ID == "anime_origins" then
+    local AO_LOBBY_PLACE_ID = 129932912185311
+    local AO_GAME_PLACE_ID = 116173040971120
+    local AO_MODE = "ao_gem"
+    local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
+    local aoCurrentJob = nil
+    local aoFarming = false
+    local aoLobbyLoaded = false
+    local aoGameLoaded = false
+    local aoLastLobbyAttempt = 0
+    local aoLastWave = nil
+    local aoInitialPlacementStarted = false
+
+    local function aoLoadModule(fileName)
+        local ok, result = pcall(function()
+            local source = game:HttpGet(AO_RAW .. fileName .. "?main=" .. SCRIPT_VERSION)
+            local chunk, compileError = loadstring(source)
+            if not chunk then error(compileError) end
+            return chunk()
+        end)
+        if not ok then warn("[AO " .. SCRIPT_VERSION .. "] module failed " .. fileName .. ": " .. tostring(result)) end
+        return ok, result
+    end
+
+    local function aoFetchJob()
+        local ok, response = pcall(function()
+            return HttpService:RequestAsync({
+                Url = AUTOMATION_URL .. "/api/public/runtime-jobs/" .. HttpService:UrlEncode(player.Name) .. "?game=anime_origins",
+                Method = "GET",
+            })
+        end)
+        if ok and type(response) == "table" and response.Success then
+            local decodedOK, job = pcall(function() return HttpService:JSONDecode(response.Body) end)
+            if decodedOK and type(job) == "table" and job.status ~= "idle" then return job end
+        end
+
+        local legacyOK, legacyResponse = pcall(function()
+            return HttpService:RequestAsync({
+                Url = BACKEND_URL .. "/api/job/" .. tostring(player.UserId),
+                Method = "GET",
+            })
+        end)
+        if legacyOK and type(legacyResponse) == "table" and legacyResponse.Success then
+            local decodedOK, job = pcall(function() return HttpService:JSONDecode(legacyResponse.Body) end)
+            if decodedOK and type(job) == "table" and job.status ~= "idle" and job.mode == AO_MODE then return job end
+        end
+        return nil
+    end
+
+    local function aoStats()
+        local stats = { Runs = 0, Gems = 0, TraitRerolls = 0 }
+        if _G.AO_GEM_STATS then
+            local ok, value = pcall(_G.AO_GEM_STATS)
+            if ok and type(value) == "table" then stats = value end
+        end
+        local wave = 0
+        if _G.AO_GET_WAVE then
+            local ok, value = pcall(_G.AO_GET_WAVE)
+            if ok then wave = tonumber(value) or 0 end
+        end
+        return stats, wave
+    end
+
+    local function aoHeartbeat()
+        local stats, wave = aoStats()
+        if aoCurrentJob and aoCurrentJob.id then
+            pcall(function()
+                HttpService:RequestAsync({
+                    Url = AUTOMATION_URL .. "/api/public/runtime-jobs/" .. tostring(aoCurrentJob.id) .. "/progress",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode({
+                        username = player.Name,
+                        userId = player.UserId,
+                        farming = aoFarming == true,
+                        stats = {
+                            gem = tonumber(stats.Gems) or 0,
+                            traitRerolls = tonumber(stats.TraitRerolls) or 0,
+                            runs = tonumber(stats.Runs) or 0,
+                            wave = wave,
+                        },
+                    }),
+                })
+            end)
+        end
+        pcall(function()
+            HttpService:RequestAsync({
+                Url = BACKEND_URL .. "/api/overload/update",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({
+                    username = player.Name,
+                    userId = player.UserId,
+                    serviceName = GAME_NAME,
+                    gameId = GAME_ID,
+                    farming = aoFarming == true,
+                    currentStats = {
+                        gem = tonumber(stats.Gems) or 0,
+                        traitRerolls = tonumber(stats.TraitRerolls) or 0,
+                        runs = tonumber(stats.Runs) or 0,
+                    },
+                    matchInfo = {
+                        map = game.PlaceId == AO_GAME_PLACE_ID and "WestCity - Infinite (Hard)" or "Lobby",
+                        wave = wave,
+                    },
+                }),
+            })
+        end)
+    end
+
+    local function aoStartLobby()
+        if aoLobbyLoaded and _G.AO_ENTER_WESTCITY_INFINITE then
+            return pcall(_G.AO_ENTER_WESTCITY_INFINITE)
+        end
+        _G.AO_HEADLESS = true
+        _G.AO_SETTINGS_MANUAL = true
+        aoLoadModule("anime_origins_lobby_settings_test.lua")
+        if _G.AO_APPLY_LOBBY_SETTINGS then
+            local ok, success, message = pcall(_G.AO_APPLY_LOBBY_SETTINGS)
+            print("[AO " .. SCRIPT_VERSION .. "] lobby settings: " .. tostring(ok and success) .. " | " .. tostring(message))
+        end
+        _G.AO_SETTINGS_MANUAL = nil
+        task.wait(1)
+        local loaded = aoLoadModule("anime_origins_test.lua")
+        aoLobbyLoaded = loaded == true and type(_G.AO_ENTER_WESTCITY_INFINITE) == "function"
+        if not aoLobbyLoaded then return false end
+        local ok, success, message = pcall(_G.AO_ENTER_WESTCITY_INFINITE)
+        print("[AO " .. SCRIPT_VERSION .. "] enter WestCity Infinite: " .. tostring(ok and success) .. " | " .. tostring(message))
+        return ok and success
+    end
+
+    local function aoStartGame()
+        _G.AO_HEADLESS = true
+        if not aoGameLoaded or not _G.AO_CORE_READY then
+            aoGameLoaded = aoLoadModule("anime_origins_place_test.lua") == true
+        end
+        if not aoGameLoaded then return false end
+        if _G.AO_GEM_W20_START then pcall(_G.AO_GEM_W20_START) end
+        if _G.AO_SET_BEST_SPEED then pcall(_G.AO_SET_BEST_SPEED) end
+        if _G.AO_SMART_START and not aoInitialPlacementStarted then
+            aoInitialPlacementStarted = true
+            task.delay(1, function()
+                if aoCurrentJob and aoCurrentJob.status == "active" then pcall(_G.AO_SMART_START) end
+            end)
+        end
+        aoFarming = true
+        return true
+    end
+
+    local function aoStop()
+        aoFarming = false
+        aoInitialPlacementStarted = false
+        aoLastWave = nil
+        if _G.AO_GEM_W20_STOP then pcall(_G.AO_GEM_W20_STOP) end
+        if _G.AO_SMART_STOP then pcall(_G.AO_SMART_STOP) end
+    end
+
+    task.spawn(function()
+        task.wait(game.PlaceId == AO_LOBBY_PLACE_ID and 12 or 3)
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
+            local ok, job = pcall(aoFetchJob)
+            aoCurrentJob = ok and job or nil
+            local active = aoCurrentJob and aoCurrentJob.status == "active" and aoCurrentJob.mode == AO_MODE
+            if active then
+                if game.PlaceId == AO_LOBBY_PLACE_ID then
+                    aoFarming = false
+                    if os.clock() - aoLastLobbyAttempt >= 45 then
+                        aoLastLobbyAttempt = os.clock()
+                        print("[AO " .. SCRIPT_VERSION .. "] active job -> settings + WestCity Infinite")
+                        pcall(aoStartLobby)
+                    end
+                elseif game.PlaceId == AO_GAME_PLACE_ID then
+                    pcall(aoStartGame)
+                end
+            elseif aoFarming then
+                print("[AO " .. SCRIPT_VERSION .. "] job stopped")
+                aoStop()
+            end
+            task.wait(10)
+        end
+    end)
+
+    task.spawn(function()
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
+            if aoFarming and game.PlaceId == AO_GAME_PLACE_ID and _G.AO_GET_WAVE then
+                local ok, wave = pcall(_G.AO_GET_WAVE)
+                wave = ok and tonumber(wave) or nil
+                if wave and wave <= 2 and (aoLastWave == nil or aoLastWave > 2) and _G.AO_SMART_START then
+                    task.delay(2, function()
+                        if aoFarming then pcall(_G.AO_SMART_START) end
+                    end)
+                end
+                if wave then aoLastWave = wave end
+            end
+            task.wait(1)
+        end
+    end)
+
+    task.spawn(function()
+        task.wait(3)
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
+            pcall(aoHeartbeat)
+            task.wait(30)
+        end
+    end)
+
+    _G.AO_JOB = function() return aoCurrentJob end
+    _G.AO_FARMING = function() return aoFarming end
+    print("[AO " .. SCRIPT_VERSION .. "] headless remote mode ready")
+end
+
 if GAME_ID == "anime_squadron" then
     task.spawn(function()
         task.wait(5)

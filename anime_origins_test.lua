@@ -1,10 +1,11 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.7
+-- ANIME ORIGINS TEST UI/HEADLESS v1.8
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.7"
+local AO_TEST_VERSION = "1.8"
 local AO_LOBBY_PLACE_ID = 129932912185311
+local AO_HEADLESS = _G.AO_HEADLESS == true
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -52,11 +53,12 @@ local ACTS = {
 
 local selectedMode = "Story"
 local selectedMap = MAPS.Story[1]
-local selectedAct = ACTS.Story[1]
+local selectedAct = AO_HEADLESS and ACTS.Story[#ACTS.Story] or ACTS.Story[1]
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "AnimeOriginsTestUI"
 gui.ResetOnSpawn = false
+gui.Enabled = not AO_HEADLESS
 -- Global ทำให้ popup ของ dropdown อยู่เหนือ dropdown แถวถัดไปจริง ๆ
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.Parent = gethui and gethui() or CoreGui
@@ -634,4 +636,19 @@ end)
 
 refreshForMode()
 
-print("[AO TEST v" .. AO_TEST_VERSION .. "] UI loaded")
+if AO_HEADLESS then
+    selectedMode = "Story"
+    selectedMap = MAPS.Story[1]
+    selectedAct = ACTS.Story[#ACTS.Story]
+end
+
+_G.AO_ENTER_WESTCITY_INFINITE = function()
+    if busy then return false, "entry already running" end
+    selectedMode = "Story"
+    selectedMap = MAPS.Story[1]
+    selectedAct = ACTS.Story[#ACTS.Story]
+    local ok, err = fireGuiButton(enterButton)
+    return ok, err
+end
+
+print("[AO TEST v" .. AO_TEST_VERSION .. "] " .. (AO_HEADLESS and "headless loaded" or "UI loaded"))

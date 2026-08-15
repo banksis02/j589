@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS LOBBY SETTINGS TEST v0.1
+-- ANIME ORIGINS LOBBY SETTINGS TEST v0.2
 -- Applies settings only in the Anime Origins lobby.
 -- ============================================================
 
-local VERSION = "0.1"
+local VERSION = "0.2"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -250,7 +250,7 @@ end
 
 _G.AO_APPLY_LOBBY_SETTINGS = applyLobbySettings
 
-if game.PlaceId == LOBBY_PLACE_ID then
+if game.PlaceId == LOBBY_PLACE_ID and _G.AO_SETTINGS_MANUAL ~= true then
     task.spawn(applyLobbySettings)
 else
     print("[AO SETTINGS v" .. VERSION .. "] game map detected; settings untouched")

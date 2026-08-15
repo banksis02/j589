@@ -1,10 +1,11 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.13
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.14
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.13"
+local TEST_VERSION = "0.14"
 local GAME_PLACE_ID = 116173040971120
+local AO_HEADLESS = _G.AO_HEADLESS == true
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -323,6 +324,7 @@ end
 local gui = Instance.new("ScreenGui")
 gui.Name = "AOPlaceTestUI"
 gui.ResetOnSpawn = false
+gui.Enabled = not AO_HEADLESS
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.Parent = guiParent
 
@@ -1128,7 +1130,24 @@ allButton.MouseButton1Click:Connect(function()
 end)
 
 local ok, message = drawPath()
-if not ok then setStatus(message, false) end
+if AO_HEADLESS then
+    local debugPath = workspace:FindFirstChild("AO_Path_Debug")
+    if debugPath then debugPath:Destroy() end
+    ok, message = path ~= nil, path and "headless path ready" or pathError
+elseif not ok then
+    setStatus(message, false)
+end
+
+_G.AO_SMART_START = function()
+    if smartRunning then return true, "already running" end
+    return activateSpeedButton(allButton)
+end
+
+_G.AO_SMART_STOP = function()
+    if not smartRunning then return true, "already stopped" end
+    return activateSpeedButton(allButton)
+end
+_G.AO_CORE_READY = true
 
 task.spawn(function()
     local speedLevel, speedMessage = setBestGameSpeed()
