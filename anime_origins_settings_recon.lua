@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS SETTINGS RECON v0.2
+-- ANIME ORIGINS SETTINGS RECON v0.3
 -- Open Settings > Gameplay before running.
 -- ============================================================
 
-local VERSION = "0.2"
+local VERSION = "0.3"
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -78,7 +78,7 @@ end
 push("===== ANIME ORIGINS SETTINGS RECON v" .. VERSION .. " =====")
 push("PlaceId=" .. tostring(game.PlaceId))
 
-do
+local scanOK, scanError = pcall(function()
     local searchRoot = settings or playerGui
     if not searchRoot then
         push("ERROR: PlayerGui not found")
@@ -172,11 +172,16 @@ do
     for _, object in ipairs(buttonRoot:GetDescendants()) do
         if object:IsA("GuiButton") then push(details(object)) end
     end
+end)
+
+if not scanOK then
+    push("SCAN ERROR: " .. tostring(scanError))
 end
 
 local blob = table.concat(out, "\n")
 local copied = false
-for _, copyFunction in ipairs({setclipboard, toclipboard, writeclipboard}) do
+for _, copyName in ipairs({"setclipboard", "toclipboard", "writeclipboard"}) do
+    local copyFunction = getgenv and getgenv()[copyName] or _G[copyName]
     if type(copyFunction) == "function" and pcall(copyFunction, blob) then
         copied = true
         break
