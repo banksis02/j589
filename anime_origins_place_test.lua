@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.6
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.8
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.6"
+local TEST_VERSION = "0.8"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -180,14 +180,21 @@ local function hillCandidates(percent)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
     local candidates, params, seen = {}, raycastParams(), {}
-    local sides = {8, -8, 12, -12, 16, -16, 20, -20, 25, -25, 30, -30, 36, -36, 42, -42}
-    local alongs = {0, 6, -6, 12, -12, 18, -18}
+    -- Hill ค้นเฉพาะหลังคา/หินที่ติดทางเดิน ไม่กวาดลึกเข้าแผนที่
+    local sides = {5, -5, 7, -7, 9, -9, 11, -11, 13, -13, 15, -15}
+    local alongs = {0, 4, -4}
 
     for _, side in ipairs(sides) do
         for _, along in ipairs(alongs) do
             local sample = base + perpendicular * side + direction * along
             local hit = workspace:Raycast(sample + Vector3.new(0, 120, 0), Vector3.new(0, -180, 0), params)
-            if hit and hit.Normal.Y >= 0.65 and hit.Position.Y >= base.Y + 2.5 then
+            local horizontalDistance = hit and Vector3.new(
+                hit.Position.X - base.X,
+                0,
+                hit.Position.Z - base.Z
+            ).Magnitude or math.huge
+
+            if hit and hit.Normal.Y >= 0.65 and hit.Position.Y >= base.Y + 2.5 and horizontalDistance <= 16 then
                 local key = string.format("%.1f:%.1f:%.1f", hit.Position.X, hit.Position.Y, hit.Position.Z)
                 if not seen[key] then
                     seen[key] = true
@@ -202,6 +209,11 @@ local function hillCandidates(percent)
         local db = Vector3.new(b.X - base.X, 0, b.Z - base.Z).Magnitude
         return da < db
     end)
+
+    while #candidates > 12 do
+        table.remove(candidates)
+    end
+
     return candidates
 end
 
@@ -222,7 +234,9 @@ local function invokePlacement(slot, position, isHill)
     if not ok then return false, tostring(result) end
 
     local startedAt = os.clock()
-    while os.clock() - startedAt < 0.4 do
+    if result == false then return false, result end
+
+    while os.clock() - startedAt < 0.18 do
         if placementCount() > before then return true, result end
         task.wait(0.1)
     end
@@ -504,10 +518,11 @@ local function placeSlot(slot, placementType, percent)
     if placementType == "Auto" then
         local ground = groundCandidates(percent)
         local hill = hillCandidates(percent)
-        local candidateCount = math.max(#ground, #hill)
+        local candidateCount = math.min(6, math.max(#ground, #hill))
 
         -- ไม่ลอง Ground จนหมดก่อน เพราะถ้ายูนิตเป็น Hill จะทำให้แต่ละตัวช้ามาก
-        -- สลับ Ground/Hill ทีละตำแหน่งเพื่อค้นหาประเภทจริง แล้ว cache หลังสำเร็จ
+        -- สลับ Ground/Hill ทีละตำแหน่งและจำกัดจำนวน probe
+        -- ป้องกันการไล่ Hill มากกว่า 100 จุดเมื่อยูนิต/พื้นที่วางไม่ได้
         for index = 1, candidateCount do
             if ground[index] then
                 setStatus(string.format("Tower%d Auto Ground %d/%d", slot, index, #ground))
@@ -667,18 +682,17 @@ allButton.MouseButton1Click:Connect(function()
         local interceptIndex = 1
         local interceptQueued = 0
         local interceptNoProgress = 0
+        local preferredInterceptSlot = nil
 
         while stillRunning() and interceptQueued < 3 and interceptNoProgress < 2 do
             local placedThisRound = false
 
-            for _, slot in ipairs(damageSlots) do
-                if not stillRunning() or interceptQueued >= 3 then break end
-
+            if preferredInterceptSlot then
                 local offset = interceptOffsets[interceptIndex]
                 interceptIndex = interceptIndex % #interceptOffsets + 1
                 local ok = queueOne(
-                    slot,
-                    slotTypes[slot] or "Auto",
+                    preferredInterceptSlot,
+                    slotTypes[preferredInterceptSlot] or "Auto",
                     math.clamp(interceptPercent + offset, 5, 95),
                     string.format("ดักหน้ามอน %.1f%% +20 (%d/3)", monsterPercent, interceptQueued + 1)
                 )
@@ -686,6 +700,30 @@ allButton.MouseButton1Click:Connect(function()
                 if ok then
                     interceptQueued += 1
                     placedThisRound = true
+                else
+                    preferredInterceptSlot = nil
+                end
+            end
+
+            if not placedThisRound then
+                for _, slot in ipairs(damageSlots) do
+                    if not stillRunning() or interceptQueued >= 3 then break end
+
+                    local offset = interceptOffsets[interceptIndex]
+                    interceptIndex = interceptIndex % #interceptOffsets + 1
+                    local ok = queueOne(
+                        slot,
+                        slotTypes[slot] or "Auto",
+                        math.clamp(interceptPercent + offset, 5, 95),
+                        string.format("ดักหน้ามอน %.1f%% +20 (%d/3)", monsterPercent, interceptQueued + 1)
+                    )
+
+                    if ok then
+                        interceptQueued += 1
+                        placedThisRound = true
+                        preferredInterceptSlot = slot
+                        break
+                    end
                 end
             end
 
