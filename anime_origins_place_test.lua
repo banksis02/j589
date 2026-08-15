@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.9
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.10
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.9"
+local TEST_VERSION = "0.10"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -801,7 +801,71 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
-        -- 3) หลังชุดดักสำเร็จแล้ว ใช้จำนวนวางที่เหลือทั้งหมดช่วง 5-10%
+        -- 3) ชุดดักเดิมอาจเลือก Hill ทั้งหมด: เติมตัวดาเมจ Ground ที่ +20% อีก 1-2 ตัว
+        -- ไม่ใช้ Leorio และไม่ลองช่องที่รู้แล้วว่าเป็น Hill
+        local groundInterceptQueued = 0
+        local groundNoProgress = 0
+        local preferredGroundSlot = nil
+        local groundOffsets = {3, -3, 5, -5, 7, -7, 1, -1}
+        local groundOffsetIndex = 1
+
+        while stillRunning() and groundInterceptQueued < 2 and groundNoProgress < 2 do
+            local placedGroundThisRound = false
+
+            if preferredGroundSlot then
+                local offset = groundOffsets[groundOffsetIndex]
+                groundOffsetIndex = groundOffsetIndex % #groundOffsets + 1
+                local ok = queueOne(
+                    preferredGroundSlot,
+                    "Ground",
+                    math.clamp(interceptPercent + offset, 5, 95),
+                    string.format("เติม Ground ดักหน้า +20 (%d/2)", groundInterceptQueued + 1)
+                )
+
+                if ok then
+                    groundInterceptQueued += 1
+                    placedGroundThisRound = true
+                else
+                    preferredGroundSlot = nil
+                end
+            end
+
+            if not placedGroundThisRound then
+                for _, slot in ipairs(damageSlots) do
+                    if not stillRunning() or groundInterceptQueued >= 2 then break end
+                    if slotTypes[slot] ~= "Hill" then
+                        local offset = groundOffsets[groundOffsetIndex]
+                        groundOffsetIndex = groundOffsetIndex % #groundOffsets + 1
+                        local ok = queueOne(
+                            slot,
+                            slotTypes[slot] or "Auto",
+                            math.clamp(interceptPercent + offset, 5, 95),
+                            string.format("ค้น Ground ดักหน้า +20 (%d/2)", groundInterceptQueued + 1)
+                        )
+
+                        if ok and slotTypes[slot] == "Ground" then
+                            groundInterceptQueued += 1
+                            placedGroundThisRound = true
+                            preferredGroundSlot = slot
+                            break
+                        end
+                    end
+                end
+            end
+
+            groundNoProgress = placedGroundThisRound and 0 or (groundNoProgress + 1)
+        end
+
+        if groundInterceptQueued < 1 then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ยังวางตัวดาเมจ Ground ที่ +20% ไม่สำเร็จ — ยังไม่เริ่มช่วง 5-10%", false)
+            placing = false
+            return
+        end
+
+        -- 4) หลังชุดดัก Hill/Ground สำเร็จแล้ว ใช้จำนวนวางที่เหลือทั้งหมดช่วง 5-10%
         -- วนจนเต็มจริง: หยุดเมื่อครบ 2 รอบติดที่ไม่มีตำแหน่งใดถูกจองเพิ่ม
         local earlyPercents = {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
         local earlyIndex = 1
