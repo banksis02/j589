@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v0.8
+-- ANIME ORIGINS TEST UI v0.9
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "0.8"
+local AO_TEST_VERSION = "0.9"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -333,7 +333,7 @@ local function findNearestEmptyStoryDoor(root)
     return nearestDoor, nearestDistance
 end
 
-local function walkThroughNearestDoor()
+local function teleportThroughNearestDoor()
     local character = player.Character or player.CharacterAdded:Wait()
     local root = character:WaitForChild("HumanoidRootPart", 10)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -363,38 +363,23 @@ local function walkThroughNearestDoor()
 
     flatDirection = flatDirection.Unit
 
-    -- เดินเลย DoorUIPart เข้าไปด้านใน 10 studs เพื่อให้ Zone ของเกมตรวจพบ
-    local target = Vector3.new(door.Position.X, root.Position.Y, door.Position.Z) + flatDirection * 10
-    local startedAt = os.clock()
+    -- วาร์ปเลย DoorUIPart เข้าไปด้านใน โดยรักษาระดับ Y ของตัวละคร
+    local doorFloorPosition = Vector3.new(door.Position.X, root.Position.Y, door.Position.Z)
+    local target = doorFloorPosition + flatDirection * 12
 
-    status.Text = string.format("กำลังเดินเข้าประตูที่ใกล้ที่สุด (%.1f studs)", distanceOrError)
+    status.Text = string.format("กำลังวาร์ปเข้าประตูที่ใกล้ที่สุด (%.1f studs)", distanceOrError)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
-    while os.clock() - startedAt < 15 do
-        if game.PlaceId ~= AO_LOBBY_PLACE_ID then
-            return true, "เข้าเกมแล้ว"
-        end
+    humanoid:Move(Vector3.zero, false)
+    character:PivotTo(CFrame.lookAt(target, target + flatDirection))
+    task.wait(0.35)
 
-        if not root.Parent or humanoid.Health <= 0 then
-            return false, "ตัวละครหายหรือเสียชีวิต"
-        end
+    -- ขยับเล็กน้อยภายในห้อง เพื่อให้ตัวตรวจ Zone ของเกมอ่านตำแหน่งใหม่
+    local secondTarget = target + flatDirection * 3
+    character:PivotTo(CFrame.lookAt(secondTarget, secondTarget + flatDirection))
+    task.wait(0.5)
 
-        humanoid:MoveTo(target)
-
-        local flatRemaining = Vector3.new(
-            target.X - root.Position.X,
-            0,
-            target.Z - root.Position.Z
-        ).Magnitude
-
-        if flatRemaining <= 3 then
-            return true, "เดินผ่านประตูแล้ว"
-        end
-
-        task.wait(0.5)
-    end
-
-    return false, "เดินเข้าประตูไม่สำเร็จภายใน 15 วินาที"
+    return true, "วาร์ปผ่านประตูแล้ว"
 end
 
 enterButton.MouseButton1Click:Connect(function()
@@ -442,8 +427,8 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    enterButton.Text = "WALKING TO DOOR..."
-    local walked, walkMessage = walkThroughNearestDoor()
+    enterButton.Text = "TELEPORTING TO DOOR..."
+    local walked, walkMessage = teleportThroughNearestDoor()
 
     if not walked then
         status.Text = "เข้าประตูไม่สำเร็จ: " .. tostring(walkMessage)
