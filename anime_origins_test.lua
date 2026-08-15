@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.5
+-- ANIME ORIGINS TEST UI v1.6
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.5"
+local AO_TEST_VERSION = "1.6"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -392,6 +392,132 @@ local function teleportThroughNearestDoor()
     return false, "เดินชนประตูแล้ว แต่ Pod ไม่เปลี่ยนเป็น InProgress"
 end
 
+local function fireGuiButton(button)
+    if not button or not button:IsA("GuiButton") then
+        return false, "ไม่พบปุ่ม"
+    end
+
+    if type(getconnections) == "function" then
+        local fired = false
+        local ok = pcall(function()
+            for _, connection in ipairs(getconnections(button.MouseButton1Click)) do
+                connection:Fire()
+                fired = true
+            end
+        end)
+
+        if ok and fired then
+            return true
+        end
+    end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(firesignal, button.MouseButton1Click)
+        if ok then
+            return true
+        end
+    end
+
+    return false, "กด connection ของปุ่มไม่ได้"
+end
+
+local function waitForMapSelectContent(timeout)
+    local startedAt = os.clock()
+
+    while os.clock() - startedAt < timeout do
+        local mainUI = player:FindFirstChildOfClass("PlayerGui")
+        mainUI = mainUI and mainUI:FindFirstChild("MainUI")
+        local mapSelect = mainUI and mainUI:FindFirstChild("MapSelect")
+        local frame = mapSelect and mapSelect:FindFirstChild("MapSelectFrame")
+        local main = frame and frame:FindFirstChild("Main")
+        local content = main and main:FindFirstChild("ContentFrame")
+
+        if content and content.Visible then
+            return content
+        end
+
+        task.wait(0.2)
+    end
+
+    return nil
+end
+
+local function selectGameStageUI()
+    status.Text = "รอหน้าเลือกด่านของเกม..."
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
+
+    local content = waitForMapSelectContent(10)
+    if not content then
+        return false, "หน้า MapSelect ไม่เปิดภายใน 10 วินาที"
+    end
+
+    local stageSelection = content:FindFirstChild("StageSelection")
+    local stageMain = stageSelection and stageSelection:FindFirstChild("Main")
+    local modeButton = stageMain and stageMain:FindFirstChild(selectedMode)
+
+    status.Text = "เลือกโหมด " .. selectedMode
+    local ok, err = fireGuiButton(modeButton)
+    if not ok then
+        return false, "กดโหมดไม่ได้: " .. tostring(err)
+    end
+    task.wait(0.45)
+
+    local worldSelect = content:FindFirstChild("WorldSelect")
+    local scrollingFrame = worldSelect and worldSelect:FindFirstChild("ScrollingFrame")
+    local mapButton = scrollingFrame and scrollingFrame:FindFirstChild(selectedMap.Value)
+
+    status.Text = "เลือกด่าน " .. selectedMap.Label
+    ok, err = fireGuiButton(mapButton)
+    if not ok then
+        return false, "กดด่านไม่ได้: " .. tostring(err)
+    end
+    task.wait(0.45)
+
+    local actSelect = content:FindFirstChild("ActSelect")
+    local actButtonName = tostring(selectedAct.Value)
+
+    if selectedMode == "Legend" then
+        actButtonName = actButtonName:match("%d+") or actButtonName
+    end
+
+    local actButton = actSelect and actSelect:FindFirstChild(actButtonName)
+
+    status.Text = "เลือก " .. selectedAct.Label
+    ok, err = fireGuiButton(actButton)
+    if not ok then
+        return false, "กด Act ไม่ได้: " .. tostring(err)
+    end
+    task.wait(0.45)
+
+    local actFrame = content:FindFirstChild("ActFrame")
+    local difficulty = actFrame and actFrame:FindFirstChild("Difficulty")
+    local hardButton = difficulty and difficulty:FindFirstChild("Hard")
+
+    status.Text = "เลือก Hard"
+    ok, err = fireGuiButton(hardButton)
+    if not ok then
+        return false, "กด Hard ไม่ได้: " .. tostring(err)
+    end
+    task.wait(0.45)
+
+    local bottomFrame = content:FindFirstChild("BottomFrame")
+    local buttons = bottomFrame and bottomFrame:FindFirstChild("Buttons")
+    local startButton = buttons and buttons:FindFirstChild("Start")
+
+    status.Text = "กด Start"
+    ok, err = fireGuiButton(startButton)
+    if not ok then
+        return false, "กด Start ไม่ได้: " .. tostring(err)
+    end
+
+    return true, string.format(
+        "%s | %s | %s | Hard",
+        selectedMode,
+        selectedMap.Label,
+        selectedAct.Label
+    )
+end
+
 enterButton.MouseButton1Click:Connect(function()
     if busy then
         return
@@ -448,7 +574,20 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    status.Text = enterMessage .. " — รอเกมเริ่ม"
+    status.Text = enterMessage .. " — กำลังตั้งค่าหน้าเลือกด่าน"
+    status.TextColor3 = Color3.fromRGB(122, 224, 150)
+    enterButton.Text = "SELECTING GAME UI..."
+
+    local selected, selectMessage = selectGameStageUI()
+    if not selected then
+        status.Text = "เลือกหน้าเกมไม่สำเร็จ: " .. tostring(selectMessage)
+        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        busy = false
+        enterButton.Text = "SELECT STAGE"
+        return
+    end
+
+    status.Text = "ตั้งค่าสำเร็จ: " .. selectMessage
     status.TextColor3 = Color3.fromRGB(122, 224, 150)
     enterButton.Text = "WAITING FOR GAME..."
 
