@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.2
+-- ANIME ORIGINS TEST UI v1.3
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.2"
+local AO_TEST_VERSION = "1.3"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -362,13 +362,46 @@ local function teleportThroughNearestDoor()
     local target = door.CFrame * POD_ENTRY_OFFSET
     local inProgress = door:FindFirstChild("InProgress")
 
-    status.Text = string.format("กำลังวาร์ปเข้าตำแหน่งใน Pod (%.1f studs)", distanceOrError)
+    status.Text = string.format("กำลังผ่าน Trigger ประตู (%.1f studs)", distanceOrError)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
     humanoid:Move(Vector3.zero, false)
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
+
+    -- เกมต้องตรวจว่าตัวละครตัดผ่านแนวประตู การวาร์ปข้ามไปปลายทางทันทีจะไม่ Trigger
+    -- ปิดเฉพาะ CanCollide ชั่วคราว แต่คง CanTouch เพื่อให้ประตูอ่านการสัมผัสได้
+    local collisionStates = {}
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            collisionStates[part] = part.CanCollide
+            part.CanCollide = false
+        end
+    end
+
+    local startCFrame = root.CFrame
+    local steps = 50
+
+    for step = 1, steps do
+        if not root.Parent or humanoid.Health <= 0 then
+            break
+        end
+
+        local alpha = step / steps
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        root.CFrame = startCFrame:Lerp(target, alpha)
+        task.wait(0.04)
+    end
+
     root.CFrame = target
+    task.wait(0.2)
+
+    for part, oldCanCollide in pairs(collisionStates) do
+        if part.Parent then
+            part.CanCollide = oldCanCollide
+        end
+    end
 
     local startedAt = os.clock()
     while os.clock() - startedAt < 6 do
