@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v0.6
+-- ANIME ORIGINS TEST UI v0.7
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "0.6"
+local AO_TEST_VERSION = "0.7"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -277,7 +277,7 @@ enterButton.Position = UDim2.fromOffset(18, 248)
 enterButton.BackgroundColor3 = Color3.fromRGB(76, 104, 219)
 enterButton.BorderSizePixel = 0
 enterButton.Font = Enum.Font.GothamBold
-enterButton.Text = "ENTER STAGE"
+enterButton.Text = "SELECT STAGE"
 enterButton.TextColor3 = Color3.new(1, 1, 1)
 enterButton.TextSize = 16
 enterButton.Parent = main
@@ -319,16 +319,36 @@ enterButton.MouseButton1Click:Connect(function()
     end)
 
     if ok then
-        status.Text = string.format("ส่งแล้ว: %s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
+        status.Text = string.format("เลือกแล้ว: %s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
         status.TextColor3 = Color3.fromRGB(122, 224, 150)
     else
         status.Text = "FireServer error: " .. tostring(err)
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        busy = false
+        enterButton.Text = "SELECT STAGE"
+        return
     end
 
-    task.wait(1.5)
+    -- StartSelection สร้างห้อง แล้วเกมจะเข้าให้อัตโนมัติเมื่อครบ 30 วินาที
+    for remaining = 30, 1, -1 do
+        if not gui.Parent then
+            return
+        end
+
+        enterButton.Text = "AUTO START IN " .. tostring(remaining) .. "s"
+        status.Text = string.format(
+            "เลือกแล้ว: %s | %s | %s — รอเกมเข้าอัตโนมัติ",
+            selectedMode,
+            selectedMap.Label,
+            selectedAct.Label
+        )
+        task.wait(1)
+    end
+
     busy = false
-    enterButton.Text = "ENTER STAGE"
+    enterButton.Text = "SELECT STAGE"
+    status.Text = "ถ้ายังอยู่ Lobby สามารถเลือกใหม่ได้"
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
 end)
 
 refreshForMode()
