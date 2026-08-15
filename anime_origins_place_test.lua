@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.5
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.6
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.5"
+local TEST_VERSION = "0.6"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -161,7 +161,7 @@ local function groundCandidates(percent)
     local candidates, params = {}, raycastParams()
     -- ชิดขอบถนนก่อน แล้วค่อยขยายออกเมื่อพื้นที่เต็ม
     -- Ground ต้องอยู่ชิดขอบทาง ลดโอกาสล้ำเข้าอาคาร/สิ่งกีดขวาง
-    local offsets = {3.25, -3.25, 4.25, -4.25, 5.25, -5.25, 6.25, -6.25}
+    local offsets = {2.25, -2.25, 3, -3, 3.75, -3.75, 4.5, -4.5, 5.25, -5.25}
 
     for _, offset in ipairs(offsets) do
         local sample = base + perpendicular * offset
@@ -501,11 +501,37 @@ local function nextSmartPercent()
 end
 
 local function placeSlot(slot, placementType, percent)
-    if placementType == "Ground" or placementType == "Auto" then
+    if placementType == "Auto" then
+        local ground = groundCandidates(percent)
+        local hill = hillCandidates(percent)
+        local candidateCount = math.max(#ground, #hill)
+
+        -- ไม่ลอง Ground จนหมดก่อน เพราะถ้ายูนิตเป็น Hill จะทำให้แต่ละตัวช้ามาก
+        -- สลับ Ground/Hill ทีละตำแหน่งเพื่อค้นหาประเภทจริง แล้ว cache หลังสำเร็จ
+        for index = 1, candidateCount do
+            if ground[index] then
+                setStatus(string.format("Tower%d Auto Ground %d/%d", slot, index, #ground))
+                local ok, result = invokePlacement(slot, ground[index], false)
+                if ok then return true, "Ground", ground[index], result end
+            end
+
+            if hill[index] then
+                setStatus(string.format("Tower%d Auto Hill %d/%d", slot, index, #hill))
+                local ok, result = invokePlacement(slot, hill[index], true)
+                if ok then return true, "Hill", hill[index], result end
+            end
+
+            task.wait(0.04)
+        end
+
+        return false
+    end
+
+    if placementType == "Ground" then
         local ok, position = tryCandidates(slot, groundCandidates(percent), false, setStatus)
         if ok then return true, "Ground", position end
     end
-    if placementType == "Hill" or placementType == "Auto" then
+    if placementType == "Hill" then
         local ok, position = tryCandidates(slot, hillCandidates(percent), true, setStatus)
         if ok then return true, "Hill", position end
     end
