@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.4
+-- ANIME ORIGINS TEST UI v1.5
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.4"
+local AO_TEST_VERSION = "1.5"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -360,59 +360,36 @@ local function teleportThroughNearestDoor()
     end
 
     local target = door.CFrame * POD_ENTRY_OFFSET
+    local front = door.CFrame * CFrame.new(0, -4.20016479, 9)
     local inProgress = door:FindFirstChild("InProgress")
 
-    status.Text = string.format("กำลังผ่าน Trigger ประตู (%.1f studs)", distanceOrError)
+    status.Text = string.format("กำลังไปหน้าประตู Pod (%.1f studs)", distanceOrError)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
     humanoid:Move(Vector3.zero, false)
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
 
-    -- เกมต้องตรวจว่าตัวละครตัดผ่านแนวประตู การวาร์ปข้ามไปปลายทางทันทีจะไม่ Trigger
-    -- ปิดเฉพาะ CanCollide ชั่วคราว แต่คง CanTouch เพื่อให้ประตูอ่านการสัมผัสได้
-    local collisionStates = {}
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            collisionStates[part] = part.CanCollide
-            part.CanCollide = false
-        end
-    end
-
-    local startCFrame = root.CFrame
-    local steps = 50
-
-    for step = 1, steps do
-        if not root.Parent or humanoid.Health <= 0 then
-            break
-        end
-
-        local alpha = step / steps
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        root.CFrame = startCFrame:Lerp(target, alpha)
-        task.wait(0.04)
-    end
-
-    root.CFrame = target
-    task.wait(0.2)
-
-    for part, oldCanCollide in pairs(collisionStates) do
-        if part.Parent then
-            part.CanCollide = oldCanCollide
-        end
-    end
+    -- ไปยืนหน้าประตูตามแกน local ของ DoorUIPart ก่อน เพื่อไม่ตัดเข้าด้านข้าง Pod
+    root.CFrame = CFrame.lookAt(front.Position, target.Position)
+    task.wait(0.35)
 
     local startedAt = os.clock()
-    while os.clock() - startedAt < 6 do
+    while os.clock() - startedAt < 12 do
         if guiEnabled(inProgress) then
             return true, "เข้า Pod สำเร็จ (InProgress)"
         end
 
-        task.wait(0.25)
+        if not root.Parent or humanoid.Health <= 0 then
+            return false, "ตัวละครหายหรือเสียชีวิต"
+        end
+
+        -- เดินจริงจากหน้าประตูเข้าด้านใน เพื่อให้ Trigger รับการชน
+        humanoid:MoveTo(target.Position)
+        task.wait(0.35)
     end
 
-    return false, "วาร์ปถึงตำแหน่งแล้ว แต่ Pod ไม่เปลี่ยนเป็น InProgress"
+    return false, "เดินชนประตูแล้ว แต่ Pod ไม่เปลี่ยนเป็น InProgress"
 end
 
 enterButton.MouseButton1Click:Connect(function()
@@ -460,12 +437,22 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    -- ปิดการขยับ CFrame: เกมไม่ถือว่าเป็นการชน Trigger จริง
-    status.Text = "เลือกด่านแล้ว — ใช้มือเดินเข้าประตูเพื่อบันทึก Trigger จริง"
-    status.TextColor3 = Color3.fromRGB(255, 213, 106)
-    enterButton.Text = "STAGE SELECTED"
+    enterButton.Text = "MOVING TO POD DOOR..."
+    local entered, enterMessage = teleportThroughNearestDoor()
 
-    task.wait(3)
+    if not entered then
+        status.Text = "เข้า Pod ไม่สำเร็จ: " .. tostring(enterMessage)
+        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        busy = false
+        enterButton.Text = "SELECT STAGE"
+        return
+    end
+
+    status.Text = enterMessage .. " — รอเกมเริ่ม"
+    status.TextColor3 = Color3.fromRGB(122, 224, 150)
+    enterButton.Text = "WAITING FOR GAME..."
+
+    task.wait(30)
     busy = false
     enterButton.Text = "SELECT STAGE"
 end)
