@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.3
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.4
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.3"
+local TEST_VERSION = "0.4"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -160,7 +160,8 @@ local function groundCandidates(percent)
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
     local candidates, params = {}, raycastParams()
     -- ชิดขอบถนนก่อน แล้วค่อยขยายออกเมื่อพื้นที่เต็ม
-    local offsets = {3.5, -3.5, 5, -5, 6.5, -6.5, 8, -8, 10, -10, 12, -12}
+    -- Ground ต้องอยู่ชิดขอบทาง ลดโอกาสล้ำเข้าอาคาร/สิ่งกีดขวาง
+    local offsets = {3.25, -3.25, 4.25, -4.25, 5.25, -5.25, 6.25, -6.25}
 
     for _, offset in ipairs(offsets) do
         local sample = base + perpendicular * offset
@@ -221,7 +222,7 @@ local function invokePlacement(slot, position, isHill)
     if not ok then return false, tostring(result) end
 
     local startedAt = os.clock()
-    while os.clock() - startedAt < 1 do
+    while os.clock() - startedAt < 0.4 do
         if placementCount() > before then return true, result end
         task.wait(0.1)
     end
@@ -238,7 +239,7 @@ local function tryCandidates(slot, candidates, isHill, statusCallback)
         if placed then
             return true, position, result
         end
-        task.wait(0.12)
+        task.wait(0.04)
     end
     return false
 end
@@ -560,12 +561,12 @@ allButton.MouseButton1Click:Connect(function()
                 slotPlaced[slot] += 1
                 status.Text = string.format("%s สำเร็จ | Tower%d %s @ %.1f%%", label, slot, kind, percent)
                 status.TextColor3 = Color3.fromRGB(124, 225, 151)
-                task.wait(0.45)
+                task.wait(0.12)
                 return true
             end
 
             setStatus(string.format("%s ไม่สำเร็จ | Tower%d @ %.1f%%", label, slot, percent), false)
-            task.wait(0.5)
+            task.wait(0.15)
             return false
         end
 
@@ -598,6 +599,33 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
+        local damageSlots = {}
+        for slot = 1, 6 do
+            if slot ~= moneySlot and slotHasUnit(slot) then
+                damageSlots[#damageSlots + 1] = slot
+            end
+        end
+
+        if #damageSlots == 0 then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ไม่พบตัวดาเมจในช่องที่เหลือ", false)
+            placing = false
+            return
+        end
+
+        -- วางชุดเคลียร์ต้นทางทันที ไม่รอให้มอนเดินหรือรอคำนวณจุดดัก
+        local earlyPercents = {5, 7.5, 10, 6, 8.5, 9.5, 5.5, 8}
+        local earlyIndex = 1
+        local earlyInitialCount = math.min(3, #damageSlots)
+        for index = 1, earlyInitialCount do
+            local slot = damageSlots[index]
+            local percent = earlyPercents[earlyIndex]
+            earlyIndex += 1
+            queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทางด่วน")
+        end
+
         -- รอให้มีมอนจริง เพื่อคำนวณตำแหน่งนำหน้า ไม่เดาจาก Wave
         local monsterPercent
         local waitStarted = os.clock()
@@ -610,23 +638,6 @@ allButton.MouseButton1Click:Connect(function()
 
         monsterPercent = monsterPercent or 0
         local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
-
-        local damageSlots = {}
-        for slot = 1, 6 do
-            if slot ~= moneySlot and slotHasUnit(slot) then
-                damageSlots[#damageSlots + 1] = slot
-            end
-        end
-
-
-        if #damageSlots == 0 then
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("ไม่พบตัวดาเมจในช่องที่เหลือ", false)
-            placing = false
-            return
-        end
 
         -- 2) ดักหน้ามอน +20% จำนวน 2-3 ตัว
         local interceptOffsets = {-2, 0, 2}
@@ -641,10 +652,7 @@ allButton.MouseButton1Click:Connect(function()
         end
 
         -- 3) ตัวดาเมจที่เหลือกองช่วง 5-10% เพื่อฆ่าต้นทางและจบไว
-        local earlyPercents = {5, 6.5, 8, 9.5, 7, 10, 5.5, 8.5, 6, 9}
-        local earlyIndex = 1
-
-        for round = 1, 3 do
+        for round = 1, 2 do
             for _, slot in ipairs(damageSlots) do
                 if not stillRunning() then break end
                 local percent = earlyPercents[earlyIndex] or 8
