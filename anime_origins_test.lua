@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.0
+-- ANIME ORIGINS TEST UI v1.1
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.0"
+local AO_TEST_VERSION = "1.1"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -429,40 +429,14 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    enterButton.Text = "TELEPORTING TO DOOR..."
-    local walked, walkMessage = teleportThroughNearestDoor()
+    -- ปิดวาร์ปอัตโนมัติชั่วคราวจนกว่าจะได้ offset ประตูจริงจาก Recon
+    status.Text = "เลือกด่านแล้ว — เดินเข้าประตูด้วยมือเพื่อเก็บ Door Offset"
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
+    enterButton.Text = "STAGE SELECTED"
 
-    if not walked then
-        status.Text = "เข้าประตูไม่สำเร็จ: " .. tostring(walkMessage)
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        busy = false
-        enterButton.Text = "SELECT STAGE"
-        return
-    end
-
-    status.Text = tostring(walkMessage) .. " — รอเกมเริ่มอัตโนมัติ"
-    status.TextColor3 = Color3.fromRGB(122, 224, 150)
-
-    -- หลังเดินเข้า Pod เกมจะนับถอยหลังและวาร์ปเข้าเกมเอง
-    for remaining = 30, 1, -1 do
-        if not gui.Parent then
-            return
-        end
-
-        enterButton.Text = "WAITING " .. tostring(remaining) .. "s"
-        status.Text = string.format(
-            "เลือกแล้ว: %s | %s | %s — รอเกมเข้าอัตโนมัติ",
-            selectedMode,
-            selectedMap.Label,
-            selectedAct.Label
-        )
-        task.wait(1)
-    end
-
+    task.wait(3)
     busy = false
     enterButton.Text = "SELECT STAGE"
-    status.Text = "ถ้ายังอยู่ Lobby สามารถเลือกใหม่ได้"
-    status.TextColor3 = Color3.fromRGB(255, 213, 106)
 end)
 
 refreshForMode()
