@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.8
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.9
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.8"
+local TEST_VERSION = "0.9"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -180,6 +180,68 @@ local function hillCandidates(percent)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
     local candidates, params, seen = {}, raycastParams(), {}
+
+    -- เกมกำหนดเขตวาง Hill จริงไว้ใน Workspace.PlacementParts.Hill
+    -- ใช้พื้นที่นี้โดยตรงเพื่อไม่เดาจากหลังคา ต้นไม้ หรือสิ่งกีดขวางใน Map
+    local placementParts = workspace:FindFirstChild("PlacementParts")
+    if placementParts then
+        local hillParts = {}
+        for _, object in ipairs(placementParts:GetDescendants()) do
+            if object:IsA("BasePart") then
+                local current = object
+                local isHill = false
+                while current and current ~= placementParts.Parent do
+                    if string.lower(current.Name) == "hill" then
+                        isHill = true
+                        break
+                    end
+                    if current == placementParts then break end
+                    current = current.Parent
+                end
+                if isHill then hillParts[#hillParts + 1] = object end
+            end
+        end
+
+        for _, part in ipairs(hillParts) do
+            local localBase = part.CFrame:PointToObjectSpace(base)
+            local halfX = math.max(0, part.Size.X / 2 - 0.75)
+            local halfZ = math.max(0, part.Size.Z / 2 - 0.75)
+            local centerX = math.clamp(localBase.X, -halfX, halfX)
+            local centerZ = math.clamp(localBase.Z, -halfZ, halfZ)
+
+            for _, offset in ipairs({
+                Vector2.new(0, 0),
+                Vector2.new(2, 0), Vector2.new(-2, 0),
+                Vector2.new(0, 2), Vector2.new(0, -2),
+                Vector2.new(3.5, 0), Vector2.new(-3.5, 0),
+                Vector2.new(0, 3.5), Vector2.new(0, -3.5),
+            }) do
+                local x = math.clamp(centerX + offset.X, -halfX, halfX)
+                local z = math.clamp(centerZ + offset.Y, -halfZ, halfZ)
+                local position = part.CFrame:PointToWorldSpace(Vector3.new(x, part.Size.Y / 2 + 0.08, z))
+                local horizontalDistance = Vector3.new(position.X - base.X, 0, position.Z - base.Z).Magnitude
+
+                if horizontalDistance <= 24 then
+                    local key = string.format("%.1f:%.1f:%.1f", position.X, position.Y, position.Z)
+                    if not seen[key] then
+                        seen[key] = true
+                        candidates[#candidates + 1] = position
+                    end
+                end
+            end
+        end
+
+        table.sort(candidates, function(a, b)
+            local da = Vector3.new(a.X - base.X, 0, a.Z - base.Z).Magnitude
+            local db = Vector3.new(b.X - base.X, 0, b.Z - base.Z).Magnitude
+            return da < db
+        end)
+
+        while #candidates > 12 do table.remove(candidates) end
+        if #candidates > 0 then return candidates end
+    end
+
+    -- Fallback สำหรับแมพที่ไม่มี PlacementParts.Hill
     -- Hill ค้นเฉพาะหลังคา/หินที่ติดทางเดิน ไม่กวาดลึกเข้าแผนที่
     local sides = {5, -5, 7, -7, 9, -9, 11, -11, 13, -13, 15, -15}
     local alongs = {0, 4, -4}
