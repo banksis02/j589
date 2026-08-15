@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.11
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.12
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.11"
+local TEST_VERSION = "0.12"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -327,8 +327,8 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 gui.Parent = guiParent
 
 local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(390, 330)
-main.Position = UDim2.new(0.5, -195, 0.5, -165)
+main.Size = UDim2.fromOffset(390, 382)
+main.Position = UDim2.new(0.5, -195, 0.5, -191)
 main.BackgroundColor3 = Color3.fromRGB(21, 23, 30)
 main.BorderSizePixel = 0
 main.Active = true
@@ -413,10 +413,12 @@ local placeButton = makeButton("PLACE SELECTED", 15, 214, 175, 48)
 placeButton.BackgroundColor3 = Color3.fromRGB(65, 101, 208)
 local allButton = makeButton("START SMART AUTO", 200, 214, 175, 48)
 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+local gemButton = makeButton("GEM W20: OFF", 15, 274, 360, 40)
+gemButton.BackgroundColor3 = Color3.fromRGB(103, 75, 180)
 
 local status = Instance.new("TextLabel")
 status.Size = UDim2.fromOffset(360, 44)
-status.Position = UDim2.fromOffset(15, 274)
+status.Position = UDim2.fromOffset(15, 326)
 status.BackgroundColor3 = Color3.fromRGB(29, 32, 42)
 status.BorderSizePixel = 0
 status.Font = Enum.Font.Gotham
@@ -516,6 +518,72 @@ local function setBestGameSpeed()
 end
 
 _G.AO_SET_BEST_SPEED = setBestGameSpeed
+
+local gemFarmEnabled = false
+local gemRestartLocked = false
+local gemRestartStartedAt = 0
+local gemLastWave = nil
+
+local function readCurrentWave()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
+    local topUI = gameUI and gameUI:FindFirstChild("TopUI")
+    local info = topUI and topUI:FindFirstChild("Info")
+    local waveFrame = info and info:FindFirstChild("Wave")
+    local waveLabel = waveFrame and waveFrame:FindFirstChild("TextLabel")
+    local text = waveLabel and tostring(waveLabel.Text) or ""
+    return tonumber(text:match("(%d+)")), text
+end
+
+local function findRestartButton()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+    local settingsFrame = mainUI and mainUI:FindFirstChild("SettingsFrame")
+    if not settingsFrame then return nil end
+
+    for _, object in ipairs(settingsFrame:GetDescendants()) do
+        local text = nil
+        if object:IsA("TextLabel") or object:IsA("TextButton") then
+            text = string.lower(tostring(object.Text):match("^%s*(.-)%s*$"))
+        end
+
+        if text == "restart" then
+            if object:IsA("GuiButton") then return object end
+            local current = object.Parent
+            while current and current ~= settingsFrame do
+                if current:IsA("GuiButton") then return current end
+                current = current.Parent
+            end
+        end
+    end
+
+    return nil
+end
+
+local function triggerGemRestart()
+    local button = findRestartButton()
+    if not button then return false, "ไม่พบปุ่ม Restart ใน SettingsFrame" end
+    local ok = activateSpeedButton(button)
+    return ok, ok and "กด Restart ที่เวฟ 20 แล้ว" or "เรียกปุ่ม Restart ไม่สำเร็จ"
+end
+
+local function setGemFarmEnabled(enabled)
+    gemFarmEnabled = enabled == true
+    if not gemFarmEnabled then gemRestartLocked = false end
+    gemButton.Text = gemFarmEnabled and "GEM W20: ON" or "GEM W20: OFF"
+    gemButton.BackgroundColor3 = gemFarmEnabled and Color3.fromRGB(65, 151, 105) or Color3.fromRGB(103, 75, 180)
+    return gemFarmEnabled
+end
+
+_G.AO_GET_WAVE = readCurrentWave
+_G.AO_GEM_W20_START = function() return setGemFarmEnabled(true) end
+_G.AO_GEM_W20_STOP = function() return setGemFarmEnabled(false) end
+
+gemButton.MouseButton1Click:Connect(function()
+    local enabled = setGemFarmEnabled(not gemFarmEnabled)
+    local wave = readCurrentWave()
+    setStatus(string.format("Gem W20 %s | Wave=%s", enabled and "ON" or "OFF", tostring(wave or "?")))
+end)
 
 slotButton.MouseButton1Click:Connect(function()
     selectedSlot = selectedSlot % 6 + 1
@@ -1000,6 +1068,38 @@ task.spawn(function()
     local speedLevel, speedMessage = setBestGameSpeed()
     print("[AO PLACE v" .. TEST_VERSION .. "] " .. speedMessage)
     if speedLevel then setStatus(speedMessage) end
+end)
+
+task.spawn(function()
+    while gui.Parent do
+        if gemFarmEnabled then
+            local wave = readCurrentWave()
+            gemLastWave = wave or gemLastWave
+            gemButton.Text = "GEM W20: ON | W" .. tostring(wave or "?")
+
+            if wave and wave <= 2 and gemRestartLocked then
+                gemRestartLocked = false
+                setStatus("Gem W20: เริ่มรอบใหม่ Wave " .. tostring(wave))
+            elseif wave and wave >= 20 and gemRestartLocked and os.clock() - gemRestartStartedAt >= 6 then
+                gemRestartLocked = false
+                setStatus("Gem W20: Wave ยังไม่รีเซ็ต | เตรียมลอง Restart ใหม่", false)
+            elseif wave and wave >= 20 and not gemRestartLocked then
+                gemRestartLocked = true
+                gemRestartStartedAt = os.clock()
+                setStatus("Gem W20: ถึง Wave " .. tostring(wave) .. " | กำลังกด Restart...")
+
+                local ok, restartMessage = triggerGemRestart()
+                setStatus(restartMessage, ok)
+
+                if not ok then
+                    task.wait(2)
+                    gemRestartLocked = false
+                end
+            end
+        end
+
+        task.wait(0.2)
+    end
 end)
 
 print("[AO PLACE v" .. TEST_VERSION .. "] loaded | " .. tostring(message))
