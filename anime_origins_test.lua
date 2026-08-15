@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v0.7
+-- ANIME ORIGINS TEST UI v0.8
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "0.7"
+local AO_TEST_VERSION = "0.8"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -284,6 +284,119 @@ enterButton.Parent = main
 Instance.new("UICorner", enterButton).CornerRadius = UDim.new(0, 10)
 
 local busy = false
+
+local function guiEnabled(object)
+    if not object then
+        return false
+    elseif object:IsA("LayerCollector") then
+        return object.Enabled
+    elseif object:IsA("GuiObject") then
+        return object.Visible
+    end
+
+    return false
+end
+
+local function findNearestEmptyStoryDoor(root)
+    local mainFolder = workspace:FindFirstChild("MainFolder")
+    local lobby = mainFolder and mainFolder:FindFirstChild("Lobby")
+    local selectors = lobby and lobby:FindFirstChild("MapSelectors")
+    local story = selectors and selectors:FindFirstChild("Story")
+
+    if not story then
+        return nil, "ไม่พบ MapSelectors.Story"
+    end
+
+    local nearestDoor
+    local nearestDistance = math.huge
+
+    for _, pod in ipairs(story:GetChildren()) do
+        if pod.Name == "Pod" then
+            local door = pod:FindFirstChild("DoorUIPart", true)
+            local empty = door and door:FindFirstChild("Empty")
+
+            if door and door:IsA("BasePart") and guiEnabled(empty) then
+                local distance = (door.Position - root.Position).Magnitude
+
+                if distance < nearestDistance then
+                    nearestDoor = door
+                    nearestDistance = distance
+                end
+            end
+        end
+    end
+
+    if not nearestDoor then
+        return nil, "ไม่พบ Pod ว่าง"
+    end
+
+    return nearestDoor, nearestDistance
+end
+
+local function walkThroughNearestDoor()
+    local character = player.Character or player.CharacterAdded:Wait()
+    local root = character:WaitForChild("HumanoidRootPart", 10)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    if not root or not humanoid then
+        return false, "ไม่พบตัวละคร/Humanoid"
+    end
+
+    -- StartSelection จะวาร์ปผู้เล่นมาหน้าทางเข้า รอให้ตำแหน่งนิ่งก่อนหา Pod
+    task.wait(1.5)
+
+    local door, distanceOrError = findNearestEmptyStoryDoor(root)
+
+    if not door then
+        return false, distanceOrError
+    end
+
+    local flatDirection = Vector3.new(
+        door.Position.X - root.Position.X,
+        0,
+        door.Position.Z - root.Position.Z
+    )
+
+    if flatDirection.Magnitude < 0.1 then
+        flatDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+    end
+
+    flatDirection = flatDirection.Unit
+
+    -- เดินเลย DoorUIPart เข้าไปด้านใน 10 studs เพื่อให้ Zone ของเกมตรวจพบ
+    local target = Vector3.new(door.Position.X, root.Position.Y, door.Position.Z) + flatDirection * 10
+    local startedAt = os.clock()
+
+    status.Text = string.format("กำลังเดินเข้าประตูที่ใกล้ที่สุด (%.1f studs)", distanceOrError)
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
+
+    while os.clock() - startedAt < 15 do
+        if game.PlaceId ~= AO_LOBBY_PLACE_ID then
+            return true, "เข้าเกมแล้ว"
+        end
+
+        if not root.Parent or humanoid.Health <= 0 then
+            return false, "ตัวละครหายหรือเสียชีวิต"
+        end
+
+        humanoid:MoveTo(target)
+
+        local flatRemaining = Vector3.new(
+            target.X - root.Position.X,
+            0,
+            target.Z - root.Position.Z
+        ).Magnitude
+
+        if flatRemaining <= 3 then
+            return true, "เดินผ่านประตูแล้ว"
+        end
+
+        task.wait(0.5)
+    end
+
+    return false, "เดินเข้าประตูไม่สำเร็จภายใน 15 วินาที"
+end
+
 enterButton.MouseButton1Click:Connect(function()
     if busy then
         return
@@ -329,13 +442,27 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    -- StartSelection สร้างห้อง แล้วเกมจะเข้าให้อัตโนมัติเมื่อครบ 30 วินาที
+    enterButton.Text = "WALKING TO DOOR..."
+    local walked, walkMessage = walkThroughNearestDoor()
+
+    if not walked then
+        status.Text = "เข้าประตูไม่สำเร็จ: " .. tostring(walkMessage)
+        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        busy = false
+        enterButton.Text = "SELECT STAGE"
+        return
+    end
+
+    status.Text = tostring(walkMessage) .. " — รอเกมเริ่มอัตโนมัติ"
+    status.TextColor3 = Color3.fromRGB(122, 224, 150)
+
+    -- หลังเดินเข้า Pod เกมจะนับถอยหลังและวาร์ปเข้าเกมเอง
     for remaining = 30, 1, -1 do
         if not gui.Parent then
             return
         end
 
-        enterButton.Text = "AUTO START IN " .. tostring(remaining) .. "s"
+        enterButton.Text = "WAITING " .. tostring(remaining) .. "s"
         status.Text = string.format(
             "เลือกแล้ว: %s | %s | %s — รอเกมเข้าอัตโนมัติ",
             selectedMode,
