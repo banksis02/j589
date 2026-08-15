@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.1
+-- ANIME ORIGINS TEST UI v1.2
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.1"
+local AO_TEST_VERSION = "1.2"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -285,6 +285,14 @@ Instance.new("UICorner", enterButton).CornerRadius = UDim.new(0, 10)
 
 local busy = false
 
+-- เก็บจาก Pod 5 ขณะ InProgress: ตำแหน่ง HRP ภายในห้องเทียบกับ DoorUIPart
+local POD_ENTRY_OFFSET = CFrame.new(
+    0.0225524902, -4.20016479, -6.64593506,
+    0.999899983, 1.81122335e-08, -0.0141505329,
+    -1.84142745e-08, 1, -2.12148077e-08,
+    0.0141505329, 2.14732552e-08, 0.999899983
+)
+
 local function guiEnabled(object)
     if not object then
         return false
@@ -351,37 +359,27 @@ local function teleportThroughNearestDoor()
         return false, distanceOrError
     end
 
-    -- DoorUIPart คือป้ายหน้าห้องและเยื้องจากช่องประตูจริง
-    -- เกมหันตัวละครตรงเข้าช่องประตูหลัง StartSelection จึงใช้ LookVector เป็นหลัก
-    local flatDirection = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+    local target = door.CFrame * POD_ENTRY_OFFSET
+    local inProgress = door:FindFirstChild("InProgress")
 
-    if flatDirection.Magnitude < 0.1 then
-        flatDirection = Vector3.new(
-            door.Position.X - root.Position.X,
-            0,
-            door.Position.Z - root.Position.Z
-        )
-    end
-
-    flatDirection = flatDirection.Unit
-
-    -- วาร์ปเลย DoorUIPart เข้าไปด้านใน โดยรักษาระดับ Y ของตัวละคร
-    local travelDistance = math.max(28, distanceOrError + 12)
-    local target = root.Position + flatDirection * travelDistance
-
-    status.Text = string.format("กำลังวาร์ปเข้าประตูที่ใกล้ที่สุด (%.1f studs)", distanceOrError)
+    status.Text = string.format("กำลังวาร์ปเข้าตำแหน่งใน Pod (%.1f studs)", distanceOrError)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
     humanoid:Move(Vector3.zero, false)
-    character:PivotTo(CFrame.lookAt(target, target + flatDirection))
-    task.wait(0.35)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    root.CFrame = target
 
-    -- ขยับเล็กน้อยภายในห้อง เพื่อให้ตัวตรวจ Zone ของเกมอ่านตำแหน่งใหม่
-    local secondTarget = target + flatDirection * 3
-    character:PivotTo(CFrame.lookAt(secondTarget, secondTarget + flatDirection))
-    task.wait(0.5)
+    local startedAt = os.clock()
+    while os.clock() - startedAt < 6 do
+        if guiEnabled(inProgress) then
+            return true, "เข้า Pod สำเร็จ (InProgress)"
+        end
 
-    return true, "วาร์ปผ่านประตูแล้ว"
+        task.wait(0.25)
+    end
+
+    return false, "วาร์ปถึงตำแหน่งแล้ว แต่ Pod ไม่เปลี่ยนเป็น InProgress"
 end
 
 enterButton.MouseButton1Click:Connect(function()
@@ -429,12 +427,22 @@ enterButton.MouseButton1Click:Connect(function()
         return
     end
 
-    -- ปิดวาร์ปอัตโนมัติชั่วคราวจนกว่าจะได้ offset ประตูจริงจาก Recon
-    status.Text = "เลือกด่านแล้ว — เดินเข้าประตูด้วยมือเพื่อเก็บ Door Offset"
-    status.TextColor3 = Color3.fromRGB(255, 213, 106)
-    enterButton.Text = "STAGE SELECTED"
+    enterButton.Text = "TELEPORTING TO POD..."
+    local entered, enterMessage = teleportThroughNearestDoor()
 
-    task.wait(3)
+    if not entered then
+        status.Text = "เข้า Pod ไม่สำเร็จ: " .. tostring(enterMessage)
+        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        busy = false
+        enterButton.Text = "SELECT STAGE"
+        return
+    end
+
+    status.Text = enterMessage .. " — รอเกมเริ่ม"
+    status.TextColor3 = Color3.fromRGB(122, 224, 150)
+    enterButton.Text = "WAITING FOR GAME..."
+
+    task.wait(30)
     busy = false
     enterButton.Text = "SELECT STAGE"
 end)
