@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS SETTINGS RECON v0.3
+-- ANIME ORIGINS SETTINGS RECON v0.4 COMPACT
 -- Open Settings > Gameplay before running.
 -- ============================================================
 
-local VERSION = "0.3"
+local VERSION = "0.4"
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -88,13 +88,10 @@ local scanOK, scanError = pcall(function()
     push("SearchRoot=" .. fullName(searchRoot))
     local wanted = {
         "AutoSkipWave",
-        "AutoSkipWaves",
         "AutoStartGame",
         "AutoNextGame",
         "AutoReplayGame",
-        "SkipSummonCutscene",
         "SkipSummonAnimation",
-        "SkipGameCutscene",
         "SkipGameCutscenes",
         "HidePathMarkers",
         "InGameGuide",
@@ -120,6 +117,7 @@ local scanOK, scanError = pcall(function()
     }
 
     local detectedScreen = nil
+    local reported = {}
 
     for _, wantedName in ipairs(wanted) do
         push("===== OPTION " .. wantedName .. " =====")
@@ -142,35 +140,30 @@ local scanOK, scanError = pcall(function()
         if #matches == 0 then
             push("NOT FOUND")
         else
+            local selected = nil
             for _, match in ipairs(matches) do
+                if match:IsA("Frame") and normalize(match.Name) == target then
+                    selected = match
+                    break
+                end
+            end
+            selected = selected or matches[1]
+
+            if selected and not reported[selected] then
+                reported[selected] = true
+                local match = selected
                 detectedScreen = detectedScreen or match:FindFirstAncestorOfClass("ScreenGui")
                 push(details(match))
                 for _, object in ipairs(match:GetDescendants()) do
-                    if object:IsA("GuiObject") or object:IsA("ValueBase") then
+                    local objectName = normalize(object.Name)
+                    if object:IsA("GuiButton") or object:IsA("ValueBase") or
+                        objectName == "toggle" or objectName == "circle" or
+                        objectName == "value" then
                         push("  " .. details(object))
                     end
                 end
-
-                local parent = match.Parent
-                for level = 1, 3 do
-                    if not parent then break end
-                    push(string.format("  ANCESTOR%d %s", level, details(parent)))
-                    for _, child in ipairs(parent:GetChildren()) do
-                        if child:IsA("GuiObject") or child:IsA("ValueBase") then
-                            push("    CHILD " .. details(child))
-                        end
-                    end
-                    parent = parent.Parent
-                end
             end
         end
-    end
-
-    push("===== SETTINGS GUI BUTTONS =====")
-    local buttonRoot = settings or detectedScreen or searchRoot
-    push("ButtonRoot=" .. fullName(buttonRoot))
-    for _, object in ipairs(buttonRoot:GetDescendants()) do
-        if object:IsA("GuiButton") then push(details(object)) end
     end
 end)
 
@@ -190,7 +183,7 @@ end
 
 local saved = false
 if type(writefile) == "function" then
-    saved = pcall(writefile, "anime_origins_settings_recon.txt", blob)
+    saved = pcall(writefile, "anime_origins_settings_recon_v04.txt", blob)
 end
 
 print(string.format("[AO SETTINGS] DONE copy=%s file=%s lines=%d", tostring(copied), tostring(saved), #out))
