@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.2
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.3
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.2"
+local TEST_VERSION = "0.3"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -132,9 +132,12 @@ local function drawPath()
     return true, string.format("เส้นทาง %d จุด | %.1f studs", #path.Points, path.Total)
 end
 
-local function towerCount()
+local function placementCount()
     towersFolder = workspace:FindFirstChild("Towers")
-    return towersFolder and #towersFolder:GetChildren() or 0
+    local units = towersFolder and #towersFolder:GetChildren() or 0
+    local nodes = workspace:FindFirstChild("UnitNodes")
+    local reserved = nodes and #nodes:GetChildren() or 0
+    return units + reserved
 end
 
 local function raycastParams()
@@ -203,7 +206,7 @@ end
 
 local function invokePlacement(slot, position, isHill)
     if not placeRemote then return false, "ไม่พบ TowerHandlerFunction" end
-    local before = towerCount()
+    local before = placementCount()
     local ok, result = pcall(function()
         return placeRemote:InvokeServer(
             "PlaceTower",
@@ -219,9 +222,12 @@ local function invokePlacement(slot, position, isHill)
 
     local startedAt = os.clock()
     while os.clock() - startedAt < 1 do
-        if towerCount() > before then return true, result end
+        if placementCount() > before then return true, result end
         task.wait(0.1)
     end
+
+    -- บางเซิร์ฟเวอร์คืน true เมื่อตำแหน่งถูกจอง แต่ยังไม่สร้าง Tower เพราะเงินไม่พอ
+    if result == true then return true, result end
     return false, result
 end
 
@@ -383,62 +389,108 @@ local SMART_PERCENT_PLAN = {
 }
 local smartPlanIndex = 1
 
-local function parseNumber(text)
-    local cleaned = tostring(text or ""):gsub(",", "")
-    local number = cleaned:match("(%d+)")
-    return tonumber(number)
+local function getGameToolbar()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
+    local bottomUI = gameUI and gameUI:FindFirstChild("BottomUI")
+    return bottomUI and bottomUI:FindFirstChild("TowersToolbar")
 end
 
-local function readMoney()
-    local playerGui = player:FindFirstChildOfClass("PlayerGui")
-    local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
-    local hud = mainUI and mainUI:FindFirstChild("HUD")
-    local bottomUI = hud and hud:FindFirstChild("BottomUI")
-    local currencies = bottomUI and bottomUI:FindFirstChild("Currencies")
-
-    if not currencies then return nil end
-
-    for _, object in ipairs(currencies:GetDescendants()) do
-        if object:IsA("TextLabel") or object:IsA("TextButton") then
-            local text = tostring(object.Text)
-            if text:find("¥", 1, true) then
-                return parseNumber(text)
-            end
-        end
-    end
-
-    -- บาง UI แสดงเฉพาะตัวเลขโดยไม่มีสัญลักษณ์
-    for _, object in ipairs(currencies:GetDescendants()) do
-        if object:IsA("TextLabel") then
-            local number = tonumber(tostring(object.Text):gsub(",", ""))
-            if number then return number end
-        end
-    end
-
-    return nil
-end
-
-local function readSlotCost(slot)
-    local playerGui = player:FindFirstChildOfClass("PlayerGui")
-    local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
-    local hud = mainUI and mainUI:FindFirstChild("HUD")
-    local bottomUI = hud and hud:FindFirstChild("BottomUI")
-    local toolbar = bottomUI and bottomUI:FindFirstChild("TowersToolbar")
+local function slotContainsUnit(slot, wantedName)
+    local toolbar = getGameToolbar()
     local button = toolbar and toolbar:FindFirstChild("Tower" .. tostring(slot))
+    if not button then return false end
 
-    if not button then return nil end
+    local wanted = string.lower(tostring(wantedName))
+
+    if string.lower(button.Name):find(wanted, 1, true) then return true end
+
+    for key, value in pairs(button:GetAttributes()) do
+        if string.lower(tostring(key)):find(wanted, 1, true) or string.lower(tostring(value)):find(wanted, 1, true) then
+            return true
+        end
+    end
 
     for _, object in ipairs(button:GetDescendants()) do
-        if object:IsA("TextLabel") or object:IsA("TextButton") then
-            local text = tostring(object.Text)
-            local costText = text:match("([%d,]+)%s*¥")
-            if costText then
-                return tonumber(costText:gsub(",", ""))
+        if string.lower(object.Name):find(wanted, 1, true) then return true end
+
+        if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+            if string.lower(tostring(object.Text)):find(wanted, 1, true) then return true end
+        elseif object:IsA("StringValue") then
+            if string.lower(tostring(object.Value)):find(wanted, 1, true) then return true end
+        end
+
+        for key, value in pairs(object:GetAttributes()) do
+            if string.lower(tostring(key)):find(wanted, 1, true) or string.lower(tostring(value)):find(wanted, 1, true) then
+                return true
             end
         end
     end
 
+    return false
+end
+
+local function findSlotByUnitName(unitName)
+    for slot = 1, 6 do
+        if slotContainsUnit(slot, unitName) then return slot end
+    end
     return nil
+end
+
+local function slotHasUnit(slot)
+    local toolbar = getGameToolbar()
+    local button = toolbar and toolbar:FindFirstChild("Tower" .. tostring(slot))
+    if not button then return false end
+
+    for _, object in ipairs(button:GetDescendants()) do
+        if object.Name == "NameLabel" and
+            (object:IsA("TextLabel") or object:IsA("TextButton")) and
+            tostring(object.Text):match("%S") then
+            return true
+        end
+
+        if object:IsA("Model") and object:FindFirstAncestorOfClass("ViewportFrame") then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function enemyProgressPercent()
+    if not path then return nil end
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+
+    local furthest = nil
+
+    for _, enemy in ipairs(enemies:GetChildren()) do
+        local root = enemy:FindFirstChild("HumanoidRootPart")
+        if not root and enemy:IsA("Model") then root = enemy.PrimaryPart end
+        if root and root:IsA("BasePart") then
+            local bestDistance = math.huge
+            local bestPathDistance = 0
+
+            for index = 2, #path.Points do
+                local a, b = path.Points[index - 1], path.Points[index]
+                local segment = b - a
+                local lengthSquared = segment:Dot(segment)
+                local alpha = lengthSquared > 0 and math.clamp((root.Position - a):Dot(segment) / lengthSquared, 0, 1) or 0
+                local nearest = a + segment * alpha
+                local distance = (root.Position - nearest).Magnitude
+
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestPathDistance = path.Cumulative[index - 1] + segment.Magnitude * alpha
+                end
+            end
+
+            local percent = bestPathDistance / path.Total * 100
+            if not furthest or percent > furthest then furthest = percent end
+        end
+    end
+
+    return furthest
 end
 
 local function nextSmartPercent()
@@ -492,81 +544,122 @@ allButton.MouseButton1Click:Connect(function()
     allButton.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
 
     task.spawn(function()
-        while smartRunning and myGeneration == smartGeneration do
-            local totalPlaced = 0
-            local remainingSlots = 0
+        local function stillRunning()
+            return smartRunning and myGeneration == smartGeneration
+        end
 
-            for slot = 1, 6 do
-                totalPlaced += slotPlaced[slot]
-                if slotPlaced[slot] < SMART_MAX_PER_SLOT and slotFailures[slot] < 4 then
-                    remainingSlots += 1
-                end
-            end
+        local function queueOne(slot, placementType, percent, label)
+            if not stillRunning() then return false end
+            placing = true
+            setStatus(string.format("%s | Tower%d @ %.1f%%", label, slot, percent))
+            local ok, kind, position = placeSlot(slot, placementType, percent)
+            placing = false
 
-            if remainingSlots == 0 then
-                smartRunning = false
-                allButton.Text = "SMART AUTO COMPLETE"
-                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-                status.Text = string.format("Smart Auto จบ | วางรวม %d ตัว", totalPlaced)
+            if ok then
+                slotTypes[slot] = kind
+                slotPlaced[slot] += 1
+                status.Text = string.format("%s สำเร็จ | Tower%d %s @ %.1f%%", label, slot, kind, percent)
                 status.TextColor3 = Color3.fromRGB(124, 225, 151)
-                break
+                task.wait(0.45)
+                return true
             end
 
-            local money = readMoney()
-            local available = {}
+            setStatus(string.format("%s ไม่สำเร็จ | Tower%d @ %.1f%%", label, slot, percent), false)
+            task.wait(0.5)
+            return false
+        end
 
-            for slot = 1, 6 do
-                if slotPlaced[slot] < SMART_MAX_PER_SLOT and slotFailures[slot] < 4 then
-                    local cost = readSlotCost(slot)
-                    if not cost or not money or money >= cost then
-                        available[#available + 1] = {Slot = slot, Cost = cost or math.huge}
-                    end
-                end
-            end
+        -- 1) ตัวเงิน Leorio ก่อนเสมอ 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
+        local moneySlot = findSlotByUnitName("Leorio")
+        if not moneySlot then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ไม่พบ Leorio ใน Tower1-6", false)
+            placing = false
+            return
+        end
 
-            table.sort(available, function(a, b) return a.Cost < b.Cost end)
-
-            if #available == 0 then
-                setStatus(string.format("รอเงิน... มี %s¥ | วางแล้ว %d ตัว", tostring(money or "?"), totalPlaced))
-                task.wait(1.5)
-            else
-                local entry = available[1]
-                local slot = entry.Slot
-                local percent = nextSmartPercent()
-                local knownType = slotTypes[slot] or "Auto"
-
-                placing = true
-                local ok, kind, position = placeSlot(slot, knownType, percent)
-                placing = false
-
-                if ok then
-                    slotTypes[slot] = kind
-                    slotPlaced[slot] += 1
-                    slotFailures[slot] = 0
-                    status.Text = string.format(
-                        "Tower%d %s #%d @ %d%% | เงิน %s¥",
-                        slot,
-                        kind,
-                        slotPlaced[slot],
-                        percent,
-                        tostring(readMoney() or "?")
-                    )
-                    status.TextColor3 = Color3.fromRGB(124, 225, 151)
-                    task.wait(0.8)
-                else
-                    -- เงินอาจเปลี่ยนระหว่างลอง หรือพื้นที่ช่วงนี้เต็ม: รอแล้วเปลี่ยนเปอร์เซ็นต์
-                    slotFailures[slot] += 1
-                    setStatus(string.format(
-                        "Tower%d ยังวางไม่ได้ @ %d%% (ครั้ง %d/4)",
-                        slot,
-                        percent,
-                        slotFailures[slot]
-                    ), false)
-                    task.wait(1.2)
-                end
+        slotTypes[moneySlot] = "Ground"
+        local leorioQueued = 0
+        for _, percent in ipairs({30, 33, 36, 39, 42, 45, 48, 27, 24}) do
+            if not stillRunning() or leorioQueued >= 3 then break end
+            if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
+                leorioQueued += 1
             end
         end
 
+        if leorioQueued < 3 then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("จอง Leorio ได้เพียง " .. leorioQueued .. "/3 — หยุดเพื่อไม่ข้ามขั้น", false)
+            placing = false
+            return
+        end
+
+        -- รอให้มีมอนจริง เพื่อคำนวณตำแหน่งนำหน้า ไม่เดาจาก Wave
+        local monsterPercent
+        local waitStarted = os.clock()
+        while stillRunning() and os.clock() - waitStarted < 30 do
+            monsterPercent = enemyProgressPercent()
+            if monsterPercent then break end
+            setStatus("วาง Leorio แล้ว | รอมอนเกิดเพื่อคำนวณเปอร์เซ็นต์...")
+            task.wait(0.5)
+        end
+
+        monsterPercent = monsterPercent or 0
+        local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
+
+        local damageSlots = {}
+        for slot = 1, 6 do
+            if slot ~= moneySlot and slotHasUnit(slot) then
+                damageSlots[#damageSlots + 1] = slot
+            end
+        end
+
+
+        if #damageSlots == 0 then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ไม่พบตัวดาเมจในช่องที่เหลือ", false)
+            placing = false
+            return
+        end
+
+        -- 2) ดักหน้ามอน +20% จำนวน 2-3 ตัว
+        local interceptOffsets = {-2, 0, 2}
+        for index = 1, math.min(3, #damageSlots) do
+            local slot = damageSlots[index]
+            queueOne(
+                slot,
+                slotTypes[slot] or "Auto",
+                math.clamp(interceptPercent + interceptOffsets[index], 5, 95),
+                string.format("ดักหน้ามอน %.1f%% +20", monsterPercent)
+            )
+        end
+
+        -- 3) ตัวดาเมจที่เหลือกองช่วง 5-10% เพื่อฆ่าต้นทางและจบไว
+        local earlyPercents = {5, 6.5, 8, 9.5, 7, 10, 5.5, 8.5, 6, 9}
+        local earlyIndex = 1
+
+        for round = 1, 3 do
+            for _, slot in ipairs(damageSlots) do
+                if not stillRunning() then break end
+                local percent = earlyPercents[earlyIndex] or 8
+                earlyIndex = earlyIndex % #earlyPercents + 1
+                queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทาง")
+            end
+        end
+
+        smartRunning = false
+        allButton.Text = "SMART AUTO COMPLETE"
+        allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+        local total = 0
+        for slot = 1, 6 do total += slotPlaced[slot] end
+        status.Text = string.format("จองวางครบ | Leorio=Tower%d | รวม %d ตำแหน่ง", moneySlot, total)
+        status.TextColor3 = Color3.fromRGB(124, 225, 151)
         placing = false
     end)
 end)
