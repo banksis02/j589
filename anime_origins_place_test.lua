@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.12
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.13
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.12"
+local TEST_VERSION = "0.13"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -523,6 +523,15 @@ local gemFarmEnabled = false
 local gemRestartLocked = false
 local gemRestartStartedAt = 0
 local gemLastWave = nil
+local gemRoundCaptured = false
+local gemStats = {
+    Runs = 0,
+    Gems = 0,
+    TraitRerolls = 0,
+    LastGems = 0,
+    LastTraitRerolls = 0,
+    LastWave = 0,
+}
 
 local function readCurrentWave()
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -560,6 +569,57 @@ local function findRestartButton()
     return nil
 end
 
+local function readRewardAmount(rewardName)
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
+    local management = gameUI and gameUI:FindFirstChild("ManagementFrame")
+    local stageInfo = management and management:FindFirstChild("StageInfoFrame")
+    local mainFrame = stageInfo and stageInfo:FindFirstChild("Main")
+    local canvas = mainFrame and mainFrame:FindFirstChild("CanvasGroup")
+    local scrolling = canvas and canvas:FindFirstChild("ScrollingFrame")
+    local gained = scrolling and scrolling:FindFirstChild("GainedRewards")
+    local inner = gained and gained:FindFirstChild("InnerFrame")
+    local reward = inner and inner:FindFirstChild(rewardName)
+    if not reward then return 0 end
+
+    local imageLabel = reward:FindFirstChild("ImageLabel")
+    local info = imageLabel and imageLabel:FindFirstChild("Info")
+    local amountText = info and info:FindFirstChild("AmountText")
+    local text = amountText and tostring(amountText.Text) or ""
+    return tonumber(text:match("(%d+)")) or 0
+end
+
+local function readRoundRewards()
+    return {
+        Gems = readRewardAmount("Currency_Gems"),
+        TraitRerolls = readRewardAmount("Currency_TraitReroll"),
+    }
+end
+
+local function captureRoundRewards(wave)
+    if gemRoundCaptured then return false, readRoundRewards() end
+    local rewards = readRoundRewards()
+    gemRoundCaptured = true
+    gemStats.Runs += 1
+    gemStats.Gems += rewards.Gems
+    gemStats.TraitRerolls += rewards.TraitRerolls
+    gemStats.LastGems = rewards.Gems
+    gemStats.LastTraitRerolls = rewards.TraitRerolls
+    gemStats.LastWave = wave or 0
+
+    print(string.format(
+        "[AO GEM] Run %d | Wave %s | +%d Gems | +%d Trait Reroll | Total=%d Gems/%d Trait",
+        gemStats.Runs,
+        tostring(wave or "?"),
+        rewards.Gems,
+        rewards.TraitRerolls,
+        gemStats.Gems,
+        gemStats.TraitRerolls
+    ))
+
+    return true, rewards
+end
+
 local function triggerGemRestart()
     local button = findRestartButton()
     if not button then return false, "ไม่พบปุ่ม Restart ใน SettingsFrame" end
@@ -576,6 +636,12 @@ local function setGemFarmEnabled(enabled)
 end
 
 _G.AO_GET_WAVE = readCurrentWave
+_G.AO_GET_ROUND_REWARDS = readRoundRewards
+_G.AO_GEM_STATS = function()
+    local copy = {}
+    for key, value in pairs(gemStats) do copy[key] = value end
+    return copy
+end
 _G.AO_GEM_W20_START = function() return setGemFarmEnabled(true) end
 _G.AO_GEM_W20_STOP = function() return setGemFarmEnabled(false) end
 
@@ -1079,6 +1145,7 @@ task.spawn(function()
 
             if wave and wave <= 2 and gemRestartLocked then
                 gemRestartLocked = false
+                gemRoundCaptured = false
                 setStatus("Gem W20: เริ่มรอบใหม่ Wave " .. tostring(wave))
             elseif wave and wave >= 20 and gemRestartLocked and os.clock() - gemRestartStartedAt >= 6 then
                 gemRestartLocked = false
@@ -1086,7 +1153,13 @@ task.spawn(function()
             elseif wave and wave >= 20 and not gemRestartLocked then
                 gemRestartLocked = true
                 gemRestartStartedAt = os.clock()
-                setStatus("Gem W20: ถึง Wave " .. tostring(wave) .. " | กำลังกด Restart...")
+                local _, rewards = captureRoundRewards(wave)
+                setStatus(string.format(
+                    "W%d | +%d Gem +%d Trait | กำลังกด Restart...",
+                    wave,
+                    rewards.Gems,
+                    rewards.TraitRerolls
+                ))
 
                 local ok, restartMessage = triggerGemRestart()
                 setStatus(restartMessage, ok)
