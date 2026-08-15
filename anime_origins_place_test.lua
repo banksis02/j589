@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.4
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.5
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.4"
+local TEST_VERSION = "0.5"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -615,17 +615,6 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
-        -- วางชุดเคลียร์ต้นทางทันที ไม่รอให้มอนเดินหรือรอคำนวณจุดดัก
-        local earlyPercents = {5, 7.5, 10, 6, 8.5, 9.5, 5.5, 8}
-        local earlyIndex = 1
-        local earlyInitialCount = math.min(3, #damageSlots)
-        for index = 1, earlyInitialCount do
-            local slot = damageSlots[index]
-            local percent = earlyPercents[earlyIndex]
-            earlyIndex += 1
-            queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทางด่วน")
-        end
-
         -- รอให้มีมอนจริง เพื่อคำนวณตำแหน่งนำหน้า ไม่เดาจาก Wave
         local monsterPercent
         local waitStarted = os.clock()
@@ -636,28 +625,81 @@ allButton.MouseButton1Click:Connect(function()
             task.wait(0.5)
         end
 
-        monsterPercent = monsterPercent or 0
-        local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
-
-        -- 2) ดักหน้ามอน +20% จำนวน 2-3 ตัว
-        local interceptOffsets = {-2, 0, 2}
-        for index = 1, math.min(3, #damageSlots) do
-            local slot = damageSlots[index]
-            queueOne(
-                slot,
-                slotTypes[slot] or "Auto",
-                math.clamp(interceptPercent + interceptOffsets[index], 5, 95),
-                string.format("ดักหน้ามอน %.1f%% +20", monsterPercent)
-            )
+        if monsterPercent == nil then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ไม่พบตำแหน่งมอนจริง — ยังไม่วางชุดดักและช่วง 5-10%", false)
+            placing = false
+            return
         end
 
-        -- 3) ตัวดาเมจที่เหลือกองช่วง 5-10% เพื่อฆ่าต้นทางและจบไว
-        for round = 1, 2 do
+        local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
+
+        -- 2) ดักหน้ามอน +20% ให้สำเร็จ 2-3 ตัวก่อนเท่านั้น
+        local interceptOffsets = {-2, 0, 2, -4, 4, -6, 6}
+        local interceptIndex = 1
+        local interceptQueued = 0
+        local interceptNoProgress = 0
+
+        while stillRunning() and interceptQueued < 3 and interceptNoProgress < 2 do
+            local placedThisRound = false
+
+            for _, slot in ipairs(damageSlots) do
+                if not stillRunning() or interceptQueued >= 3 then break end
+
+                local offset = interceptOffsets[interceptIndex]
+                interceptIndex = interceptIndex % #interceptOffsets + 1
+                local ok = queueOne(
+                    slot,
+                    slotTypes[slot] or "Auto",
+                    math.clamp(interceptPercent + offset, 5, 95),
+                    string.format("ดักหน้ามอน %.1f%% +20 (%d/3)", monsterPercent, interceptQueued + 1)
+                )
+
+                if ok then
+                    interceptQueued += 1
+                    placedThisRound = true
+                end
+            end
+
+            interceptNoProgress = placedThisRound and 0 or (interceptNoProgress + 1)
+        end
+
+        if interceptQueued < 2 then
+            smartRunning = false
+            allButton.Text = "START SMART AUTO"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            setStatus("ชุดดัก +20% ได้เพียง " .. interceptQueued .. "/2 — ยังไม่วางช่วง 5-10%", false)
+            placing = false
+            return
+        end
+
+        -- 3) หลังชุดดักสำเร็จแล้ว ใช้จำนวนวางที่เหลือทั้งหมดช่วง 5-10%
+        -- วนจนเต็มจริง: หยุดเมื่อครบ 2 รอบติดที่ไม่มีตำแหน่งใดถูกจองเพิ่ม
+        local earlyPercents = {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
+        local earlyIndex = 1
+        local noProgressRounds = 0
+
+        while stillRunning() and noProgressRounds < 2 do
+            local countBeforeRound = placementCount()
+            local placedThisRound = false
+
             for _, slot in ipairs(damageSlots) do
                 if not stillRunning() then break end
-                local percent = earlyPercents[earlyIndex] or 8
+                local percent = earlyPercents[earlyIndex]
                 earlyIndex = earlyIndex % #earlyPercents + 1
-                queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทาง")
+
+                if queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทางที่เหลือ") then
+                    placedThisRound = true
+                end
+            end
+
+            local countAfterRound = placementCount()
+            if placedThisRound and countAfterRound > countBeforeRound then
+                noProgressRounds = 0
+            else
+                noProgressRounds += 1
             end
         end
 
