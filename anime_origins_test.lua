@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI v1.6
+-- ANIME ORIGINS TEST UI v1.7
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.6"
+local AO_TEST_VERSION = "1.7"
 local AO_LOBBY_PLACE_ID = 129932912185311
 
 local Players = game:GetService("Players")
@@ -442,6 +442,27 @@ local function waitForMapSelectContent(timeout)
     return nil
 end
 
+local function waitForAfterMapSelectContent(timeout)
+    local startedAt = os.clock()
+
+    while os.clock() - startedAt < timeout do
+        local playerGui = player:FindFirstChildOfClass("PlayerGui")
+        local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+        local mapSelect = mainUI and mainUI:FindFirstChild("MapSelect")
+        local frame = mapSelect and mapSelect:FindFirstChild("AfterMapSelectFrame")
+        local main = frame and frame:FindFirstChild("Main")
+        local content = main and main:FindFirstChild("ContentFrame")
+
+        if frame and frame.Visible and content and content.Visible then
+            return content
+        end
+
+        task.wait(0.2)
+    end
+
+    return nil
+end
+
 local function selectGameStageUI()
     status.Text = "รอหน้าเลือกด่านของเกม..."
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
@@ -508,6 +529,21 @@ local function selectGameStageUI()
     ok, err = fireGuiButton(startButton)
     if not ok then
         return false, "กด Start ไม่ได้: " .. tostring(err)
+    end
+
+    status.Text = "รอหน้าต่างยืนยัน Start..."
+    local afterContent = waitForAfterMapSelectContent(10)
+    if not afterContent then
+        return false, "หน้า AfterMapSelectFrame ไม่เปิดภายใน 10 วินาที"
+    end
+
+    local afterButtons = afterContent:FindFirstChild("Buttons")
+    local confirmStart = afterButtons and afterButtons:FindFirstChild("Start")
+
+    status.Text = "กด Start ยืนยัน"
+    ok, err = fireGuiButton(confirmStart)
+    if not ok then
+        return false, "กด Start ยืนยันไม่ได้: " .. tostring(err)
     end
 
     return true, string.format(
