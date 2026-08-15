@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS SETTINGS RECON v0.1
+-- ANIME ORIGINS SETTINGS RECON v0.2
 -- Open Settings > Gameplay before running.
 -- ============================================================
 
-local VERSION = "0.1"
+local VERSION = "0.2"
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -71,14 +71,24 @@ local function details(object)
     return table.concat(values, " | ")
 end
 
+local function normalize(value)
+    return string.lower(tostring(value or "")):gsub("[^%w]", "")
+end
+
 push("===== ANIME ORIGINS SETTINGS RECON v" .. VERSION .. " =====")
 push("PlaceId=" .. tostring(game.PlaceId))
 
-if not settings then
-    push("ERROR: MainUI.SettingsFrame not found")
-else
+do
+    local searchRoot = settings or playerGui
+    if not searchRoot then
+        push("ERROR: PlayerGui not found")
+        return
+    end
+
+    push("SearchRoot=" .. fullName(searchRoot))
     local wanted = {
         "AutoSkipWave",
+        "AutoSkipWaves",
         "AutoStartGame",
         "AutoNextGame",
         "AutoReplayGame",
@@ -89,13 +99,42 @@ else
         "HidePathMarkers",
         "InGameGuide",
         "SelectUnitOnPlacement",
+        "ShowMaxRange",
+        "PhantomPlacement",
+        "ShowUnitStatsOnHover",
+        "AutoUpgradeOnPlacement",
+        "AutoUpgradeDropdownMenu",
+        "SellFarmUnitsOnLastWave",
+        "GraphicsQualityLobby",
+        "GraphicsQualityGame",
+        "HideAllVFX",
+        "HideOthersVFX",
+        "WindowFocusTracking",
+        "HideOthersPetsLobby",
+        "SkipRiftAnimationLobby",
+        "MovementStyle",
+        "HideEnemyTags",
+        "HideDamageIndicators",
+        "HideBossEntrance",
+        "DeathAnimations",
     }
+
+    local detectedScreen = nil
 
     for _, wantedName in ipairs(wanted) do
         push("===== OPTION " .. wantedName .. " =====")
         local matches = {}
-        for _, object in ipairs(settings:GetDescendants()) do
-            if string.lower(object.Name) == string.lower(wantedName) then
+        local target = normalize(wantedName)
+        for _, object in ipairs(searchRoot:GetDescendants()) do
+            local nameMatch = normalize(object.Name)
+            local textMatch = ""
+            if object:IsA("TextLabel") or object:IsA("TextButton") then
+                textMatch = normalize(object.Text)
+            end
+
+            if nameMatch == target or textMatch == target or
+                nameMatch == target .. "s" or target == nameMatch .. "s" or
+                textMatch == target .. "s" or target == textMatch .. "s" then
                 matches[#matches + 1] = object
             end
         end
@@ -104,18 +143,33 @@ else
             push("NOT FOUND")
         else
             for _, match in ipairs(matches) do
+                detectedScreen = detectedScreen or match:FindFirstAncestorOfClass("ScreenGui")
                 push(details(match))
                 for _, object in ipairs(match:GetDescendants()) do
                     if object:IsA("GuiObject") or object:IsA("ValueBase") then
                         push("  " .. details(object))
                     end
                 end
+
+                local parent = match.Parent
+                for level = 1, 3 do
+                    if not parent then break end
+                    push(string.format("  ANCESTOR%d %s", level, details(parent)))
+                    for _, child in ipairs(parent:GetChildren()) do
+                        if child:IsA("GuiObject") or child:IsA("ValueBase") then
+                            push("    CHILD " .. details(child))
+                        end
+                    end
+                    parent = parent.Parent
+                end
             end
         end
     end
 
     push("===== SETTINGS GUI BUTTONS =====")
-    for _, object in ipairs(settings:GetDescendants()) do
+    local buttonRoot = settings or detectedScreen or searchRoot
+    push("ButtonRoot=" .. fullName(buttonRoot))
+    for _, object in ipairs(buttonRoot:GetDescendants()) do
         if object:IsA("GuiButton") then push(details(object)) end
     end
 end
