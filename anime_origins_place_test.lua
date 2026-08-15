@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.1
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.2
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.1"
+local TEST_VERSION = "0.2"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -156,7 +156,8 @@ local function groundCandidates(percent)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
     local candidates, params = {}, raycastParams()
-    local offsets = {6, -6, 9, -9, 12, -12, 15, -15, 4, -4, 18, -18}
+    -- ชิดขอบถนนก่อน แล้วค่อยขยายออกเมื่อพื้นที่เต็ม
+    local offsets = {3.5, -3.5, 5, -5, 6.5, -6.5, 8, -8, 10, -10, 12, -12}
 
     for _, offset in ipairs(offsets) do
         local sample = base + perpendicular * offset
@@ -327,7 +328,7 @@ local drawButton = makeButton("REDRAW RED PATH", 15, 162, 360, 40)
 drawButton.BackgroundColor3 = Color3.fromRGB(150, 45, 55)
 local placeButton = makeButton("PLACE SELECTED", 15, 214, 175, 48)
 placeButton.BackgroundColor3 = Color3.fromRGB(65, 101, 208)
-local allButton = makeButton("PLACE ALL AUTO", 200, 214, 175, 48)
+local allButton = makeButton("START SMART AUTO", 200, 214, 175, 48)
 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
 
 local status = Instance.new("TextLabel")
@@ -367,6 +368,85 @@ drawButton.MouseButton1Click:Connect(function()
 end)
 
 local placing = false
+local smartRunning = false
+local smartGeneration = 0
+local slotTypes = {}
+local slotPlaced = {0, 0, 0, 0, 0, 0}
+local slotFailures = {0, 0, 0, 0, 0, 0}
+local SMART_MAX_PER_SLOT = 3
+
+-- ต้นทางก่อนเพื่อเริ่มยิงไว → กลางทาง → ด่านท้ายสำรอง
+local SMART_PERCENT_PLAN = {
+    10, 14, 18, 22, 27, 32,
+    38, 44, 50, 57,
+    64, 71, 78,
+}
+local smartPlanIndex = 1
+
+local function parseNumber(text)
+    local cleaned = tostring(text or ""):gsub(",", "")
+    local number = cleaned:match("(%d+)")
+    return tonumber(number)
+end
+
+local function readMoney()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+    local hud = mainUI and mainUI:FindFirstChild("HUD")
+    local bottomUI = hud and hud:FindFirstChild("BottomUI")
+    local currencies = bottomUI and bottomUI:FindFirstChild("Currencies")
+
+    if not currencies then return nil end
+
+    for _, object in ipairs(currencies:GetDescendants()) do
+        if object:IsA("TextLabel") or object:IsA("TextButton") then
+            local text = tostring(object.Text)
+            if text:find("¥", 1, true) then
+                return parseNumber(text)
+            end
+        end
+    end
+
+    -- บาง UI แสดงเฉพาะตัวเลขโดยไม่มีสัญลักษณ์
+    for _, object in ipairs(currencies:GetDescendants()) do
+        if object:IsA("TextLabel") then
+            local number = tonumber(tostring(object.Text):gsub(",", ""))
+            if number then return number end
+        end
+    end
+
+    return nil
+end
+
+local function readSlotCost(slot)
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+    local hud = mainUI and mainUI:FindFirstChild("HUD")
+    local bottomUI = hud and hud:FindFirstChild("BottomUI")
+    local toolbar = bottomUI and bottomUI:FindFirstChild("TowersToolbar")
+    local button = toolbar and toolbar:FindFirstChild("Tower" .. tostring(slot))
+
+    if not button then return nil end
+
+    for _, object in ipairs(button:GetDescendants()) do
+        if object:IsA("TextLabel") or object:IsA("TextButton") then
+            local text = tostring(object.Text)
+            local costText = text:match("([%d,]+)%s*¥")
+            if costText then
+                return tonumber(costText:gsub(",", ""))
+            end
+        end
+    end
+
+    return nil
+end
+
+local function nextSmartPercent()
+    local percent = SMART_PERCENT_PLAN[smartPlanIndex]
+    smartPlanIndex = smartPlanIndex % #SMART_PERCENT_PLAN + 1
+    return percent
+end
+
 local function placeSlot(slot, placementType, percent)
     if placementType == "Ground" or placementType == "Auto" then
         local ok, position = tryCandidates(slot, groundCandidates(percent), false, setStatus)
@@ -395,21 +475,100 @@ placeButton.MouseButton1Click:Connect(function()
 end)
 
 allButton.MouseButton1Click:Connect(function()
-    if placing then return end
-    placing = true
-    local percent = math.clamp(tonumber(percentBox.Text) or 50, 0, 100)
-    local placedCount = 0
-    for slot = 1, 6 do
-        local ok, kind = placeSlot(slot, "Auto", percent)
-        if ok then
-            placedCount += 1
-            setStatus(string.format("Tower%d สำเร็จ (%s) | รวม %d", slot, kind, placedCount))
-            task.wait(0.35)
-        end
+    if smartRunning then
+        smartRunning = false
+        smartGeneration += 1
+        allButton.Text = "START SMART AUTO"
+        allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+        setStatus("หยุด Smart Auto แล้ว")
+        return
     end
-    status.Text = string.format("วางครบแล้ว %d/6 slot @ %.0f%%", placedCount, percent)
-    status.TextColor3 = placedCount > 0 and Color3.fromRGB(124, 225, 151) or Color3.fromRGB(255, 110, 110)
-    placing = false
+
+    if placing then return end
+    smartRunning = true
+    smartGeneration += 1
+    local myGeneration = smartGeneration
+    allButton.Text = "STOP SMART AUTO"
+    allButton.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
+
+    task.spawn(function()
+        while smartRunning and myGeneration == smartGeneration do
+            local totalPlaced = 0
+            local remainingSlots = 0
+
+            for slot = 1, 6 do
+                totalPlaced += slotPlaced[slot]
+                if slotPlaced[slot] < SMART_MAX_PER_SLOT and slotFailures[slot] < 4 then
+                    remainingSlots += 1
+                end
+            end
+
+            if remainingSlots == 0 then
+                smartRunning = false
+                allButton.Text = "SMART AUTO COMPLETE"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                status.Text = string.format("Smart Auto จบ | วางรวม %d ตัว", totalPlaced)
+                status.TextColor3 = Color3.fromRGB(124, 225, 151)
+                break
+            end
+
+            local money = readMoney()
+            local available = {}
+
+            for slot = 1, 6 do
+                if slotPlaced[slot] < SMART_MAX_PER_SLOT and slotFailures[slot] < 4 then
+                    local cost = readSlotCost(slot)
+                    if not cost or not money or money >= cost then
+                        available[#available + 1] = {Slot = slot, Cost = cost or math.huge}
+                    end
+                end
+            end
+
+            table.sort(available, function(a, b) return a.Cost < b.Cost end)
+
+            if #available == 0 then
+                setStatus(string.format("รอเงิน... มี %s¥ | วางแล้ว %d ตัว", tostring(money or "?"), totalPlaced))
+                task.wait(1.5)
+            else
+                local entry = available[1]
+                local slot = entry.Slot
+                local percent = nextSmartPercent()
+                local knownType = slotTypes[slot] or "Auto"
+
+                placing = true
+                local ok, kind, position = placeSlot(slot, knownType, percent)
+                placing = false
+
+                if ok then
+                    slotTypes[slot] = kind
+                    slotPlaced[slot] += 1
+                    slotFailures[slot] = 0
+                    status.Text = string.format(
+                        "Tower%d %s #%d @ %d%% | เงิน %s¥",
+                        slot,
+                        kind,
+                        slotPlaced[slot],
+                        percent,
+                        tostring(readMoney() or "?")
+                    )
+                    status.TextColor3 = Color3.fromRGB(124, 225, 151)
+                    task.wait(0.8)
+                else
+                    -- เงินอาจเปลี่ยนระหว่างลอง หรือพื้นที่ช่วงนี้เต็ม: รอแล้วเปลี่ยนเปอร์เซ็นต์
+                    slotFailures[slot] += 1
+                    setStatus(string.format(
+                        "Tower%d ยังวางไม่ได้ @ %d%% (ครั้ง %d/4)",
+                        slot,
+                        percent,
+                        slotFailures[slot]
+                    ), false)
+                    task.wait(1.2)
+                end
+            end
+        end
+
+        placing = false
+    end)
 end)
 
 local ok, message = drawPath()
