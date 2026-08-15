@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST v0.10
+-- ANIME ORIGINS PATH + AUTO PLACE TEST v0.11
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.10"
+local TEST_VERSION = "0.11"
 local GAME_PLACE_ID = 116173040971120
 
 local Players = game:GetService("Players")
@@ -432,6 +432,91 @@ local function setStatus(text, good)
     status.TextColor3 = good == false and Color3.fromRGB(255, 110, 110) or Color3.fromRGB(255, 213, 106)
 end
 
+local function getSpeedControls()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
+    local topUI = gameUI and gameUI:FindFirstChild("TopUI")
+    local gameSpeed = topUI and topUI:FindFirstChild("GameSpeed")
+    local mainSpeed = gameSpeed and gameSpeed:FindFirstChild("Main")
+    local buttonFrame = mainSpeed and mainSpeed:FindFirstChild("ButtonFrame")
+
+    return {
+        One = buttonFrame and buttonFrame:FindFirstChild("One"),
+        Two = buttonFrame and buttonFrame:FindFirstChild("Two"),
+        Three = buttonFrame and buttonFrame:FindFirstChild("Three"),
+        Circle = mainSpeed and mainSpeed:FindFirstChild("Circle"),
+    }
+end
+
+local function guiCenter(guiObject)
+    return guiObject.AbsolutePosition + guiObject.AbsoluteSize / 2
+end
+
+local function selectedSpeedLevel(controls)
+    if not controls.Circle then return nil end
+    local circleCenter = guiCenter(controls.Circle)
+    local selected, bestDistance = nil, math.huge
+
+    for _, level in ipairs({"One", "Two", "Three"}) do
+        local button = controls[level]
+        if button and button:IsA("GuiButton") then
+            local distance = (guiCenter(button) - circleCenter).Magnitude
+            if distance < bestDistance then
+                selected = level
+                bestDistance = distance
+            end
+        end
+    end
+
+    return selected
+end
+
+
+local function activateSpeedButton(button)
+    if not button or not button:IsA("GuiButton") then return false end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(firesignal, button.MouseButton1Click)
+        if ok then return true end
+    end
+
+    if type(getconnections) == "function" then
+        local ok = pcall(function()
+            for _, connection in ipairs(getconnections(button.MouseButton1Click)) do
+                if connection.Function then connection.Function() end
+            end
+        end)
+        if ok then return true end
+    end
+
+    return pcall(function() button:Activate() end)
+end
+
+local function setBestGameSpeed()
+    local controls = getSpeedControls()
+    if not controls.Two or not controls.Three or not controls.Circle then
+        return nil, "ไม่พบปุ่ม Game Speed ครบ"
+    end
+
+    -- ลองขั้น 3 ก่อน แล้วอ่านตำแหน่ง Circle เพื่อยืนยันว่าเกมยอมรับจริง
+    activateSpeedButton(controls.Three)
+    task.wait(0.8)
+    if selectedSpeedLevel(controls) == "Three" then
+        return 3, "Game Speed ขั้น 3"
+    end
+
+    -- ไม่มีสิทธิ์ขั้น 3 หรือเกมไม่ยอมรับ: กลับมาใช้ขั้น 2
+    activateSpeedButton(controls.Two)
+    task.wait(0.5)
+    if selectedSpeedLevel(controls) == "Two" then
+        return 2, "Game Speed ขั้น 2"
+    end
+
+    return nil, "ตั้ง Game Speed ไม่สำเร็จ"
+end
+
+_G.AO_SET_BEST_SPEED = setBestGameSpeed
+
 slotButton.MouseButton1Click:Connect(function()
     selectedSlot = selectedSlot % 6 + 1
     slotButton.Text = "Slot: Tower" .. selectedSlot
@@ -651,6 +736,10 @@ allButton.MouseButton1Click:Connect(function()
         local function stillRunning()
             return smartRunning and myGeneration == smartGeneration
         end
+
+        local speedLevel, speedMessage = setBestGameSpeed()
+        setStatus(speedMessage, speedLevel ~= nil)
+        task.wait(0.15)
 
         local function queueOne(slot, placementType, percent, label)
             if not stillRunning() then return false end
@@ -906,5 +995,11 @@ end)
 
 local ok, message = drawPath()
 if not ok then setStatus(message, false) end
+
+task.spawn(function()
+    local speedLevel, speedMessage = setBestGameSpeed()
+    print("[AO PLACE v" .. TEST_VERSION .. "] " .. speedMessage)
+    if speedLevel then setStatus(speedMessage) end
+end)
 
 print("[AO PLACE v" .. TEST_VERSION .. "] loaded | " .. tostring(message))
