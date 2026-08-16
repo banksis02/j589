@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI/HEADLESS v1.8
+-- ANIME ORIGINS TEST UI/HEADLESS v1.9
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.8"
+local AO_TEST_VERSION = "1.9"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -556,15 +556,15 @@ local function selectGameStageUI()
     )
 end
 
-enterButton.MouseButton1Click:Connect(function()
+local function performEntry()
     if busy then
-        return
+        return false, "entry already running"
     end
 
     if game.PlaceId ~= AO_LOBBY_PLACE_ID then
         status.Text = "ผิด PlaceId: ต้องกดจาก Lobby เท่านั้น"
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        return
+        return false, status.Text
     end
 
     local lobbyRemotes = ReplicatedStorage:FindFirstChild("LobbyRemotes")
@@ -572,10 +572,11 @@ enterButton.MouseButton1Click:Connect(function()
     if not remote then
         status.Text = "ไม่พบ LobbyRemotes.MapSelectRemote"
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        return
+        return false, status.Text
     end
 
     busy = true
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] starting fixed WestCity Infinite flow") end
     enterButton.Text = "SENDING..."
     status.Text = string.format("%s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
@@ -591,6 +592,7 @@ enterButton.MouseButton1Click:Connect(function()
     end)
 
     if ok then
+        if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] StartSelection fired") end
         status.Text = string.format("เลือกแล้ว: %s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
         status.TextColor3 = Color3.fromRGB(122, 224, 150)
     else
@@ -598,18 +600,19 @@ enterButton.MouseButton1Click:Connect(function()
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
         busy = false
         enterButton.Text = "SELECT STAGE"
-        return
+        return false, status.Text
     end
 
     enterButton.Text = "MOVING TO POD DOOR..."
     local entered, enterMessage = teleportThroughNearestDoor()
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] pod: " .. tostring(entered) .. " | " .. tostring(enterMessage)) end
 
     if not entered then
         status.Text = "เข้า Pod ไม่สำเร็จ: " .. tostring(enterMessage)
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
         busy = false
         enterButton.Text = "SELECT STAGE"
-        return
+        return false, status.Text
     end
 
     status.Text = enterMessage .. " — กำลังตั้งค่าหน้าเลือกด่าน"
@@ -617,22 +620,32 @@ enterButton.MouseButton1Click:Connect(function()
     enterButton.Text = "SELECTING GAME UI..."
 
     local selected, selectMessage = selectGameStageUI()
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] stage UI: " .. tostring(selected) .. " | " .. tostring(selectMessage)) end
     if not selected then
         status.Text = "เลือกหน้าเกมไม่สำเร็จ: " .. tostring(selectMessage)
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
         busy = false
         enterButton.Text = "SELECT STAGE"
-        return
+        return false, status.Text
     end
 
     status.Text = "ตั้งค่าสำเร็จ: " .. selectMessage
     status.TextColor3 = Color3.fromRGB(122, 224, 150)
     enterButton.Text = "WAITING FOR GAME..."
 
-    task.wait(30)
+    local waitStarted = os.clock()
+    while game.PlaceId == AO_LOBBY_PLACE_ID and os.clock() - waitStarted < 30 do
+        task.wait(0.5)
+    end
     busy = false
     enterButton.Text = "SELECT STAGE"
-end)
+    if game.PlaceId == AO_LOBBY_PLACE_ID then
+        return false, "กด Start ยืนยันแล้ว แต่ครบ 30 วินาทียังอยู่ Lobby"
+    end
+    return true, selectMessage
+end
+
+enterButton.MouseButton1Click:Connect(performEntry)
 
 refreshForMode()
 
@@ -643,12 +656,10 @@ if AO_HEADLESS then
 end
 
 _G.AO_ENTER_WESTCITY_INFINITE = function()
-    if busy then return false, "entry already running" end
     selectedMode = "Story"
     selectedMap = MAPS.Story[1]
     selectedAct = ACTS.Story[#ACTS.Story]
-    local ok, err = fireGuiButton(enterButton)
-    return ok, err
+    return performEntry()
 end
 
 print("[AO TEST v" .. AO_TEST_VERSION .. "] " .. (AO_HEADLESS and "headless loaded" or "UI loaded"))
