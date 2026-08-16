@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.16
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.17
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.16"
+local TEST_VERSION = "0.17"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -938,6 +938,11 @@ allButton.MouseButton1Click:Connect(function()
     smartRunning = true
     smartGeneration += 1
     local myGeneration = smartGeneration
+    smartPlanIndex = 1
+    for slot = 1, 6 do
+        slotPlaced[slot] = 0
+        slotFailures[slot] = 0
+    end
     allButton.Text = "STOP SMART AUTO"
     allButton.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
 
@@ -1220,6 +1225,8 @@ _G.AO_SMART_STOP = function()
     if not smartRunning then return true, "already stopped" end
     return activateSpeedButton(allButton)
 end
+_G.AO_PLACEMENT_COUNT = placementCount
+_G.AO_SMART_RUNNING = function() return smartRunning end
 _G.AO_CORE_READY = true
 
 task.spawn(function()
@@ -1228,6 +1235,7 @@ task.spawn(function()
     if speedLevel then setStatus(speedMessage) end
 end)
 
+local lastEmptyFieldRecovery = 0
 task.spawn(function()
     while gui.Parent do
         -- ไม่ผูกกับ Wave 20: ตอนแพ้ก่อนถึงเป้าก็มีรูปไอเทมบัง Auto Replay
@@ -1235,8 +1243,25 @@ task.spawn(function()
             pcall(dismissRewardItem)
         end
 
+        local wave = readCurrentWave()
+
+        -- Replay อาจรีเซ็ตเร็วเกินจนตัวตรวจจากสคริปต์หลักพลาด Wave 1-2
+        -- ใช้สถานะจริงของสนามเป็นตัวตัดสิน: ถ้ายังเล่นอยู่แต่ไม่มี Tower ให้เริ่มวางใหม่เอง
+        if AO_HEADLESS and wave and wave > 0 and wave < 20
+            and placementCount() == 0 and not smartRunning
+            and os.clock() - lastEmptyFieldRecovery >= 5 then
+            lastEmptyFieldRecovery = os.clock()
+            print(string.format(
+                "[AO PLACE v%s] empty field at Wave %d -> restart Smart Auto",
+                TEST_VERSION,
+                wave
+            ))
+            task.spawn(function()
+                pcall(_G.AO_SMART_START)
+            end)
+        end
+
         if gemFarmEnabled then
-            local wave = readCurrentWave()
             gemLastWave = wave or gemLastWave
             gemButton.Text = "GEM W20: ON | W" .. tostring(wave or "?")
 
