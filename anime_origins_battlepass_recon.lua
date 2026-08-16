@@ -1,4 +1,18 @@
 -- ============================================================
+-- Latest loader: v0.2 (keep this URL stable for repeated tests).
+do
+    local ok, source = pcall(function()
+        return game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/anime_origins_battlepass_recon_v02.lua?loader=0.2")
+    end)
+    if ok and type(source) == "string" then
+        local compileOK, chunk = pcall(loadstring, source)
+        if compileOK and type(chunk) == "function" then
+            return chunk()
+        end
+    end
+    warn("[AO BP] โหลด v0.2 ไม่สำเร็จ จึงใช้ v0.1 สำรอง")
+end
+
 -- ANIME ORIGINS BATTLEPASS RECON v0.1
 -- Run inside an Anime Origins match (PlaceId 116173040971120).
 -- Searches replicated/client state without changing game data.
