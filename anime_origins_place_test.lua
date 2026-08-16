@@ -1,15 +1,16 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.15
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.16
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.15"
+local TEST_VERSION = "0.16"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local CoreGui = game:GetService("CoreGui")
+local VIM = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 local guiParent = gethui and gethui() or CoreGui
@@ -572,6 +573,75 @@ local function findRestartButton()
 
     return nil
 end
+
+local function guiIsActuallyVisible(object)
+    local current = object
+    while current and current ~= player.PlayerGui do
+        if current:IsA("GuiObject") and current.Visible == false then return false end
+        if current:IsA("LayerCollector") and current.Enabled == false then return false end
+        current = current.Parent
+    end
+    return true
+end
+
+-- รางวัล AO โผล่เป็นรูปไอเทมขนาดใหญ่กลางจอและต้องคลิกก่อน Auto Replay
+-- จะทำงานทั้งกรณีแพ้ก่อน Wave 20 และกรณี Restart ที่ Wave 20
+local function findCenteredRewardItem()
+    local camera = workspace.CurrentCamera
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not camera or not playerGui then return nil end
+
+    local viewport = camera.ViewportSize
+    if viewport.X <= 0 or viewport.Y <= 0 then return nil end
+
+    local screenCenter = viewport / 2
+    local best, bestScore = nil, -math.huge
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        local isImage = object:IsA("ImageLabel") or object:IsA("ImageButton")
+        local isViewport = object:IsA("ViewportFrame")
+        if (isImage or isViewport) and guiIsActuallyVisible(object) then
+            local size = object.AbsoluteSize
+            local center = object.AbsolutePosition + size / 2
+            local areaRatio = (size.X * size.Y) / math.max(1, viewport.X * viewport.Y)
+            local centered = math.abs(center.X - screenCenter.X) <= viewport.X * 0.24
+                and math.abs(center.Y - screenCenter.Y) <= viewport.Y * 0.28
+            local rewardSize = size.X >= math.max(80, viewport.X * 0.10)
+                and size.Y >= math.max(80, viewport.Y * 0.12)
+                and areaRatio >= 0.012 and areaRatio <= 0.28
+            local hasVisual = isViewport or tostring(object.Image or "") ~= ""
+
+            if centered and rewardSize and hasVisual then
+                local score = (object.ZIndex or 0) * 1000000 + size.X * size.Y
+                if score > bestScore then
+                    best, bestScore = object, score
+                end
+            end
+        end
+    end
+    return best
+end
+
+local lastRewardItemClick = 0
+local function dismissRewardItem()
+    if os.clock() - lastRewardItemClick < 0.65 then return false end
+    local item = findCenteredRewardItem()
+    if not item then return false end
+
+    local center = item.AbsolutePosition + item.AbsoluteSize / 2
+    local x, y = math.floor(center.X), math.floor(center.Y)
+    local ok = pcall(function()
+        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+    if ok then
+        lastRewardItemClick = os.clock()
+        print("[AO REWARD] clicked " .. item:GetFullName() .. " @ " .. x .. "," .. y)
+    end
+    return ok
+end
+
+_G.AO_DISMISS_REWARD_ITEM = dismissRewardItem
 
 local function readRewardAmount(rewardName)
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -1160,6 +1230,11 @@ end)
 
 task.spawn(function()
     while gui.Parent do
+        -- ไม่ผูกกับ Wave 20: ตอนแพ้ก่อนถึงเป้าก็มีรูปไอเทมบัง Auto Replay
+        if AO_HEADLESS or gemFarmEnabled then
+            pcall(dismissRewardItem)
+        end
+
         if gemFarmEnabled then
             local wave = readCurrentWave()
             gemLastWave = wave or gemLastWave
