@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.90"
+local SCRIPT_VERSION = "v10.91"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3795,6 +3795,7 @@ if GAME_ID == "anime_origins" then
     local aoLastLobbyAttempt = 0
     local aoLastWave = nil
     local aoInitialPlacementStarted = false
+    local aoLastReportedRuns = 0
 
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
@@ -3861,8 +3862,26 @@ if GAME_ID == "anime_origins" then
         return "West City - Infinite (Hard)"
     end
 
+    local function aoFormatDuration(seconds)
+        seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+        local minutes = math.floor(seconds / 60)
+        return string.format("%02d:%02d", minutes, seconds % 60)
+    end
+
+    local function aoRewardText(stats)
+        return string.format(
+            "Gem x%d, Trait Reroll x%d",
+            math.max(0, tonumber(stats.LastGems) or 0),
+            math.max(0, tonumber(stats.LastTraitRerolls) or 0)
+        )
+    end
+
     local function aoHeartbeat()
         local stats, wave = aoStats()
+        local runCount = math.max(0, tonumber(stats.Runs) or 0)
+        local completedRun = aoCurrentJob
+            and aoCurrentJob.mode == "ao_gem"
+            and runCount > aoLastReportedRuns
         if aoCurrentJob and aoCurrentJob.id then
             pcall(function()
                 HttpService:RequestAsync({
@@ -3883,29 +3902,57 @@ if GAME_ID == "anime_origins" then
                 })
             end)
         end
-        pcall(function()
-            HttpService:RequestAsync({
+        local overloadPayload = {
+            username = player.Name,
+            userId = player.UserId,
+            serviceName = GAME_NAME,
+            gameId = GAME_ID,
+            farming = aoFarming == true,
+            currentStats = {
+                gem = tonumber(stats.Gems) or 0,
+                traitRerolls = tonumber(stats.TraitRerolls) or 0,
+                runs = runCount,
+            },
+            matchInfo = {
+                map = game.PlaceId == AO_GAME_PLACE_ID and aoStageLabel() or "Lobby",
+                wave = wave,
+            },
+        }
+        if completedRun then
+            local lastWave = math.max(0, tonumber(stats.LastWave) or 20)
+            local rewardText = aoRewardText(stats)
+            local playTime = aoFormatDuration(stats.LastPlaySeconds)
+            local actText = "Gem Farm - Wave " .. tostring(lastWave)
+            overloadPayload.endScreen = {
+                act = actText,
+                file = aoStageLabel(),
+                playTime = playTime,
+                quantity = rewardText,
+            }
+            overloadPayload.recentLog = {
+                act = actText,
+                file = aoStageLabel(),
+                playTime = playTime,
+                quantity = rewardText,
+                rewards = rewardText,
+                status = "COMPLETED",
+                wave = lastWave,
+            }
+        end
+
+        local sentOK, response = pcall(function()
+            return HttpService:RequestAsync({
                 Url = BACKEND_URL .. "/api/overload/update",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode({
-                    username = player.Name,
-                    userId = player.UserId,
-                    serviceName = GAME_NAME,
-                    gameId = GAME_ID,
-                    farming = aoFarming == true,
-                    currentStats = {
-                        gem = tonumber(stats.Gems) or 0,
-                        traitRerolls = tonumber(stats.TraitRerolls) or 0,
-                        runs = tonumber(stats.Runs) or 0,
-                    },
-                    matchInfo = {
-                        map = game.PlaceId == AO_GAME_PLACE_ID and aoStageLabel() or "Lobby",
-                        wave = wave,
-                    },
-                }),
+                Body = HttpService:JSONEncode(overloadPayload),
             })
         end)
+        if sentOK and type(response) == "table" and response.Success and completedRun then
+            aoLastReportedRuns = runCount
+            print("[AO " .. SCRIPT_VERSION .. "] web mission sent: run " .. tostring(runCount)
+                .. " | " .. aoRewardText(stats))
+        end
     end
 
     local function aoStartLobby()

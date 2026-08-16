@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.14
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.15
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.14"
+local TEST_VERSION = "0.15"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -526,6 +526,7 @@ local gemRestartLocked = false
 local gemRestartStartedAt = 0
 local gemLastWave = nil
 local gemRoundCaptured = false
+local gemRoundStartedAt = os.clock()
 local gemStats = {
     Runs = 0,
     Gems = 0,
@@ -533,6 +534,7 @@ local gemStats = {
     LastGems = 0,
     LastTraitRerolls = 0,
     LastWave = 0,
+    LastPlaySeconds = 0,
 }
 
 local function readCurrentWave()
@@ -608,6 +610,7 @@ local function captureRoundRewards(wave)
     gemStats.LastGems = rewards.Gems
     gemStats.LastTraitRerolls = rewards.TraitRerolls
     gemStats.LastWave = wave or 0
+    gemStats.LastPlaySeconds = math.max(0, os.clock() - gemRoundStartedAt)
 
     print(string.format(
         "[AO GEM] Run %d | Wave %s | +%d Gems | +%d Trait Reroll | Total=%d Gems/%d Trait",
@@ -1165,6 +1168,7 @@ task.spawn(function()
             if wave and wave <= 2 and gemRestartLocked then
                 gemRestartLocked = false
                 gemRoundCaptured = false
+                gemRoundStartedAt = os.clock()
                 setStatus("Gem W20: เริ่มรอบใหม่ Wave " .. tostring(wave))
             elseif wave and wave >= 20 and gemRestartLocked and os.clock() - gemRestartStartedAt >= 6 then
                 gemRestartLocked = false
