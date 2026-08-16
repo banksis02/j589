@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.94"
+local SCRIPT_VERSION = "v10.95"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -14319,11 +14319,52 @@ _G.AE_TOWER_RUN = function(towerType)
                     L(("🏆 ชนะชั้น #%d → กด Next Floor (ไต่ต่อ)"):format(floor))
                     notify("🏰 Tower","✅ ชนะ → Next Floor",5)
                     task.wait(2.5)
-                    if not clickText("Next Floor",false,8) then
-                        L("⚠️ ไม่เจอ Next Floor → กลับล็อบบี้เข้าใหม่")
-                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                    -- ⭐ v10.95: เจอ/คลิกปุ่มได้ ไม่ได้แปลว่าเกมรับคำสั่งแล้ว
+                    -- ต้องยืนยันว่าเลขชั้นเพิ่ม หรือหน้า Victory หายจริง ถ้าค้างครบ 5 ครั้งค่อยออก Lobby
+                    local wonFloor=floor
+                    local advanced=false
+                    for attempt=1,5 do
+                        local clicked=clickText("Next Floor",false,5)
+                        L(("  🖱️ Next Floor ครั้ง %d/5 — %s"):format(attempt,clicked and "กดแล้ว" or "ไม่เจอปุ่ม"))
+                        local verifyAt=tick()
+                        local clearSince=nil
+                        while running and MYGEN==_G.AE_SCRIPT_GEN and tick()-verifyAt<10 do
+                            local nextFloor=currentTowerFloor()
+                            if nextFloor>wonFloor then
+                                floor=nextFloor
+                                advanced=true
+                                break
+                            end
+                            if towerResult()~="win" then
+                                clearSince=clearSince or tick()
+                                -- ระหว่างเปลี่ยนชั้น label อาจอัปเดตช้ากว่า Victory UI
+                                if tick()-clearSince>=3 then
+                                    floor=nextFloor
+                                    advanced=true
+                                    break
+                                end
+                            else
+                                clearSince=nil
+                            end
+                            task.wait(0.5)
+                        end
+                        if advanced then
+                            _G.AE_TOWER_NEXT_FLOOR_FAILURES=0
+                            L(("✅ ไปชั้นถัดไปสำเร็จ (ชั้น #%d)"):format(floor))
+                            break
+                        end
+                        _G.AE_TOWER_NEXT_FLOOR_FAILURES=attempt
+                        L(("⚠️ ยังค้างหน้าชนะชั้น #%d — ลองใหม่ %d/5"):format(wonFloor,attempt))
                     end
-                    task.wait(5)   -- รอชั้นถัดไปโหลด (เข้าตรง=inGame / หรือกลับ select แล้ว loop เข้าใหม่)
+                    if not advanced then
+                        L("🏠 Next Floor ไม่สำเร็จครบ 5 ครั้ง → กลับล็อบบี้แล้วเข้า Tower ใหม่")
+                        notify("🏰 Tower","Next Floor ค้าง 5 ครั้ง → เข้าใหม่",8)
+                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                        _G.AE_TOWER_NEXT_FLOOR_FAILURES=0
+                        task.wait(5)
+                    else
+                        task.wait(3) -- รอชั้นใหม่พร้อมก่อนเริ่มวาง
+                    end
                 else
                     floor=currentTowerFloor(); reportTowerResult("lose")
                     local losses=_G.AE_TOWER_CONSECUTIVE_LOSSES or 0
