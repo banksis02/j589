@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI/HEADLESS v1.9
+-- ANIME ORIGINS TEST UI/HEADLESS v2.0
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "1.9"
+local AO_TEST_VERSION = "2.0"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -576,7 +576,7 @@ local function performEntry()
     end
 
     busy = true
-    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] starting fixed WestCity Infinite flow") end
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] starting " .. selectedMode .. " / " .. selectedMap.Label .. " / " .. selectedAct.Label) end
     enterButton.Text = "SENDING..."
     status.Text = string.format("%s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
@@ -659,6 +659,29 @@ _G.AO_ENTER_WESTCITY_INFINITE = function()
     selectedMode = "Story"
     selectedMap = MAPS.Story[1]
     selectedAct = ACTS.Story[#ACTS.Story]
+    return performEntry()
+end
+
+_G.AO_ENTER_STAGE = function(mode, mapValue, actValue)
+    mode = tostring(mode or "")
+    mapValue = tostring(mapValue or "")
+    actValue = tostring(actValue or "")
+    if not MAPS[mode] or not ACTS[mode] then return false, "unsupported mode: " .. mode end
+
+    local mapInfo
+    for _, item in ipairs(MAPS[mode]) do
+        if item.Value == mapValue or item.Label == mapValue then mapInfo = item break end
+    end
+    local actInfo
+    for _, item in ipairs(ACTS[mode]) do
+        if item.Value == actValue or item.Label == actValue then actInfo = item break end
+    end
+    if not mapInfo then return false, "unsupported map: " .. mapValue end
+    if not actInfo then return false, "unsupported act: " .. actValue end
+
+    selectedMode = mode
+    selectedMap = mapInfo
+    selectedAct = actInfo
     return performEntry()
 end
 

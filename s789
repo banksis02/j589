@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.88"
+local SCRIPT_VERSION = "v10.90"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3786,7 +3786,7 @@ end
 if GAME_ID == "anime_origins" then
     local AO_LOBBY_PLACE_ID = 129932912185311
     local AO_GAME_PLACE_ID = 116173040971120
-    local AO_MODE = "ao_gem"
+    local AO_MODES = { ao_gem = true, ao_legend = true }
     local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
     local aoFarming = false
@@ -3827,7 +3827,7 @@ if GAME_ID == "anime_origins" then
         end)
         if legacyOK and type(legacyResponse) == "table" and legacyResponse.Success then
             local decodedOK, job = pcall(function() return HttpService:JSONDecode(legacyResponse.Body) end)
-            if decodedOK and type(job) == "table" and job.status ~= "idle" and job.mode == AO_MODE then return job end
+            if decodedOK and type(job) == "table" and job.status ~= "idle" and AO_MODES[job.mode] then return job end
         end
         return nil
     end
@@ -3844,6 +3844,21 @@ if GAME_ID == "anime_origins" then
             if ok then wave = tonumber(value) or 0 end
         end
         return stats, wave
+    end
+
+    local function aoStageLabel()
+        if not aoCurrentJob then return "Anime Origins Stage" end
+        if aoCurrentJob.mode == "ao_legend" then
+            local names = {
+                WestCity = "West City",
+                SandVillage = "Hidden Sand",
+                KatakuraTown = "Katakura Town",
+            }
+            local stage = names[tostring(aoCurrentJob.stage)] or tostring(aoCurrentJob.stage or "Legend")
+            local act = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+            return stage .. " - Legend Act " .. tostring(act)
+        end
+        return "West City - Infinite (Hard)"
     end
 
     local function aoHeartbeat()
@@ -3885,7 +3900,7 @@ if GAME_ID == "anime_origins" then
                         runs = tonumber(stats.Runs) or 0,
                     },
                     matchInfo = {
-                        map = game.PlaceId == AO_GAME_PLACE_ID and "WestCity - Infinite (Hard)" or "Lobby",
+                        map = game.PlaceId == AO_GAME_PLACE_ID and aoStageLabel() or "Lobby",
                         wave = wave,
                     },
                 }),
@@ -3894,8 +3909,17 @@ if GAME_ID == "anime_origins" then
     end
 
     local function aoStartLobby()
-        if aoLobbyLoaded and _G.AO_ENTER_WESTCITY_INFINITE then
-            return pcall(_G.AO_ENTER_WESTCITY_INFINITE)
+        local function enterSelectedJob()
+            if not aoCurrentJob then return false, "ไม่มีข้อมูลงาน" end
+            if aoCurrentJob.mode == "ao_legend" then
+                local stage = tostring(aoCurrentJob.stage or "WestCity")
+                local act = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+                return _G.AO_ENTER_STAGE("Legend", stage, "Legend" .. tostring(act))
+            end
+            return _G.AO_ENTER_WESTCITY_INFINITE()
+        end
+        if aoLobbyLoaded and _G.AO_ENTER_WESTCITY_INFINITE and _G.AO_ENTER_STAGE then
+            return pcall(enterSelectedJob)
         end
         _G.AO_HEADLESS = true
         _G.AO_SETTINGS_MANUAL = true
@@ -3907,10 +3931,14 @@ if GAME_ID == "anime_origins" then
         _G.AO_SETTINGS_MANUAL = nil
         task.wait(1)
         local loaded = aoLoadModule("anime_origins_test.lua")
-        aoLobbyLoaded = loaded == true and type(_G.AO_ENTER_WESTCITY_INFINITE) == "function"
+        aoLobbyLoaded = loaded == true
+            and type(_G.AO_ENTER_WESTCITY_INFINITE) == "function"
+            and type(_G.AO_ENTER_STAGE) == "function"
         if not aoLobbyLoaded then return false end
-        local ok, success, message = pcall(_G.AO_ENTER_WESTCITY_INFINITE)
-        print("[AO " .. SCRIPT_VERSION .. "] enter WestCity Infinite: " .. tostring(ok and success) .. " | " .. tostring(message))
+        local ok, success, message = pcall(enterSelectedJob)
+        print("[AO " .. SCRIPT_VERSION .. "] enter " .. tostring(aoCurrentJob and aoCurrentJob.mode)
+            .. " / " .. tostring(aoCurrentJob and aoCurrentJob.stage)
+            .. ": " .. tostring(ok and success) .. " | " .. tostring(message))
         return ok and success
     end
 
@@ -3920,7 +3948,11 @@ if GAME_ID == "anime_origins" then
             aoGameLoaded = aoLoadModule("anime_origins_place_test.lua") == true
         end
         if not aoGameLoaded then return false end
-        if _G.AO_GEM_W20_START then pcall(_G.AO_GEM_W20_START) end
+        if aoCurrentJob and aoCurrentJob.mode == "ao_gem" and _G.AO_GEM_W20_START then
+            pcall(_G.AO_GEM_W20_START)
+        elseif _G.AO_GEM_W20_STOP then
+            pcall(_G.AO_GEM_W20_STOP)
+        end
         if _G.AO_SET_BEST_SPEED then pcall(_G.AO_SET_BEST_SPEED) end
         if _G.AO_SMART_START and not aoInitialPlacementStarted then
             aoInitialPlacementStarted = true
@@ -3945,13 +3977,14 @@ if GAME_ID == "anime_origins" then
         while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local ok, job = pcall(aoFetchJob)
             aoCurrentJob = ok and job or nil
-            local active = aoCurrentJob and aoCurrentJob.status == "active" and aoCurrentJob.mode == AO_MODE
+            local active = aoCurrentJob and aoCurrentJob.status == "active" and AO_MODES[aoCurrentJob.mode] == true
             if active then
                 if game.PlaceId == AO_LOBBY_PLACE_ID then
                     aoFarming = false
                     if os.clock() - aoLastLobbyAttempt >= 45 then
                         aoLastLobbyAttempt = os.clock()
-                        print("[AO " .. SCRIPT_VERSION .. "] active job -> settings + WestCity Infinite")
+                        print("[AO " .. SCRIPT_VERSION .. "] active job -> settings + "
+                            .. tostring(aoCurrentJob.mode) .. " / " .. tostring(aoCurrentJob.stage))
                         pcall(aoStartLobby)
                     end
                 elseif game.PlaceId == AO_GAME_PLACE_ID then
