@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.28"
+local TEST_VERSION = "0.29"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -899,20 +899,24 @@ local function placeSlot(slot, placementType, percent)
         -- สลับ Ground/Hill ทีละตำแหน่งและจำกัดจำนวน probe
         -- ป้องกันการไล่ Hill มากกว่า 100 จุดเมื่อยูนิต/พื้นที่วางไม่ได้
         for index = 1, candidateCount do
+            local gRes, hRes
             if ground[index] then
                 setStatus(string.format("Tower%d Auto Ground %d/%d", slot, index, #ground))
                 local ok, result = invokePlacement(slot, ground[index], false)
                 if ok then return true, "Ground", ground[index], result end
-                if result == -1 then return false end   -- เงินไม่พอ → ไม่ต้องลองต่อ
+                gRes = result
             end
 
+            -- ⭐ ต้องลอง Hill ต่อแม้ Ground ได้ -1 (ยูนิต Hill-only วางบนพื้นไม่ได้ = -1 แต่วางบนตึกได้)
             if hill[index] then
                 setStatus(string.format("Tower%d Auto Hill %d/%d", slot, index, #hill))
                 local ok, result = invokePlacement(slot, hill[index], true)
                 if ok then return true, "Hill", hill[index], result end
-                if result == -1 then return false end
+                hRes = result
             end
 
+            -- ข้ามจุดอื่นเฉพาะตอนทั้ง Ground+Hill คืน -1 (เงินไม่พอจริง) — ไม่ใช่แค่ Ground -1
+            if gRes == -1 and (hRes == -1 or not hill[index]) then return false end
             task.wait(0.04)
         end
 
@@ -1094,10 +1098,11 @@ allButton.MouseButton1Click:Connect(function()
             monsterPercent = 10
             dbg("[3] ไม่เจอมอนใน 6 วิ → ใช้ default 10% (ดักหน้าที่ 30%)")
         else
-            dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 20, 20, 92)))
+            dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 35, 20, 95)))
         end
 
-        local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
+        local INTERCEPT_LEAD = 35   -- นำหน้ามอนกี่ % (เดิม 20 = ใกล้ไป) — ปรับตรงนี้
+        local interceptPercent = math.clamp(monsterPercent + INTERCEPT_LEAD, 20, 95)
 
         -- 2) ดักหน้ามอน +20% ให้สำเร็จ 2-3 ตัวก่อนเท่านั้น
         local interceptOffsets = {-2, 0, 2, -4, 4, -6, 6}
