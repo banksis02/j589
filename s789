@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.97"
+local SCRIPT_VERSION = "v10.98"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3876,24 +3876,30 @@ if GAME_ID == "anime_origins" then
         end
         if type(registry) ~= "table" then return nil end
 
-        local playerData = nil
-        for _, value in pairs(registry) do
-            if type(value) == "table" then
-                local nested = rawget(value, "PlayerData")
-                if type(nested) == "table" and type(rawget(nested, "Battlepasses")) == "table" then
-                    playerData = nested
-                    break
-                elseif type(rawget(value, "Battlepasses")) == "table" then
-                    playerData = value
-                    break
-                end
+        local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
+
+        -- registry มี Battlepasses[season] หลายก้อน (Template Exp=0, cache ฯลฯ ~430 matches)
+        -- เดิม break ที่ match แรก → มักเจอ Template Exp=0 ก่อน = level 0
+        -- แก้: สแกนทั้งหมดแล้วเลือกก้อนที่ Exp สูงสุด = ข้อมูลจริงของผู้เล่น
+        local live = nil
+        local bestExp = -1
+        local function consider(bp)
+            if type(bp) ~= "table" then return end
+            local entry = rawget(bp, season)
+            if type(entry) ~= "table" then return end
+            local exp = tonumber(rawget(entry, "Exp"))
+            if exp and exp > bestExp then
+                bestExp = exp
+                live = entry
             end
         end
-        if not playerData then return nil end
-
-        local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
-        local battlepasses = rawget(playerData, "Battlepasses")
-        local live = type(battlepasses) == "table" and rawget(battlepasses, season) or nil
+        for _, value in pairs(registry) do
+            if type(value) == "table" then
+                consider(rawget(value, "Battlepasses"))
+                local nested = rawget(value, "PlayerData")
+                if type(nested) == "table" then consider(rawget(nested, "Battlepasses")) end
+            end
+        end
         if type(live) ~= "table" then return nil end
 
         local exp = math.max(0, tonumber(live.Exp) or 0)
@@ -3959,9 +3965,8 @@ if GAME_ID == "anime_origins" then
         end
         local runCount = math.max(0, tonumber(stats.Runs) or 0)
         local isBattlepassJob = aoCurrentJob and aoCurrentJob.mode == "ao_battlepass"
-        local rewardSummary = isBattlepassJob
-            and string.format("Battlepass Lv.%d (EXP %d)", battlepassLevel, battlepass and tonumber(battlepass.Exp) or 0)
-            or aoRewardText(stats)
+        -- LOOT = ของที่ได้จริงในรอบ (เพชร/รีโรล) เหมือน gem — ส่วน "เลเวล" ไปโชว์ที่ progress bar
+        local rewardSummary = aoRewardText(stats)
         local completedRun = aoCurrentJob
             and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_battlepass")
             and runCount > aoLastReportedRuns
