@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.22"
+local TEST_VERSION = "0.23"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -584,6 +584,18 @@ local function guiIsActuallyVisible(object)
     return true
 end
 
+-- reward จริงอยู่ใน MainUI — ต้องข้าม BottomUI/TowersToolbar (Glow ของยูนิตในช่อง
+-- เข้าเงื่อนไข "กลางจอ+ใหญ่+มีรูป" แล้วโดนคลิกวนไม่หยุด = สแปม/แลค)
+local function isInToolbar(object)
+    local anc = object.Parent
+    while anc do
+        local n = anc.Name
+        if n == "BottomUI" or n == "TowersToolbar" or n == "Hotbar" then return true end
+        anc = anc.Parent
+    end
+    return false
+end
+
 -- รางวัล AO โผล่เป็นรูปไอเทมขนาดใหญ่กลางจอและต้องคลิกก่อน Auto Replay
 -- จะทำงานทั้งกรณีแพ้ก่อน Wave 20 และกรณี Restart ที่ Wave 20
 local function findCenteredRewardItem()
@@ -599,7 +611,7 @@ local function findCenteredRewardItem()
     for _, object in ipairs(playerGui:GetDescendants()) do
         local isImage = object:IsA("ImageLabel") or object:IsA("ImageButton")
         local isViewport = object:IsA("ViewportFrame")
-        if (isImage or isViewport) and guiIsActuallyVisible(object) then
+        if (isImage or isViewport) and guiIsActuallyVisible(object) and not isInToolbar(object) then
             local size = object.AbsoluteSize
             local center = object.AbsolutePosition + size / 2
             local areaRatio = (size.X * size.Y) / math.max(1, viewport.X * viewport.Y)
