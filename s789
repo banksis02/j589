@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.95"
+local SCRIPT_VERSION = "v10.97"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3790,7 +3790,7 @@ end
 if GAME_ID == "anime_origins" then
     local AO_LOBBY_PLACE_ID = 129932912185311
     local AO_GAME_PLACE_ID = 116173040971120
-    local AO_MODES = { ao_gem = true, ao_legend = true }
+    local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true }
     local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
     local aoFarming = false
@@ -3800,6 +3800,8 @@ if GAME_ID == "anime_origins" then
     local aoLastWave = nil
     local aoInitialPlacementStarted = false
     local aoLastReportedRuns = 0
+    local aoLastBattlepassLevel = nil
+    local aoBattlepassInfo = nil
 
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
@@ -3855,6 +3857,68 @@ if GAME_ID == "anime_origins" then
         return stats, wave
     end
 
+    -- Anime Origins keeps the live player state in the client registry even
+    -- while inside a match. BattlepassInfo is replicated and owns the game's
+    -- exact EXP -> level formula, so do not estimate the level ourselves.
+    local function aoBattlepassStatus()
+        if not aoBattlepassInfo then
+            pcall(function()
+                aoBattlepassInfo = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("BattlepassInfo"))
+            end)
+        end
+        if type(aoBattlepassInfo) ~= "table" then return nil end
+
+        local registry = nil
+        if type(getreg) == "function" then
+            pcall(function() registry = getreg() end)
+        elseif debug and type(debug.getregistry) == "function" then
+            pcall(function() registry = debug.getregistry() end)
+        end
+        if type(registry) ~= "table" then return nil end
+
+        local playerData = nil
+        for _, value in pairs(registry) do
+            if type(value) == "table" then
+                local nested = rawget(value, "PlayerData")
+                if type(nested) == "table" and type(rawget(nested, "Battlepasses")) == "table" then
+                    playerData = nested
+                    break
+                elseif type(rawget(value, "Battlepasses")) == "table" then
+                    playerData = value
+                    break
+                end
+            end
+        end
+        if not playerData then return nil end
+
+        local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
+        local battlepasses = rawget(playerData, "Battlepasses")
+        local live = type(battlepasses) == "table" and rawget(battlepasses, season) or nil
+        if type(live) ~= "table" then return nil end
+
+        local exp = math.max(0, tonumber(live.Exp) or 0)
+        local level = nil
+        if type(aoBattlepassInfo.GetBattlepassLevelFromExp) == "function" then
+            local ok, value = pcall(aoBattlepassInfo.GetBattlepassLevelFromExp, exp)
+            if not ok or not tonumber(value) then
+                ok, value = pcall(aoBattlepassInfo.GetBattlepassLevelFromExp, aoBattlepassInfo, exp)
+            end
+            if ok and tonumber(value) then level = math.max(0, math.floor(tonumber(value))) end
+        end
+        if level == nil then return nil end
+
+        return {
+            Season = season,
+            Exp = exp,
+            Level = level,
+            Claimed = math.max(0, tonumber(live.Claimed) or 0),
+            Premium = live.Premium == true,
+            PremiumClaimed = math.max(0, tonumber(live.PremiumClaimed) or 0),
+        }
+    end
+
+    _G.AO_GET_BATTLEPASS = aoBattlepassStatus
+
     local function aoStageLabel()
         if not aoCurrentJob then return "Anime Origins Stage" end
         if aoCurrentJob.mode == "ao_legend" then
@@ -3886,9 +3950,20 @@ if GAME_ID == "anime_origins" then
 
     local function aoHeartbeat()
         local stats, wave = aoStats()
+        local battlepass = aoBattlepassStatus()
+        local battlepassLevel = battlepass and tonumber(battlepass.Level) or 0
+        if battlepassLevel > 0 and battlepassLevel ~= aoLastBattlepassLevel then
+            aoLastBattlepassLevel = battlepassLevel
+            print(("[AO %s] Battlepass %s Lv.%d | EXP %d")
+                :format(SCRIPT_VERSION, tostring(battlepass.Season), battlepassLevel, tonumber(battlepass.Exp) or 0))
+        end
         local runCount = math.max(0, tonumber(stats.Runs) or 0)
+        local isBattlepassJob = aoCurrentJob and aoCurrentJob.mode == "ao_battlepass"
+        local rewardSummary = isBattlepassJob
+            and string.format("Battlepass Lv.%d (EXP %d)", battlepassLevel, battlepass and tonumber(battlepass.Exp) or 0)
+            or aoRewardText(stats)
         local completedRun = aoCurrentJob
-            and aoCurrentJob.mode == "ao_gem"
+            and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_battlepass")
             and runCount > aoLastReportedRuns
         if aoCurrentJob and aoCurrentJob.id then
             pcall(function()
@@ -3905,6 +3980,8 @@ if GAME_ID == "anime_origins" then
                             traitRerolls = tonumber(stats.TraitRerolls) or 0,
                             runs = tonumber(stats.Runs) or 0,
                             wave = wave,
+                            battlepass = battlepassLevel,
+                            battlepassExp = battlepass and tonumber(battlepass.Exp) or 0,
                         },
                     }),
                 })
@@ -3920,6 +3997,7 @@ if GAME_ID == "anime_origins" then
                 gem = tonumber(stats.Gems) or 0,
                 traitRerolls = tonumber(stats.TraitRerolls) or 0,
                 runs = runCount,
+                bp = battlepassLevel,
             },
             matchInfo = {
                 map = game.PlaceId == AO_GAME_PLACE_ID and aoStageLabel() or "Lobby",
@@ -3928,9 +4006,11 @@ if GAME_ID == "anime_origins" then
         }
         if completedRun then
             local lastWave = math.max(0, tonumber(stats.LastWave) or 20)
-            local rewardText = aoRewardText(stats)
+            local rewardText = rewardSummary
             local playTime = aoFormatDuration(stats.LastPlaySeconds)
-            local actText = "Gem Farm - Wave " .. tostring(lastWave)
+            local actText = isBattlepassJob
+                and ("Battlepass Farm - Lv." .. tostring(battlepassLevel))
+                or ("Gem Farm - Wave " .. tostring(lastWave))
             overloadPayload.endScreen = {
                 act = actText,
                 file = aoStageLabel(),
@@ -3959,7 +4039,7 @@ if GAME_ID == "anime_origins" then
         if sentOK and type(response) == "table" and response.Success and completedRun then
             aoLastReportedRuns = runCount
             print("[AO " .. SCRIPT_VERSION .. "] web mission sent: run " .. tostring(runCount)
-                .. " | " .. aoRewardText(stats))
+                .. " | " .. rewardSummary)
         end
     end
 
@@ -4003,7 +4083,8 @@ if GAME_ID == "anime_origins" then
             aoGameLoaded = aoLoadModule("anime_origins_place_test.lua") == true
         end
         if not aoGameLoaded then return false end
-        if aoCurrentJob and aoCurrentJob.mode == "ao_gem" and _G.AO_GEM_W20_START then
+        if aoCurrentJob and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_battlepass")
+            and _G.AO_GEM_W20_START then
             pcall(_G.AO_GEM_W20_START)
         elseif _G.AO_GEM_W20_STOP then
             pcall(_G.AO_GEM_W20_STOP)
