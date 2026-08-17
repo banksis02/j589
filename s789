@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.0"
+local SCRIPT_VERSION = "v11.1"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3920,28 +3920,29 @@ if GAME_ID == "anime_origins" then
 
         local exp = math.max(0, tonumber(rawget(live, "Exp")) or 0)
 
-        -- level: เรียกฟังก์ชันเกม (ลองทั้ง (exp) และ (self, exp))
+        -- level: GetBattlepassLevelFromExp พังทุก convention (index nil 'Base_Exp' ฝั่ง client)
+        -- → ใช้ NeededBattlepassExp(i) = "exp สะสมที่ต้องมีเพื่อถึงเลเวล i" (need(1)=0, need(2)=170, ...)
+        --   level = i สูงสุดที่ need(i) <= exp
         local level, levelSrc = nil, "none"
-        local fn = aoBattlepassInfo.GetBattlepassLevelFromExp
-        if type(fn) == "function" then
-            local ok, value = pcall(fn, exp)
-            if not ok or not tonumber(value) then ok, value = pcall(fn, aoBattlepassInfo, exp) end
-            if ok and tonumber(value) then level = math.max(0, math.floor(tonumber(value))); levelSrc = "gameFn" end
-        end
-        -- fallback 1: สะสม NeededBattlepassExp ต่อเลเวลจนเกิน exp
-        if level == nil and type(aoBattlepassInfo.NeededBattlepassExp) == "function" then
-            local needFn = aoBattlepassInfo.NeededBattlepassExp
-            local lv, remain = 0, exp
-            for i = 1, 500 do
-                local okN, need = pcall(needFn, i)
-                if not okN or not tonumber(need) then okN, need = pcall(needFn, aoBattlepassInfo, i) end
-                need = tonumber(need)
-                if not okN or not need or need <= 0 then break end
-                if remain >= need then remain = remain - need; lv = i else break end
+        local needFn = aoBattlepassInfo.NeededBattlepassExp
+        if type(needFn) == "function" then
+            local function needAt(i)
+                local ok, v = pcall(needFn, aoBattlepassInfo, i)
+                if not ok or not tonumber(v) then ok, v = pcall(needFn, season, i) end
+                if not ok or not tonumber(v) then ok, v = pcall(needFn, i) end
+                return ok and tonumber(v) or nil
             end
-            level = lv; levelSrc = "needSum"
+            if needAt(1) ~= nil then
+                local lv = 0
+                for i = 1, 500 do
+                    local nd = needAt(i)
+                    if nd == nil then break end
+                    if nd <= exp then lv = i else break end
+                end
+                level = lv; levelSrc = "needThreshold"
+            end
         end
-        -- fallback 2: สูตรเรขาคณิต Base_Exp * Exp_Multiplier^n
+        -- fallback: สูตรเรขาคณิต Base_Exp * Exp_Multiplier^n (เผื่อ needFn หาย)
         if level == nil then
             local s1 = rawget(aoBattlepassInfo, "Season1")
             local base = (s1 and tonumber(rawget(s1, "Base_Exp"))) or 170
