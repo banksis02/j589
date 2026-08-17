@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.20"
+local TEST_VERSION = "0.21"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1283,7 +1283,16 @@ task.spawn(function()
                 wave
             ))
             task.spawn(function()
-                pcall(_G.AO_SMART_START)
+                -- รีเวฟ (20→1) ในแมตช์เดิมมีช่วง transition: เงิน/มอน/remote ยังไม่พร้อม
+                -- ถ้าวางทันทีจะโดนปฏิเสธบางตัว → วางไม่ครบ แล้ว placementCount>0 ทำให้ไม่ retry
+                -- หน่วงให้รีเซ็ตเสร็จก่อน แล้วยืนยันซ้ำว่ายังเป็นรอบใหม่ที่ว่างจริง
+                task.wait(2)
+                if not smartRunning then
+                    local w = readCurrentWave()
+                    if w and w > 0 and w < 20 and placementCount() == 0 then
+                        pcall(_G.AO_SMART_START)
+                    end
+                end
             end)
         end
 
