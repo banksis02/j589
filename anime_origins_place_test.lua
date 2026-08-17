@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.29"
+local TEST_VERSION = "0.30"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -898,13 +898,14 @@ local function placeSlot(slot, placementType, percent)
         -- ไม่ลอง Ground จนหมดก่อน เพราะถ้ายูนิตเป็น Hill จะทำให้แต่ละตัวช้ามาก
         -- สลับ Ground/Hill ทีละตำแหน่งและจำกัดจำนวน probe
         -- ป้องกันการไล่ Hill มากกว่า 100 จุดเมื่อยูนิต/พื้นที่วางไม่ได้
+        local lastRes
         for index = 1, candidateCount do
             local gRes, hRes
             if ground[index] then
                 setStatus(string.format("Tower%d Auto Ground %d/%d", slot, index, #ground))
                 local ok, result = invokePlacement(slot, ground[index], false)
                 if ok then return true, "Ground", ground[index], result end
-                gRes = result
+                gRes = result; lastRes = result
             end
 
             -- ⭐ ต้องลอง Hill ต่อแม้ Ground ได้ -1 (ยูนิต Hill-only วางบนพื้นไม่ได้ = -1 แต่วางบนตึกได้)
@@ -912,24 +913,26 @@ local function placeSlot(slot, placementType, percent)
                 setStatus(string.format("Tower%d Auto Hill %d/%d", slot, index, #hill))
                 local ok, result = invokePlacement(slot, hill[index], true)
                 if ok then return true, "Hill", hill[index], result end
-                hRes = result
+                hRes = result; lastRes = result
             end
 
             -- ข้ามจุดอื่นเฉพาะตอนทั้ง Ground+Hill คืน -1 (เงินไม่พอจริง) — ไม่ใช่แค่ Ground -1
-            if gRes == -1 and (hRes == -1 or not hill[index]) then return false end
+            if gRes == -1 and (hRes == -1 or not hill[index]) then return false, nil, nil, -1 end
             task.wait(0.04)
         end
 
-        return false
+        return false, nil, nil, lastRes
     end
 
     if placementType == "Ground" then
-        local ok, position = tryCandidates(slot, groundCandidates(percent), false, setStatus)
-        if ok then return true, "Ground", position end
+        local ok, position, res = tryCandidates(slot, groundCandidates(percent), false, setStatus)
+        if ok then return true, "Ground", position, res end
+        return false, nil, nil, res
     end
     if placementType == "Hill" then
-        local ok, position = tryCandidates(slot, hillCandidates(percent), true, setStatus)
-        if ok then return true, "Hill", position end
+        local ok, position, res = tryCandidates(slot, hillCandidates(percent), true, setStatus)
+        if ok then return true, "Hill", position, res end
+        return false, nil, nil, res
     end
     return false
 end
@@ -982,6 +985,7 @@ allButton.MouseButton1Click:Connect(function()
             for slot = 1, 6 do parts[#parts + 1] = "T" .. slot .. (slotHasUnit(slot) and "=Y" or "=-") end
             return table.concat(parts, " ")
         end
+        _G.AO_INVOKE_LOG = 0   -- รีเซ็ตทุกครั้งที่เริ่ม → รอบ 2+ ได้เห็นค่า result (table/-1/false) สดๆ
         dbg(string.format("========== START วางตัว | wave=%s | บนสนาม=%d | hotbar[%s] ==========",
             tostring(readCurrentWave()), placementCount(), hotbarSnap()))
 
@@ -1020,11 +1024,13 @@ allButton.MouseButton1Click:Connect(function()
             placing = true
             setStatus(string.format("%s | Tower%d @ %.1f%%", label, slot, percent))
             local t0 = os.clock()
-            local ok, kind, position = placeSlot(slot, placementType, percent)
+            local ok, kind, position, result = placeSlot(slot, placementType, percent)
             local took = os.clock() - t0
             placing = false
+            local reason = ok and ("สำเร็จ " .. tostring(kind))
+                or ("ไม่ติด" .. (result == -1 and "[เงินไม่พอ]" or "[จุดผิด/เต็ม]"))
             dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s (ใช้ %.1f วิ)",
-                slot, tostring(placementType), percent, label, ok and ("สำเร็จ " .. tostring(kind)) or "ไม่ติด", took))
+                slot, tostring(placementType), percent, label, reason, took))
 
             if ok then
                 slotTypes[slot] = kind
@@ -1032,12 +1038,12 @@ allButton.MouseButton1Click:Connect(function()
                 status.Text = string.format("%s สำเร็จ | Tower%d %s @ %.1f%%", label, slot, kind, percent)
                 status.TextColor3 = Color3.fromRGB(124, 225, 151)
                 task.wait(0.12)
-                return true
+                return true, nil
             end
 
             setStatus(string.format("%s ไม่สำเร็จ | Tower%d @ %.1f%%", label, slot, percent), false)
             task.wait(0.15)
-            return false
+            return false, result   -- result == -1 = เงินไม่พอ ; อื่นๆ = จุดผิด/เต็ม
         end
 
         -- 1) ตัวเงิน Leorio ก่อน 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
@@ -1233,20 +1239,29 @@ allButton.MouseButton1Click:Connect(function()
 
         while stillRunning() and os.clock() - fillStart < 60 and emptyRounds < 3 do
             local placedThisRound = false
+            local moneyBlockedThisRound = false
 
             for _, slot in ipairs(damageSlots) do
                 if not stillRunning() then break end
                 local percent = earlyPercents[earlyIndex]
                 earlyIndex = earlyIndex % #earlyPercents + 1
 
-                if queueOne(slot, slotTypes[slot] or "Auto", percent, restLabel) then
+                local ok, res = queueOne(slot, slotTypes[slot] or "Auto", percent, restLabel)
+                if ok then
                     placedThisRound = true
+                elseif res == -1 then
+                    moneyBlockedThisRound = true
                 end
             end
 
-            -- วางติด (server รับ) = ยังมีที่ให้วาง → วนต่อ ; ทั้งรอบไม่ติดเลย = เต็มแล้ว → นับถอย
+            -- วางติด = ยังมีที่ให้วาง → วนต่อ
+            -- ⭐ วางไม่ติดเพราะ "เงินไม่พอ" (-1) = ไม่ใช่สนามเต็ม → รอเงิน 1.5 วิ ไม่นับ empty
+            --    วางไม่ติดเพราะ "ตำแหน่ง/เต็ม" = สนามเต็มจริง → นับถอย เลิกได้
             if placedThisRound then
                 emptyRounds = 0
+            elseif moneyBlockedThisRound then
+                setStatus("[5] เงินไม่พอ — รอเงินสะสมแล้ววางต่อ")
+                task.wait(1.5)
             else
                 emptyRounds += 1
                 task.wait(0.3)
