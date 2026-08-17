@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.18"
+local TEST_VERSION = "0.19"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1164,9 +1164,14 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
-        -- 4) หลังชุดดัก Hill/Ground สำเร็จแล้ว ใช้จำนวนวางที่เหลือทั้งหมดช่วง 5-10%
+        -- 4) วางตัวที่เหลือทั้งหมด
+        --    ao_gem: กระจุกช่วง 60-80% (คลัสเตอร์รวมตัว) | โหมดอื่น: เคลียร์ต้นทาง 5-10% (เดิม)
         -- วนจนเต็มจริง: หยุดเมื่อครบ 2 รอบติดที่ไม่มีตำแหน่งใดถูกจองเพิ่ม
-        local earlyPercents = {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
+        local gemCluster = _G.AO_PLACE_MODE == "ao_gem"
+        local earlyPercents = gemCluster
+            and {60, 65, 70, 75, 80, 62, 67, 72, 77, 63, 68, 73, 78}
+            or {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
+        local restLabel = gemCluster and "กระจุก 60-80% (gem)" or "เคลียร์ต้นทางที่เหลือ"
         local earlyIndex = 1
         local noProgressRounds = 0
 
@@ -1179,7 +1184,7 @@ allButton.MouseButton1Click:Connect(function()
                 local percent = earlyPercents[earlyIndex]
                 earlyIndex = earlyIndex % #earlyPercents + 1
 
-                if queueOne(slot, slotTypes[slot] or "Auto", percent, "เคลียร์ต้นทางที่เหลือ") then
+                if queueOne(slot, slotTypes[slot] or "Auto", percent, restLabel) then
                     placedThisRound = true
                 end
             end

@@ -4009,6 +4009,8 @@ if GAME_ID == "anime_origins" then
             pcall(_G.AO_GEM_W20_STOP)
         end
         if _G.AO_SET_BEST_SPEED then pcall(_G.AO_SET_BEST_SPEED) end
+        -- ส่งโหมดปัจจุบันเข้า module วางตัว (ao_gem → กระจุก 60-80%)
+        _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
         if _G.AO_SMART_START and not aoInitialPlacementStarted then
             aoInitialPlacementStarted = true
             task.delay(1, function()
