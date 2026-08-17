@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.19"
+local TEST_VERSION = "0.20"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -942,6 +942,7 @@ allButton.MouseButton1Click:Connect(function()
     for slot = 1, 6 do
         slotPlaced[slot] = 0
         slotFailures[slot] = 0
+        slotTypes[slot] = nil
     end
     allButton.Text = "STOP SMART AUTO"
     allButton.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
@@ -954,6 +955,30 @@ allButton.MouseButton1Click:Connect(function()
         local speedLevel, speedMessage = setBestGameSpeed()
         setStatus(speedMessage, speedLevel ~= nil)
         task.wait(0.15)
+
+        -- รอ hotbar โหลดยูนิตให้ "เสถียร" ก่อนเริ่มวาง
+        -- (ตอน replay เกมรีเร็ว ช่องยูนิตยังขึ้นไม่ครบ → เดิมวางเอ๋อ:
+        --  วางตัวเดียว/ไม่วาง/ไม่เจอตัวเงิน แล้ว placementCount>0 ทำให้ monitor ไม่ retry)
+        do
+            local function countUnitSlots()
+                local n = 0
+                for slot = 1, 6 do if slotHasUnit(slot) then n += 1 end end
+                return n
+            end
+            local waitStart = os.clock()
+            local lastCount, stableSince = -1, os.clock()
+            while stillRunning() and os.clock() - waitStart < 8 do
+                local c = countUnitSlots()
+                if c ~= lastCount then
+                    lastCount = c
+                    stableSince = os.clock()
+                elseif c > 0 and os.clock() - stableSince >= 0.6 then
+                    break
+                end
+                setStatus("รอ hotbar โหลดยูนิต... (" .. c .. " ช่อง)")
+                task.wait(0.2)
+            end
+        end
 
         local function queueOne(slot, placementType, percent, label)
             if not stillRunning() then return false end
