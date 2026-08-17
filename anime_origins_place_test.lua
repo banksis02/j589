@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.23"
+local TEST_VERSION = "0.24"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -963,8 +963,17 @@ allButton.MouseButton1Click:Connect(function()
         local function stillRunning()
             return smartRunning and myGeneration == smartGeneration
         end
+        local function dbg(msg) print(string.format("[AO DBG v%s|gen%d] %s", TEST_VERSION, myGeneration, msg)) end
+        local function hotbarSnap()
+            local parts = {}
+            for slot = 1, 6 do parts[#parts + 1] = "T" .. slot .. (slotHasUnit(slot) and "=Y" or "=-") end
+            return table.concat(parts, " ")
+        end
+        dbg(string.format("========== START วางตัว | wave=%s | บนสนาม=%d | hotbar[%s] ==========",
+            tostring(readCurrentWave()), placementCount(), hotbarSnap()))
 
         local speedLevel, speedMessage = setBestGameSpeed()
+        dbg("ตั้ง game speed: " .. tostring(speedMessage))
         setStatus(speedMessage, speedLevel ~= nil)
         task.wait(0.15)
 
@@ -990,6 +999,7 @@ allButton.MouseButton1Click:Connect(function()
                 setStatus("รอ hotbar โหลดยูนิต... (" .. c .. " ช่อง)")
                 task.wait(0.2)
             end
+            dbg("hotbar พร้อม: " .. lastCount .. " ช่อง [" .. hotbarSnap() .. "]")
         end
 
         local function queueOne(slot, placementType, percent, label)
@@ -998,6 +1008,8 @@ allButton.MouseButton1Click:Connect(function()
             setStatus(string.format("%s | Tower%d @ %.1f%%", label, slot, percent))
             local ok, kind, position = placeSlot(slot, placementType, percent)
             placing = false
+            dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s",
+                slot, tostring(placementType), percent, label, ok and ("สำเร็จ " .. tostring(kind)) or "ไม่ติด"))
 
             if ok then
                 slotTypes[slot] = kind
@@ -1016,6 +1028,7 @@ allButton.MouseButton1Click:Connect(function()
         -- 1) ตัวเงิน Leorio ก่อน 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
         --    บางไอดีไม่มี Leorio → ข้ามขั้นวางตัวเงิน ไปวางตัวดาเมจแทน (ไม่หยุดค้าง)
         local moneySlot = findSlotByUnitName("Leorio")
+        dbg("[1] ตัวเงิน: Leorio = " .. (moneySlot and ("Tower" .. moneySlot) or "ไม่พบ"))
         if moneySlot then
             slotTypes[moneySlot] = "Ground"
             local leorioQueued = 0
@@ -1025,8 +1038,10 @@ allButton.MouseButton1Click:Connect(function()
                     leorioQueued += 1
                 end
             end
+            dbg("[1] Leorio จองได้ " .. leorioQueued .. "/3")
 
             if leorioQueued < 3 then
+                dbg("❌ STOP: Leorio ได้แค่ " .. leorioQueued .. "/3")
                 smartRunning = false
                 allButton.Text = "START SMART AUTO"
                 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1044,8 +1059,10 @@ allButton.MouseButton1Click:Connect(function()
                 damageSlots[#damageSlots + 1] = slot
             end
         end
+        dbg("[2] ตัวดาเมจ: " .. #damageSlots .. " ช่อง [Tower" .. table.concat(damageSlots, ",Tower") .. "]")
 
         if #damageSlots == 0 then
+            dbg("❌ STOP: ไม่มีตัวดาเมจในช่องที่เหลือ")
             smartRunning = false
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1065,6 +1082,7 @@ allButton.MouseButton1Click:Connect(function()
         end
 
         if monsterPercent == nil then
+            dbg("❌ STOP: รอ 30 วิ ไม่เจอมอนเลย (enemyProgressPercent=nil)")
             smartRunning = false
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1072,6 +1090,7 @@ allButton.MouseButton1Click:Connect(function()
             placing = false
             return
         end
+        dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 20, 20, 92)))
 
         local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
 
@@ -1128,7 +1147,9 @@ allButton.MouseButton1Click:Connect(function()
             interceptNoProgress = placedThisRound and 0 or (interceptNoProgress + 1)
         end
 
+        dbg("[3] ชุดดักหน้ามอน +20% จองได้ " .. interceptQueued .. "/3")
         if interceptQueued < 2 then
+            dbg("❌ STOP: ชุดดักได้แค่ " .. interceptQueued .. "/2")
             smartRunning = false
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1192,7 +1213,9 @@ allButton.MouseButton1Click:Connect(function()
             groundNoProgress = placedGroundThisRound and 0 or (groundNoProgress + 1)
         end
 
+        dbg("[4] เติม Ground ดักหน้า จองได้ " .. groundInterceptQueued .. "/2")
         if groundInterceptQueued < 1 then
+            dbg("❌ STOP: Ground ดักหน้าไม่สำเร็จเลย")
             smartRunning = false
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1200,6 +1223,7 @@ allButton.MouseButton1Click:Connect(function()
             placing = false
             return
         end
+        dbg("[5] เริ่มเคลียร์ต้นทาง 5-10% (วางที่เหลือจนเต็ม)")
 
         -- 4) วางตัวที่เหลือทั้งหมดช่วง 5-10% (เคลียร์ต้นทาง — ทุกโหมด)
         --    เคยลอง gem กระจุก 60-80% แต่งานช้าลงรอบละ 1-2 นาที → กลับมา 5-10% เหมือนเดิม
@@ -1236,6 +1260,8 @@ allButton.MouseButton1Click:Connect(function()
         allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
         local total = 0
         for slot = 1, 6 do total += slotPlaced[slot] end
+        dbg(string.format("========== จบ วางรวม %d ตำแหน่ง | ต่อช่อง T1=%d T2=%d T3=%d T4=%d T5=%d T6=%d | บนสนาม=%d ==========",
+            total, slotPlaced[1], slotPlaced[2], slotPlaced[3], slotPlaced[4], slotPlaced[5], slotPlaced[6], placementCount()))
         status.Text = string.format("จองวางครบ | Leorio=%s | รวม %d ตำแหน่ง", moneySlot and ("Tower" .. moneySlot) or "ไม่มี", total)
         status.TextColor3 = Color3.fromRGB(124, 225, 151)
         placing = false
