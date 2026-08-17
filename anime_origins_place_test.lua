@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.26"
+local TEST_VERSION = "0.27"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -303,19 +303,15 @@ local function invokePlacement(slot, position, isHill)
     end
     if not ok then return false, tostring(result) end
 
-    -- ⭐ เกมจองวางล่วงหน้าได้แม้เงินไม่พอ (ขึ้นเงาตัวละคร) → server คืน UUID ของ tower ที่วาง/จอง
-    --    false/nil = วางไม่ได้จริง (จุดผิด/ช่องเต็ม) ; ค่าอื่น = สำเร็จทันที
-    --    ไม่ต้องรอ placementCount / ไม่ต้องรอเงิน → ไม่ลองซ้ำมั่ว = เร็วมาก
+    -- server คืน "table" (object ของ tower ที่วางแล้ว) = วางติดจริง
+    -- result = -1 (number) = เงินไม่พอ / วางไม่ได้ ; false/nil = จุดผิด
     if _G.AO_INVOKE_LOG == nil then _G.AO_INVOKE_LOG = 0 end
     if _G.AO_INVOKE_LOG < 10 then
         _G.AO_INVOKE_LOG += 1
         print(string.format("[AO DBG invoke] T%d result=%s (%s) dt=%.2fวิ", slot, tostring(result), typeof(result), invDt))
     end
-    if result == false or result == nil then
-        if placementCount() > before then return true, result end
-        return false, result
-    end
-    return true, result
+    if typeof(result) == "table" then return true, result end
+    return false, result   -- result อาจเป็น -1 (เงินไม่พอ) — ผู้เรียกเช็คได้
 end
 
 local function tryCandidates(slot, candidates, isHill, statusCallback)
@@ -324,6 +320,9 @@ local function tryCandidates(slot, candidates, isHill, statusCallback)
         local placed, result = invokePlacement(slot, position, isHill)
         if placed then
             return true, position, result
+        end
+        if result == -1 then
+            return false, nil, -1   -- เงินไม่พอ → จุดอื่นก็ไม่ติด ไม่ต้องเสียเวลาลองต่อ
         end
         task.wait(0.04)
     end
@@ -904,12 +903,14 @@ local function placeSlot(slot, placementType, percent)
                 setStatus(string.format("Tower%d Auto Ground %d/%d", slot, index, #ground))
                 local ok, result = invokePlacement(slot, ground[index], false)
                 if ok then return true, "Ground", ground[index], result end
+                if result == -1 then return false end   -- เงินไม่พอ → ไม่ต้องลองต่อ
             end
 
             if hill[index] then
                 setStatus(string.format("Tower%d Auto Hill %d/%d", slot, index, #hill))
                 local ok, result = invokePlacement(slot, hill[index], true)
                 if ok then return true, "Hill", hill[index], result end
+                if result == -1 then return false end
             end
 
             task.wait(0.04)
@@ -1108,7 +1109,9 @@ allButton.MouseButton1Click:Connect(function()
         local interceptNoProgress = 0
         local preferredInterceptSlot = nil
 
-        while stillRunning() and interceptQueued < 3 and interceptNoProgress < 2 do
+        -- วนวางชุดดัก +20% จนได้ 3 ตัว หรือครบ 20 วิ — เงินไม่พอก็รอสั้นๆ แล้วลองใหม่ (ไม่ข้ามไป 5%)
+        local interceptStart = os.clock()
+        while stillRunning() and interceptQueued < 3 and os.clock() - interceptStart < 20 do
             local placedThisRound = false
 
             if preferredInterceptSlot then
@@ -1151,19 +1154,11 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
 
-            interceptNoProgress = placedThisRound and 0 or (interceptNoProgress + 1)
+            -- ทั้งรอบวางไม่ได้ (เงินไม่พอ) → รอ 0.6 วิ ให้เงินสะสมแล้วลองใหม่ (ไม่เลิก ไม่ข้าม)
+            if not placedThisRound then task.wait(0.6) end
         end
 
-        dbg("[3] ชุดดักหน้ามอน +20% จองได้ " .. interceptQueued .. "/3")
-        if interceptQueued < 2 then
-            dbg("❌ STOP: ชุดดักได้แค่ " .. interceptQueued .. "/2")
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("ชุดดัก +20% ได้เพียง " .. interceptQueued .. "/2 — ยังไม่วางช่วง 5-10%", false)
-            placing = false
-            return
-        end
+        dbg("[3] ชุดดักหน้ามอน +20% จองได้ " .. interceptQueued .. "/3 → ไปวางต้นทางต่อ")
 
         -- 3) ชุดดักเดิมอาจเลือก Hill ทั้งหมด: เติมตัวดาเมจ Ground ที่ +20% อีก 1-2 ตัว
         -- ไม่ใช้ Leorio และไม่ลองช่องที่รู้แล้วว่าเป็น Hill
@@ -1220,16 +1215,7 @@ allButton.MouseButton1Click:Connect(function()
             groundNoProgress = placedGroundThisRound and 0 or (groundNoProgress + 1)
         end
 
-        dbg("[4] เติม Ground ดักหน้า จองได้ " .. groundInterceptQueued .. "/2")
-        if groundInterceptQueued < 1 then
-            dbg("❌ STOP: Ground ดักหน้าไม่สำเร็จเลย")
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("ยังวางตัวดาเมจ Ground ที่ +20% ไม่สำเร็จ — ยังไม่เริ่มช่วง 5-10%", false)
-            placing = false
-            return
-        end
+        dbg("[4] เติม Ground ดักหน้า จองได้ " .. groundInterceptQueued .. "/2 → ไปวางต้นทางต่อ")
         dbg("[5] เริ่มเคลียร์ต้นทาง 5-10% (วางที่เหลือจนเต็ม)")
 
         -- 4) วางตัวที่เหลือทั้งหมดช่วง 5-10% (เคลียร์ต้นทาง — ทุกโหมด)
