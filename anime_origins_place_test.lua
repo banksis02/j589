@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.27"
+local TEST_VERSION = "0.28"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1043,23 +1043,20 @@ allButton.MouseButton1Click:Connect(function()
         if moneySlot then
             slotTypes[moneySlot] = "Ground"
             local leorioQueued = 0
-            for _, percent in ipairs({30, 33, 36, 39, 42, 45, 48, 27, 24}) do
-                if not stillRunning() or leorioQueued >= 3 then break end
+            local leoStart = os.clock()
+            local leoPercents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
+            local leoIdx = 1
+            -- วาง Leo ให้ครบ 3 (ตัวเงิน=รายได้) — เงินไม่พอก็รอสั้นๆ ให้ตัวที่วางแล้วหาเงิน แล้วลองใหม่ (ไม่ STOP)
+            while stillRunning() and leorioQueued < 3 and os.clock() - leoStart < 15 do
+                local percent = leoPercents[leoIdx]
+                leoIdx = leoIdx % #leoPercents + 1
                 if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
                     leorioQueued += 1
+                else
+                    task.wait(0.6)   -- เงินไม่พอ → รอเงินจาก Leo ที่วางไปแล้ว
                 end
             end
-            dbg("[1] Leorio จองได้ " .. leorioQueued .. "/3")
-
-            if leorioQueued < 3 then
-                dbg("❌ STOP: Leorio ได้แค่ " .. leorioQueued .. "/3")
-                smartRunning = false
-                allButton.Text = "START SMART AUTO"
-                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-                setStatus("จอง Leorio ได้เพียง " .. leorioQueued .. "/3 — หยุดเพื่อไม่ข้ามขั้น", false)
-                placing = false
-                return
-            end
+            dbg("[1] Leorio จองได้ " .. leorioQueued .. "/3 → ไปวางตัวดาเมจต่อ")
         else
             setStatus("ไม่พบ Leorio — ข้ามตัวเงิน วางตัวดาเมจแทน")
         end
