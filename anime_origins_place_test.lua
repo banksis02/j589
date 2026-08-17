@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.17"
+local TEST_VERSION = "0.18"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -976,33 +976,29 @@ allButton.MouseButton1Click:Connect(function()
             return false
         end
 
-        -- 1) ตัวเงิน Leorio ก่อนเสมอ 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
+        -- 1) ตัวเงิน Leorio ก่อน 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
+        --    บางไอดีไม่มี Leorio → ข้ามขั้นวางตัวเงิน ไปวางตัวดาเมจแทน (ไม่หยุดค้าง)
         local moneySlot = findSlotByUnitName("Leorio")
-        if not moneySlot then
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("ไม่พบ Leorio ใน Tower1-6", false)
-            placing = false
-            return
-        end
-
-        slotTypes[moneySlot] = "Ground"
-        local leorioQueued = 0
-        for _, percent in ipairs({30, 33, 36, 39, 42, 45, 48, 27, 24}) do
-            if not stillRunning() or leorioQueued >= 3 then break end
-            if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
-                leorioQueued += 1
+        if moneySlot then
+            slotTypes[moneySlot] = "Ground"
+            local leorioQueued = 0
+            for _, percent in ipairs({30, 33, 36, 39, 42, 45, 48, 27, 24}) do
+                if not stillRunning() or leorioQueued >= 3 then break end
+                if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
+                    leorioQueued += 1
+                end
             end
-        end
 
-        if leorioQueued < 3 then
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("จอง Leorio ได้เพียง " .. leorioQueued .. "/3 — หยุดเพื่อไม่ข้ามขั้น", false)
-            placing = false
-            return
+            if leorioQueued < 3 then
+                smartRunning = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                setStatus("จอง Leorio ได้เพียง " .. leorioQueued .. "/3 — หยุดเพื่อไม่ข้ามขั้น", false)
+                placing = false
+                return
+            end
+        else
+            setStatus("ไม่พบ Leorio — ข้ามตัวเงิน วางตัวดาเมจแทน")
         end
 
         local damageSlots = {}
@@ -1201,7 +1197,7 @@ allButton.MouseButton1Click:Connect(function()
         allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
         local total = 0
         for slot = 1, 6 do total += slotPlaced[slot] end
-        status.Text = string.format("จองวางครบ | Leorio=Tower%d | รวม %d ตำแหน่ง", moneySlot, total)
+        status.Text = string.format("จองวางครบ | Leorio=%s | รวม %d ตำแหน่ง", moneySlot and ("Tower" .. moneySlot) or "ไม่มี", total)
         status.TextColor3 = Color3.fromRGB(124, 225, 151)
         placing = false
     end)
