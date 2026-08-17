@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.98"
+local SCRIPT_VERSION = "v10.99"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3802,6 +3802,8 @@ if GAME_ID == "anime_origins" then
     local aoLastReportedRuns = 0
     local aoLastBattlepassLevel = nil
     local aoBattlepassInfo = nil
+    local aoBattlepassLive = nil
+    local aoBattlepassDbg = 0
 
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
@@ -3878,40 +3880,86 @@ if GAME_ID == "anime_origins" then
 
         local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
 
-        -- registry มี Battlepasses[season] หลายก้อน (Template Exp=0, cache ฯลฯ ~430 matches)
-        -- เดิม break ที่ match แรก → มักเจอ Template Exp=0 ก่อน = level 0
-        -- แก้: สแกนทั้งหมดแล้วเลือกก้อนที่ Exp สูงสุด = ข้อมูลจริงของผู้เล่น
+        -- ข้อมูลจริงของผู้เล่นอยู่ที่ PlayerData.Battlepasses[season] แต่ซ้อนลึกใน registry
+        -- (recon เจอผ่าน deep search) และมี Template Exp=0 ปนอยู่ ~430 ก้อน
+        -- → สแกนลึก เลือกก้อน Exp สูงสุดที่หน้าตาเป็น battlepass จริง แล้ว cache ref ไว้
+        local function looksLikeLive(entry)
+            return type(entry) == "table" and tonumber(rawget(entry, "Exp"))
+                and (rawget(entry, "Claimed") ~= nil or rawget(entry, "PremiumClaimed") ~= nil or rawget(entry, "Premium") ~= nil)
+        end
         local live = nil
-        local bestExp = -1
-        local function consider(bp)
-            if type(bp) ~= "table" then return end
-            local entry = rawget(bp, season)
-            if type(entry) ~= "table" then return end
-            local exp = tonumber(rawget(entry, "Exp"))
-            if exp and exp > bestExp then
-                bestExp = exp
-                live = entry
+        if looksLikeLive(aoBattlepassLive) then
+            live = aoBattlepassLive
+        else
+            local best, bestExp = nil, -1
+            local seen, nodes = {}, 0
+            local function scan(t, depth)
+                if type(t) ~= "table" or seen[t] or depth > 10 or nodes > 150000 then return end
+                seen[t] = true; nodes = nodes + 1
+                local entry = rawget(t, season)
+                if looksLikeLive(entry) then
+                    local exp = tonumber(rawget(entry, "Exp"))
+                    if exp > bestExp then bestExp = exp; best = entry end
+                end
+                for _, v in pairs(t) do
+                    if type(v) == "table" then scan(v, depth + 1) end
+                end
             end
+            pcall(function()
+                for _, v in pairs(registry) do
+                    if type(v) == "table" then scan(v, 1) end
+                end
+            end)
+            live = best
+            aoBattlepassLive = best
         end
-        for _, value in pairs(registry) do
-            if type(value) == "table" then
-                consider(rawget(value, "Battlepasses"))
-                local nested = rawget(value, "PlayerData")
-                if type(nested) == "table" then consider(rawget(nested, "Battlepasses")) end
+        if type(live) ~= "table" then
+            if aoBattlepassDbg < 3 then
+                aoBattlepassDbg = aoBattlepassDbg + 1
+                print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
             end
+            return nil
         end
-        if type(live) ~= "table" then return nil end
 
-        local exp = math.max(0, tonumber(live.Exp) or 0)
-        local level = nil
-        if type(aoBattlepassInfo.GetBattlepassLevelFromExp) == "function" then
-            local ok, value = pcall(aoBattlepassInfo.GetBattlepassLevelFromExp, exp)
-            if not ok or not tonumber(value) then
-                ok, value = pcall(aoBattlepassInfo.GetBattlepassLevelFromExp, aoBattlepassInfo, exp)
-            end
-            if ok and tonumber(value) then level = math.max(0, math.floor(tonumber(value))) end
+        local exp = math.max(0, tonumber(rawget(live, "Exp")) or 0)
+
+        -- level: เรียกฟังก์ชันเกม (ลองทั้ง (exp) และ (self, exp))
+        local level, levelSrc = nil, "none"
+        local fn = aoBattlepassInfo.GetBattlepassLevelFromExp
+        if type(fn) == "function" then
+            local ok, value = pcall(fn, exp)
+            if not ok or not tonumber(value) then ok, value = pcall(fn, aoBattlepassInfo, exp) end
+            if ok and tonumber(value) then level = math.max(0, math.floor(tonumber(value))); levelSrc = "gameFn" end
         end
-        if level == nil then return nil end
+        -- fallback 1: สะสม NeededBattlepassExp ต่อเลเวลจนเกิน exp
+        if level == nil and type(aoBattlepassInfo.NeededBattlepassExp) == "function" then
+            local needFn = aoBattlepassInfo.NeededBattlepassExp
+            local lv, remain = 0, exp
+            for i = 1, 500 do
+                local okN, need = pcall(needFn, i)
+                if not okN or not tonumber(need) then okN, need = pcall(needFn, aoBattlepassInfo, i) end
+                need = tonumber(need)
+                if not okN or not need or need <= 0 then break end
+                if remain >= need then remain = remain - need; lv = i else break end
+            end
+            level = lv; levelSrc = "needSum"
+        end
+        -- fallback 2: สูตรเรขาคณิต Base_Exp * Exp_Multiplier^n
+        if level == nil then
+            local s1 = rawget(aoBattlepassInfo, "Season1")
+            local base = (s1 and tonumber(rawget(s1, "Base_Exp"))) or 170
+            local mult = (s1 and tonumber(rawget(s1, "Exp_Multiplier"))) or 1.34
+            local lv, remain, need = 0, exp, base
+            while remain >= need and lv < 500 do
+                remain = remain - need; lv = lv + 1; need = base * (mult ^ lv)
+            end
+            level = lv; levelSrc = "geoFormula"
+        end
+
+        if aoBattlepassDbg < 3 then
+            aoBattlepassDbg = aoBattlepassDbg + 1
+            print(("[AO %s] BP debug: Exp=%d Level=%d src=%s"):format(SCRIPT_VERSION, exp, level or -1, levelSrc))
+        end
 
         return {
             Season = season,
