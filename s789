@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.2"
+local SCRIPT_VERSION = "v11.3"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3791,8 +3791,9 @@ if GAME_ID == "anime_origins" then
     local AO_LOBBY_PLACE_ID = 129932912185311
     local AO_GAME_PLACE_ID = 116173040971120
     local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true }
-    -- jsDelivr CDN (ลิมิตสูง กัน HTTP 429 จาก raw.githubusercontent) — purge cache ทุกครั้งที่อัพเพื่อให้สด
-    local AO_RAW = "https://cdn.jsdelivr.net/gh/banksis02/j589@main/"
+    -- jsDelivr CDN กัน HTTP 429 จาก raw.githubusercontent — repo ไม่มี tag เลย @main resolve ไม่ได้
+    -- ต้องปักเป็น commit-hash (fetch ตรง) ที่มีโมดูลรุ่นล่าสุด — อัพเดต hash นี้ทุกครั้งที่แก้โมดูล
+    local AO_RAW = "https://cdn.jsdelivr.net/gh/banksis02/j589@24119d8/"
     local aoCurrentJob = nil
     local aoFarming = false
     local aoLobbyLoaded = false
