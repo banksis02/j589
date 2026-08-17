@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.24"
+local TEST_VERSION = "0.25"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -284,6 +284,7 @@ end
 local function invokePlacement(slot, position, isHill)
     if not placeRemote then return false, "ไม่พบ TowerHandlerFunction" end
     local before = placementCount()
+    local invT0 = os.clock()
     local ok, result = pcall(function()
         return placeRemote:InvokeServer(
             "PlaceTower",
@@ -295,6 +296,11 @@ local function invokePlacement(slot, position, isHill)
             isHill
         )
     end)
+    local invDt = os.clock() - invT0
+    if invDt > 1.5 then
+        print(string.format("[AO DBG invoke] ⏰ T%d InvokeServer ช้า %.1f วิ (isHill=%s, result=%s)",
+            slot, invDt, tostring(isHill), tostring(result)))
+    end
     if not ok then return false, tostring(result) end
 
     local startedAt = os.clock()
@@ -1006,10 +1012,12 @@ allButton.MouseButton1Click:Connect(function()
             if not stillRunning() then return false end
             placing = true
             setStatus(string.format("%s | Tower%d @ %.1f%%", label, slot, percent))
+            local t0 = os.clock()
             local ok, kind, position = placeSlot(slot, placementType, percent)
+            local took = os.clock() - t0
             placing = false
-            dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s",
-                slot, tostring(placementType), percent, label, ok and ("สำเร็จ " .. tostring(kind)) or "ไม่ติด"))
+            dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s (ใช้ %.1f วิ)",
+                slot, tostring(placementType), percent, label, ok and ("สำเร็จ " .. tostring(kind)) or "ไม่ติด", took))
 
             if ok then
                 slotTypes[slot] = kind
@@ -1071,26 +1079,23 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
-        -- รอให้มีมอนจริง เพื่อคำนวณตำแหน่งนำหน้า ไม่เดาจาก Wave
+        -- รอมอนสั้นๆ 6 วิ เพื่อจับตำแหน่งนำหน้า (เดิม 30 วิ = หน่วงนานตั้งแต่ต้น)
         local monsterPercent
         local waitStarted = os.clock()
-        while stillRunning() and os.clock() - waitStarted < 30 do
+        while stillRunning() and os.clock() - waitStarted < 6 do
             monsterPercent = enemyProgressPercent()
             if monsterPercent then break end
-            setStatus("วาง Leorio แล้ว | รอมอนเกิดเพื่อคำนวณเปอร์เซ็นต์...")
-            task.wait(0.5)
+            setStatus("วาง Leorio แล้ว | รอมอนเกิด...")
+            task.wait(0.4)
         end
 
+        -- ไม่เจอมอนใน 6 วิ → ไม่หยุด ใช้ค่า default (มอน ~10%) เพื่อวางดักต่อเลย
         if monsterPercent == nil then
-            dbg("❌ STOP: รอ 30 วิ ไม่เจอมอนเลย (enemyProgressPercent=nil)")
-            smartRunning = false
-            allButton.Text = "START SMART AUTO"
-            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            setStatus("ไม่พบตำแหน่งมอนจริง — ยังไม่วางชุดดักและช่วง 5-10%", false)
-            placing = false
-            return
+            monsterPercent = 10
+            dbg("[3] ไม่เจอมอนใน 6 วิ → ใช้ default 10% (ดักหน้าที่ 30%)")
+        else
+            dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 20, 20, 92)))
         end
-        dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 20, 20, 92)))
 
         local interceptPercent = math.clamp(monsterPercent + 20, 20, 92)
 
@@ -1227,13 +1232,16 @@ allButton.MouseButton1Click:Connect(function()
 
         -- 4) วางตัวที่เหลือทั้งหมดช่วง 5-10% (เคลียร์ต้นทาง — ทุกโหมด)
         --    เคยลอง gem กระจุก 60-80% แต่งานช้าลงรอบละ 1-2 นาที → กลับมา 5-10% เหมือนเดิม
-        -- วนจนเต็มจริง: หยุดเมื่อครบ 2 รอบติดที่ไม่มีตำแหน่งใดถูกจองเพิ่ม
+        -- วางต่อเนื่องจนเต็มจริง — ไม่เลิกหลัง 2-3 ตัว
+        -- ถ้ารอบไหนวางไม่เพิ่ม (เงินยังไม่พอ) หน่วง 1.5 วิ ให้เงินสะสม แล้วลองใหม่
+        -- เลิกเมื่อ: วางไม่เพิ่มติดกัน 5 รอบ (สนามเต็มจริง) หรือครบ 90 วิ (กันค้าง)
         local earlyPercents = {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
         local restLabel = "เคลียร์ต้นทางที่เหลือ"
         local earlyIndex = 1
-        local noProgressRounds = 0
+        local emptyRounds = 0
+        local fillStart = os.clock()
 
-        while stillRunning() and noProgressRounds < 2 do
+        while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 5 do
             local countBeforeRound = placementCount()
             local placedThisRound = false
 
@@ -1249,11 +1257,14 @@ allButton.MouseButton1Click:Connect(function()
 
             local countAfterRound = placementCount()
             if placedThisRound and countAfterRound > countBeforeRound then
-                noProgressRounds = 0
+                emptyRounds = 0
             else
-                noProgressRounds += 1
+                emptyRounds += 1
+                dbg("[5] รอบนี้วางไม่เพิ่ม (" .. emptyRounds .. "/5) — รอเงิน 1.5 วิ แล้วลองใหม่")
+                task.wait(1.5)
             end
         end
+        dbg("[5] จบเคลียร์ต้นทาง | empty=" .. emptyRounds .. " | ใช้เวลา " .. math.floor(os.clock() - fillStart) .. " วิ")
 
         smartRunning = false
         allButton.Text = "SMART AUTO COMPLETE"
