@@ -3791,9 +3791,7 @@ if GAME_ID == "anime_origins" then
     local AO_LOBBY_PLACE_ID = 129932912185311
     local AO_GAME_PLACE_ID = 116173040971120
     local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true }
-    -- jsDelivr CDN กัน HTTP 429 จาก raw.githubusercontent — repo ไม่มี tag เลย @main resolve ไม่ได้
-    -- ต้องปักเป็น commit-hash (fetch ตรง) ที่มีโมดูลรุ่นล่าสุด — อัพเดต hash นี้ทุกครั้งที่แก้โมดูล
-    local AO_RAW = "https://cdn.jsdelivr.net/gh/banksis02/j589@24119d8/"
+    local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
     local aoFarming = false
     local aoLobbyLoaded = false
