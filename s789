@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v10.99"
+local SCRIPT_VERSION = "v11.0"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3914,10 +3914,7 @@ if GAME_ID == "anime_origins" then
             aoBattlepassLive = best
         end
         if type(live) ~= "table" then
-            if aoBattlepassDbg < 3 then
-                aoBattlepassDbg = aoBattlepassDbg + 1
-                print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
-            end
+            print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
             return nil
         end
 
@@ -3956,7 +3953,8 @@ if GAME_ID == "anime_origins" then
             level = lv; levelSrc = "geoFormula"
         end
 
-        if aoBattlepassDbg < 3 then
+        -- พิมพ์ทุก heartbeat ตราบใดที่ level ยังผิด (0) เพื่อให้เห็นใน log ล่าสุดเสมอ; พอใช้ได้แล้วพิมพ์แค่ 3 ครั้งแรกพอ
+        if (level or 0) <= 0 or aoBattlepassDbg < 3 then
             aoBattlepassDbg = aoBattlepassDbg + 1
             print(("[AO %s] BP debug: Exp=%d Level=%d src=%s"):format(SCRIPT_VERSION, exp, level or -1, levelSrc))
         end
