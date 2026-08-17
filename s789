@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.4"
+local SCRIPT_VERSION = "v11.5"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -213,57 +213,8 @@ local function dismissRewardPopup()
 end
 _G.AE_DISMISS_REWARD_POPUP = dismissRewardPopup
 
--- อ่านรายการรางวัลจาก popup "Obtained Rewards" (best-effort) — เก็บ label สั้นๆ ที่มีตัวเลข
--- (จำนวนไอเทม) เพื่อให้โหมดที่ต้องเล่นจบด่าน (legend ฯลฯ) แจ้งเตือนรางวัลได้
-local function readObtainedRewards()
-    local parts = {}
-    pcall(function()
-        for _, gui in ipairs(player.PlayerGui:GetChildren()) do
-            if gui:IsA("ScreenGui") and gui.Enabled then
-                local isRewardGui = false
-                for _, obj in ipairs(gui:GetDescendants()) do
-                    if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and guiObjectShown(obj) then
-                        local t = tostring(obj.Text or ""):gsub("<[^>]->", ""):lower()
-                        if t:find("obtained rewards", 1, true) then isRewardGui = true; break end
-                    end
-                end
-                if isRewardGui then
-                    for _, obj in ipairs(gui:GetDescendants()) do
-                        if obj:IsA("TextLabel") and guiObjectShown(obj) then
-                            local t = tostring(obj.Text or ""):gsub("<[^>]->", "")
-                            t = t:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-                            local low = t:lower()
-                            if t ~= "" and #t <= 24 and t:match("%d")
-                                and not low:find("obtained rewards", 1, true)
-                                and not low:find("click anywhere", 1, true) then
-                                parts[#parts + 1] = t
-                            end
-                        end
-                    end
-                    break
-                end
-            end
-        end
-    end)
-    local seen, out = {}, {}
-    for _, p in ipairs(parts) do
-        if not seen[p] then seen[p] = true; out[#out + 1] = p end
-        if #out >= 8 then break end
-    end
-    return table.concat(out, ", ")
-end
-_G.AE_LAST_OBTAINED = _G.AE_LAST_OBTAINED or { text = "", at = 0, id = 0 }
-
 task.spawn(function()
-    local rewardWasVisible = false
     while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
-        local visible = rewardPopupVisible()
-        -- ขอบขาขึ้น (popup เพิ่งโผล่) → อ่านรางวัล 1 ครั้ง กันนับซ้ำ
-        if visible and not rewardWasVisible then
-            local text = readObtainedRewards()
-            _G.AE_LAST_OBTAINED = { text = text, at = tick(), id = (_G.AE_LAST_OBTAINED.id or 0) + 1 }
-        end
-        rewardWasVisible = visible
         pcall(dismissRewardPopup)
         task.wait(0.25)
     end
@@ -3852,8 +3803,8 @@ if GAME_ID == "anime_origins" then
     -- โหมดที่ต้องเล่นจบด่าน (legend ฯลฯ) นับจบด่านจาก popup Obtained Rewards
     local aoStagePending = false
     local aoStageRewardText = ""
+    local aoStagePlayTime = ""
     local aoStageRuns = 0
-    local aoLastObtainedId = (_G.AE_LAST_OBTAINED and _G.AE_LAST_OBTAINED.id) or 0
     local aoLastBattlepassLevel = nil
     local aoBattlepassInfo = nil
     local aoBattlepassLive = nil
@@ -4119,9 +4070,10 @@ if GAME_ID == "anime_origins" then
             local playTime = aoFormatDuration(stats.LastPlaySeconds)
             local rewardText, actText
             if isStageMode then
-                -- โหมดเล่นจบด่าน: ใช้รางวัลจาก popup Obtained Rewards + ป้ายด่าน
+                -- โหมดเล่นจบด่าน: รางวัล+เวลาฟามจริง (Real Time) จากหน้า Victory + ป้ายด่าน
                 rewardText = (aoStageRewardText ~= "" and aoStageRewardText) or "จบด่าน"
                 actText = "จบด่าน - " .. aoStageLabel() .. " (รอบ " .. tostring(aoStageRuns) .. ")"
+                if aoStagePlayTime ~= "" then playTime = aoStagePlayTime end
             elseif isBattlepassJob then
                 rewardText = rewardSummary
                 actText = "Battlepass Farm - Lv." .. tostring(battlepassLevel)
@@ -4284,26 +4236,109 @@ if GAME_ID == "anime_origins" then
         end
     end)
 
-    -- จับ "จบด่าน" ของโหมดที่ต้องเล่นจบ (legend ฯลฯ): popup Obtained Rewards โผล่
-    -- (ขอบขาขึ้น มี id ใหม่) → นับ 1 รอบ + เก็บรางวัล → heartbeat ถัดไปแจ้งเตือน
+    -- จับ "จบด่าน" ของโหมดที่ต้องเล่นจบ (legend/story ฯลฯ) จากหน้า Victory = GameUI.ActOver
+    -- → นับ 1 รอบ + อ่านรางวัลจริง + เวลาฟามจริง (Real Time ไม่ใช่ Game Time เร่งสปีด) + กด Replay
+    local function aoClean(s) return (tostring(s or ""):gsub("<[^>]->", "")) end
+    local function aoVictoryFrame()
+        local g = player.PlayerGui:FindFirstChild("GameUI")
+        return g and g:FindFirstChild("ActOver")
+    end
+    local function aoReadVictory()
+        local ao = aoVictoryFrame()
+        local result = "Victory"
+        if ao then
+            pcall(function()
+                local t = ao.Main.TopBar.TextLabel
+                if t and aoClean(t.Text) ~= "" then result = aoClean(t.Text) end
+            end)
+        end
+        -- รางวัล: Rewards.ContentFrame.ScrollingFrame.<Item>.ImageLabel.Info.(NameLabel/AmountText)
+        local rewards = {}
+        if ao then
+            pcall(function()
+                local sf = ao.Main.ContentFrame.Main.Rewards.ContentFrame.ScrollingFrame
+                for _, item in ipairs(sf:GetChildren()) do
+                    if item:IsA("GuiObject") and item.Name ~= "ItemTemplate" then
+                        local il = item:FindFirstChild("ImageLabel")
+                        local info = il and il:FindFirstChild("Info")
+                        local nm = info and info:FindFirstChild("NameLabel")
+                        local amt = info and info:FindFirstChild("AmountText")
+                        nm = nm and aoClean(nm.Text) or ""
+                        amt = amt and aoClean(amt.Text) or ""
+                        if nm ~= "" and nm ~= "N/A" and amt ~= "" then
+                            rewards[#rewards + 1] = amt .. " " .. nm
+                        end
+                    end
+                end
+            end)
+        end
+        -- เวลาฟามจริง (Real Time) — ไม่ใช่ Game Time ที่เร่งสปีด
+        local realTime = ""
+        pcall(function()
+            local g = player.PlayerGui:FindFirstChild("GameUI")
+            local rt = g and g.TopUI.GameSpeed.RealTimer.TextLabel
+            if rt and aoClean(rt.Text) ~= "" then realTime = aoClean(rt.Text) end
+        end)
+        if realTime == "" and ao then   -- fallback: Time Played (game time)
+            pcall(function()
+                local ct = ao.Main.ContentFrame.Main.Stats.Main.Inner.ClearTime.Main.Inner.ValueLabel
+                if ct then realTime = aoClean(ct.Text) end
+            end)
+        end
+        return result, table.concat(rewards, ", "), realTime
+    end
+    local function aoClickReplay()
+        local ao = aoVictoryFrame()
+        if not ao then return false end
+        local btn
+        pcall(function() btn = ao.Main.ContentFrame.Main.BottomButtons.Inner.Replay end)
+        if not btn then return false end
+        pcall(function()
+            local gb = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
+            if gb and getconnections then
+                for _, c in ipairs(getconnections(gb.Activated)) do c:Fire() end
+                for _, c in ipairs(getconnections(gb.MouseButton1Click)) do c:Fire() end
+            end
+        end)
+        pcall(function()
+            local cx = math.floor(btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2)
+            local cy = math.floor(btn.AbsolutePosition.Y + btn.AbsoluteSize.Y / 2)
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.06)
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end)
+        return true
+    end
+
     task.spawn(function()
         task.wait(3)
+        local victoryWasVisible = false
         while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
-            local ob = _G.AE_LAST_OBTAINED
-            if type(ob) == "table" and ob.id and ob.id ~= aoLastObtainedId then
-                aoLastObtainedId = ob.id
-                if aoFarming and aoCurrentJob
-                    and aoCurrentJob.mode ~= "ao_gem" and aoCurrentJob.mode ~= "ao_battlepass" then
-                    aoStageRuns += 1
-                    aoStageRewardText = tostring(ob.text or "")
-                    aoStagePending = true
-                    print(("[AO %s] 🏁 จบด่าน รอบ %d | รางวัล: %s"):format(
-                        SCRIPT_VERSION, aoStageRuns,
-                        aoStageRewardText ~= "" and aoStageRewardText or "(อ่านไม่ได้)"))
-                    pcall(aoHeartbeat)   -- แจ้งเตือนทันที ไม่ต้องรอรอบ 30 วิ
+            local visible = false
+            pcall(function()
+                local ao = aoVictoryFrame()
+                visible = ao ~= nil and ao.Visible == true
+            end)
+            if visible and not victoryWasVisible
+                and aoFarming and aoCurrentJob
+                and aoCurrentJob.mode ~= "ao_gem" and aoCurrentJob.mode ~= "ao_battlepass" then
+                task.wait(0.5)   -- รอ reward/stat populate
+                local result, rewardText, realTime = aoReadVictory()
+                aoStageRuns += 1
+                aoStageRewardText = rewardText or ""
+                aoStagePlayTime = realTime or ""
+                aoStagePending = true
+                print(("[AO %s] 🏁 %s รอบ %d | เวลาจริง %s | รางวัล: %s"):format(
+                    SCRIPT_VERSION, tostring(result or "จบด่าน"), aoStageRuns,
+                    aoStagePlayTime ~= "" and aoStagePlayTime or "-",
+                    aoStageRewardText ~= "" and aoStageRewardText or "(อ่านไม่ได้)"))
+                pcall(aoHeartbeat)          -- แจ้งเตือนทันที
+                task.wait(0.4)
+                if aoClickReplay() then
+                    print("[AO " .. SCRIPT_VERSION .. "] กด Replay เล่นด่านต่อ")
                 end
             end
-            task.wait(0.5)
+            victoryWasVisible = visible
+            task.wait(0.4)
         end
     end)
 
