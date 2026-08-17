@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.25"
+local TEST_VERSION = "0.26"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -303,17 +303,19 @@ local function invokePlacement(slot, position, isHill)
     end
     if not ok then return false, tostring(result) end
 
-    local startedAt = os.clock()
-    if result == false then return false, result end
-
-    while os.clock() - startedAt < 0.18 do
-        if placementCount() > before then return true, result end
-        task.wait(0.1)
+    -- ⭐ เกมจองวางล่วงหน้าได้แม้เงินไม่พอ (ขึ้นเงาตัวละคร) → server คืน UUID ของ tower ที่วาง/จอง
+    --    false/nil = วางไม่ได้จริง (จุดผิด/ช่องเต็ม) ; ค่าอื่น = สำเร็จทันที
+    --    ไม่ต้องรอ placementCount / ไม่ต้องรอเงิน → ไม่ลองซ้ำมั่ว = เร็วมาก
+    if _G.AO_INVOKE_LOG == nil then _G.AO_INVOKE_LOG = 0 end
+    if _G.AO_INVOKE_LOG < 10 then
+        _G.AO_INVOKE_LOG += 1
+        print(string.format("[AO DBG invoke] T%d result=%s (%s) dt=%.2fวิ", slot, tostring(result), typeof(result), invDt))
     end
-
-    -- บางเซิร์ฟเวอร์คืน true เมื่อตำแหน่งถูกจอง แต่ยังไม่สร้าง Tower เพราะเงินไม่พอ
-    if result == true then return true, result end
-    return false, result
+    if result == false or result == nil then
+        if placementCount() > before then return true, result end
+        return false, result
+    end
+    return true, result
 end
 
 local function tryCandidates(slot, candidates, isHill, statusCallback)
@@ -1241,8 +1243,7 @@ allButton.MouseButton1Click:Connect(function()
         local emptyRounds = 0
         local fillStart = os.clock()
 
-        while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 5 do
-            local countBeforeRound = placementCount()
+        while stillRunning() and os.clock() - fillStart < 60 and emptyRounds < 3 do
             local placedThisRound = false
 
             for _, slot in ipairs(damageSlots) do
@@ -1255,13 +1256,12 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
 
-            local countAfterRound = placementCount()
-            if placedThisRound and countAfterRound > countBeforeRound then
+            -- วางติด (server รับ) = ยังมีที่ให้วาง → วนต่อ ; ทั้งรอบไม่ติดเลย = เต็มแล้ว → นับถอย
+            if placedThisRound then
                 emptyRounds = 0
             else
                 emptyRounds += 1
-                dbg("[5] รอบนี้วางไม่เพิ่ม (" .. emptyRounds .. "/5) — รอเงิน 1.5 วิ แล้วลองใหม่")
-                task.wait(1.5)
+                task.wait(0.3)
             end
         end
         dbg("[5] จบเคลียร์ต้นทาง | empty=" .. emptyRounds .. " | ใช้เวลา " .. math.floor(os.clock() - fillStart) .. " วิ")
