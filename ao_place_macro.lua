@@ -4,7 +4,7 @@
 -- เล่นซ้ำ + AUTO LOOP: play -> จบด่าน -> กดรางวัล+Replay -> เวฟใหม่ -> play ต่อ
 -- โหลด: loadstring(game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ao_place_macro.lua"))()
 -- ============================================================
-local MACRO_VERSION = "0.3"
+local MACRO_VERSION = "0.4"
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -16,6 +16,10 @@ local placeRemote = RS:FindFirstChild("LobbyRemotes")
 placeRemote = placeRemote and placeRemote:FindFirstChild("TowerHandlerRemotes")
 placeRemote = placeRemote and placeRemote:FindFirstChild("TowerHandlerFunction")
 local setClip = setclipboard or toclipboard or (syn and syn.setclipboard) or set_clipboard or function() end
+
+-- บันทึกลงไฟล์ (กันหายตอนออกด่าน/โหลดใหม่) — เก็บแยกต่อด่าน
+local hasFS = (writefile and readfile and isfile) and true or false
+local MACRO_DIR = "AO_Macros"
 
 -- ---------- helpers ----------
 local function clean(s) return (tostring(s or ""):gsub("<[^>]->", "")) end
@@ -328,7 +332,8 @@ local function saveClip()
     local okj, s = pcall(function() return HttpService:JSONEncode(macro) end)
     if not okj then statusCb("encode ไม่สำเร็จ"); return end
     pcall(setClip, s)
-    statusCb(("📋 คัดลอก | %d เหตุการณ์ | อัพเกรด %d/%d | box=%s"):format(#macro.events, m, t, tostring(macro.container)))
+    saveFile()
+    statusCb(("📋 คัดลอก+เซฟ | %d เหตุการณ์ | อัพเกรด %d/%d | box=%s"):format(#macro.events, m, t, tostring(macro.container)))
     print("[AO MACRO] " .. s)
 end
 local function loadText(text)
@@ -337,6 +342,44 @@ local function loadText(text)
         macro = m; statusCb("โหลด: " .. tostring(m.stage or "?") .. " (" .. #m.events .. ")")
     else statusCb("❌ macro ไม่ถูกต้อง") end
 end
+
+-- ---------- บันทึก/โหลด ไฟล์ (ต่อด่าน) ----------
+local function safeName(s) return (tostring(s):gsub("[^%w]+", "_")):sub(1, 60) end
+local function macroPath(stage) return MACRO_DIR .. "/" .. safeName(stage) .. ".json" end
+local function saveFile()
+    if not hasFS then return false end
+    local st = (macro.stage ~= "" and macro.stage) or readStage()
+    macro.stage = st
+    local okj, s = pcall(function() return HttpService:JSONEncode(macro) end)
+    if not okj then return false end
+    pcall(function() if makefolder and not (isfolder and isfolder(MACRO_DIR)) then makefolder(MACRO_DIR) end end)
+    return (pcall(function() writefile(macroPath(st), s) end))
+end
+local function loadFileForStage(stage)
+    if not hasFS or stage == "Unknown" then return false end
+    local p = macroPath(stage)
+    if not (isfile and isfile(p)) then return false end
+    local okr, s = pcall(function() return readfile(p) end)
+    if not okr then return false end
+    local okd, m = pcall(function() return HttpService:JSONDecode(s) end)
+    if okd and type(m) == "table" and type(m.events) == "table" then macro = m; return true end
+    return false
+end
+-- เข้าด่านไหน → โหลด macro ของด่านนั้นจากไฟล์เอง
+task.spawn(function()
+    task.wait(2)
+    local last = ""
+    while true do
+        local st = readStage()
+        if hasFS and st ~= "Unknown" and st ~= last and not recording and not playing then
+            if macro.stage ~= st or #macro.events == 0 then
+                if loadFileForStage(st) then statusCb("📂 โหลดไฟล์ด่าน: " .. st .. " (" .. #macro.events .. " เหตุการณ์)") end
+            end
+        end
+        last = st
+        task.wait(2)
+    end
+end)
 
 -- ---------- UI ----------
 local gui = Instance.new("ScreenGui"); gui.Name = "AOMacroUI"; gui.ResetOnSpawn = false
@@ -387,7 +430,9 @@ recBtn.MouseButton1Click:Connect(function()
         recBtn.Text = "● REC"; recBtn.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
         macro.stage = readStage()
         local m, t = resolveUpgradeIdx()
-        statusCb(("หยุดอัด — %d เหตุการณ์ | อัพเกรด %d/%d | box=%s"):format(#macro.events, m, t, tostring(macro.container)))
+        local saved = saveFile()
+        statusCb(("หยุดอัด — %d เหตุการณ์ | อัพเกรด %d/%d | box=%s | ไฟล์:%s"):format(
+            #macro.events, m, t, tostring(macro.container), saved and "เซฟแล้ว" or (hasFS and "เซฟไม่ได้" or "ไม่รองรับ")))
     end
 end)
 playBtn.MouseButton1Click:Connect(function()
