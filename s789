@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.6"
+local SCRIPT_VERSION = "v11.7"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3793,6 +3793,7 @@ if GAME_ID == "anime_origins" then
     local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true }
     local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
+    local aoEnteredKey = ""   -- คีย์ของงานที่กำลังฟาร์มอยู่ (mode:stage:difficulty) — เปลี่ยน = กลับล็อบบี้เข้างานใหม่
     local aoFarming = false
     local aoLobbyLoaded = false
     local aoGameLoaded = false
@@ -4208,7 +4209,22 @@ if GAME_ID == "anime_origins" then
                         pcall(aoStartLobby)
                     end
                 elseif game.PlaceId == AO_GAME_PLACE_ID then
-                    pcall(aoStartGame)
+                    local key = tostring(aoCurrentJob.mode) .. ":" .. tostring(aoCurrentJob.stage)
+                        .. ":" .. tostring(aoCurrentJob.difficulty)
+                    if aoFarming and aoEnteredKey ~= "" and key ~= aoEnteredKey then
+                        -- ⭐ งานเปลี่ยนระหว่างฟาร์ม → กลับล็อบบี้ไปเข้างานใหม่ (เดิมวน Replay ด่านเก่า)
+                        print("[AO " .. SCRIPT_VERSION .. "] งานเปลี่ยน: " .. aoEnteredKey
+                            .. " -> " .. key .. " → กลับล็อบบี้")
+                        aoStop()
+                        aoEnteredKey = ""
+                        aoLastLobbyAttempt = 0
+                        pcall(function()
+                            game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
+                        end)
+                    else
+                        pcall(aoStartGame)
+                        if aoFarming and key ~= "::" and key ~= "nil:nil:nil" then aoEnteredKey = key end
+                    end
                 end
             elseif aoFarming then
                 print("[AO " .. SCRIPT_VERSION .. "] job stopped")
