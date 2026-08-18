@@ -4,7 +4,7 @@
 -- เล่นซ้ำ + AUTO LOOP: play -> จบด่าน -> กดรางวัล+Replay -> เวฟใหม่ -> play ต่อ
 -- โหลด: loadstring(game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ao_place_macro.lua"))()
 -- ============================================================
-local MACRO_VERSION = "0.4"
+local MACRO_VERSION = "0.5"
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -298,30 +298,61 @@ local function play()
     end)
 end
 
--- ---------- AUTO LOOP: play -> จบด่าน -> รางวัล+Replay -> เวฟใหม่ -> play ----------
+-- ---------- AUTO (แยก watcher อิสระ เหมือน s789 v11.5) ----------
+local function readWavePair()
+    local cur, total = 0, 0
+    pcall(function()
+        local t = clean(gameUI().TopUI.Info.Wave.TextLabel.Text)   -- เช่น "15/15"
+        local c, tt = t:match("(%d+)%s*/%s*(%d+)")
+        cur, total = tonumber(c) or 0, tonumber(tt) or 0
+    end)
+    return cur, total
+end
+-- คลิกกลางจอ (เก็บไอเทมที่ลอยตอนจบด่าน — ต้องคลิกก่อน UI Victory ถึงโผล่)
+local function clickCenter()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local x, y = math.floor(cam.ViewportSize.X / 2), math.floor(cam.ViewportSize.Y / 2)
+    pcall(function()
+        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0); task.wait(0.05)
+        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+end
+
+-- watcher 1: จบด่าน — เวฟสุดท้าย → คลิกเก็บไอเทมที่ลอย → ActOver โผล่ → รางวัล+Replay
 task.spawn(function()
+    local was = false
     while true do
         if autoOn then
-            if #macro.events > 0 and not playing and not actOverVisible() then
-                play()
-                while autoOn and playing do task.wait(0.3) end                  -- รอเล่นจบ
-                local t0 = os.clock()
-                while autoOn and not actOverVisible() and os.clock() - t0 < 600 do task.wait(0.5) end  -- รอจบด่าน
-                if autoOn and actOverVisible() then
-                    task.wait(0.6); dismissReward(); task.wait(0.3); clickReplay()
-                    statusCb("🔁 จบด่าน → กดรางวัล+Replay")
-                    local w0 = os.clock()
-                    while autoOn and actOverVisible() and os.clock() - w0 < 20 do task.wait(0.3) end   -- รอ ActOver ปิด
-                    local w1 = os.clock()
-                    while autoOn and readWave() > 2 and os.clock() - w1 < 30 do task.wait(0.5) end      -- รอเวฟใหม่
-                    task.wait(1.2)
-                end
-            else
-                task.wait(0.5)
+            local vis = actOverVisible()
+            if vis and not was then
+                task.wait(0.4); dismissReward(); task.wait(0.3); clickReplay()
+                statusCb("🔁 Victory → กดรางวัล+Replay")
+            elseif not vis and not playing then
+                local cur, total = readWavePair()
+                if total > 0 and cur >= total then clickCenter() end   -- ด่านจบ → เก็บไอเทมลอย
             end
+            was = vis
         else
-            task.wait(0.5)
+            was = false
         end
+        task.wait(0.7)
+    end
+end)
+
+-- watcher 2: เวฟใหม่ (Replay เริ่มด่านใหม่) → เล่น macro
+task.spawn(function()
+    local lastW = 0
+    while true do
+        if autoOn and not playing and #macro.events > 0 then
+            local w = readWave()
+            if w > 0 and w <= 2 and lastW > 2 and not actOverVisible() then
+                statusCb("🔁 เวฟใหม่ → PLAY")
+                task.wait(0.8); play()
+            end
+            lastW = w
+        end
+        task.wait(0.5)
     end
 end)
 
@@ -445,6 +476,8 @@ autoBtn.MouseButton1Click:Connect(function()
     autoOn = not autoOn
     autoBtn.Text = autoOn and "🔁 AUTO: ON" or "🔁 AUTO: OFF"
     autoBtn.BackgroundColor3 = autoOn and Color3.fromRGB(68, 151, 101) or Color3.fromRGB(70, 74, 86)
+    -- เปิด AUTO → เล่นรอบแรกเลย (รอบถัดไป watcher 2 จับเวฟใหม่เอง)
+    if autoOn and not playing and #macro.events > 0 and not actOverVisible() then play() end
 end)
 task.spawn(function()
     while gui.Parent do if not playing and playBtn.Text == "■ STOP" and not autoOn then playBtn.Text = "▶ PLAY" end; task.wait(0.5) end
