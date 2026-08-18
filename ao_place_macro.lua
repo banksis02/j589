@@ -4,7 +4,7 @@
 -- เล่นซ้ำ + AUTO LOOP: play -> จบด่าน -> กดรางวัล+Replay -> เวฟใหม่ -> play ต่อ
 -- โหลด: loadstring(game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ao_place_macro.lua"))()
 -- ============================================================
-local MACRO_VERSION = "0.5"
+local MACRO_VERSION = "0.6"
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -163,6 +163,7 @@ end
 -- ---------- state ----------
 local macro = { version = MACRO_VERSION, stage = "", events = {}, container = nil, field = nil }
 local recording, playing, autoOn = false, false, false
+local pendingPlay = false   -- ตั้ง true ตอนกด Replay = รอบใหม่กำลังมา ให้ play เมื่อเวฟใหม่พร้อม
 local recStart = 0
 -- track appearance order ต่อ container ตอนอัด
 local recTrack = {}   -- [name] = { inst=..., order={inst}, seen={}, keyIdx={} }
@@ -327,7 +328,8 @@ task.spawn(function()
             local vis = actOverVisible()
             if vis and not was then
                 task.wait(0.4); dismissReward(); task.wait(0.3); clickReplay()
-                statusCb("🔁 Victory → กดรางวัล+Replay")
+                pendingPlay = true   -- กด Replay แล้ว → รอบใหม่กำลังมา
+                statusCb("🔁 Victory → Replay (รอเวฟใหม่)")
             elseif not vis and not playing then
                 local cur, total = readWavePair()
                 if total > 0 and cur >= total then clickCenter() end   -- ด่านจบ → เก็บไอเทมลอย
@@ -340,17 +342,17 @@ task.spawn(function()
     end
 end)
 
--- watcher 2: เวฟใหม่ (Replay เริ่มด่านใหม่) → เล่น macro
+-- watcher 2: รอบใหม่พร้อม (pendingPlay + ActOver ปิด + เวฟต่ำ) → เล่น macro
+-- ใช้ flag แทนการเดาจากเวฟ (เดิม lastW โดนรีเซ็ตเป็น 0 ตอน Victory → ไม่ trigger)
 task.spawn(function()
-    local lastW = 0
     while true do
-        if autoOn and not playing and #macro.events > 0 then
+        if autoOn and pendingPlay and not playing and #macro.events > 0 and not actOverVisible() then
             local w = readWave()
-            if w > 0 and w <= 2 and lastW > 2 and not actOverVisible() then
+            if w >= 1 and w <= 3 then   -- ด่านใหม่เริ่มแล้ว (เวฟต่ำ สนามใหม่)
+                pendingPlay = false
                 statusCb("🔁 เวฟใหม่ → PLAY")
-                task.wait(0.8); play()
+                task.wait(1.0); play()
             end
-            lastW = w
         end
         task.wait(0.5)
     end
