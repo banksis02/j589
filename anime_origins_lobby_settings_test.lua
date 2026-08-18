@@ -3,7 +3,7 @@
 -- Applies settings only in the Anime Origins lobby.
 -- ============================================================
 
-local VERSION = "0.2"
+local VERSION = "0.3"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -118,21 +118,23 @@ local function setToggle(settings, names, desired)
         return false
     end
 
-    for attempt = 1, 3 do
+    for attempt = 1, 6 do
         local current, button = toggleState(option)
         if current == desired then
             print(string.format("[AO SETTINGS] OK %-30s = %s", option.Name, desired and "ON" or "OFF"))
             return true
         end
         if current == nil then
-            print("[AO SETTINGS] STATE UNKNOWN " .. option.Name)
-            return false
+            -- toggle ยังไม่พร้อม (เพิ่ง teleport เข้า lobby / SettingsFrame ยังโหลด icon ไม่ครบ)
+            -- → รอแล้วลองใหม่ แทนที่จะเลิกทันที (เดิมเลิก = บางไอดี AutoStart ไม่เปิด)
+            print(string.format("[AO SETTINGS] WAIT %-28s state ยังไม่พร้อม (รอบ %d)", option.Name, attempt))
+            task.wait(0.45)
+        else
+            local clicked, method = fireButton(button)
+            print(string.format("[AO SETTINGS] SET %-29s %s via %s", option.Name, desired and "ON" or "OFF", method))
+            if not clicked then return false end
+            task.wait(0.35)
         end
-
-        local clicked, method = fireButton(button)
-        print(string.format("[AO SETTINGS] SET %-29s %s via %s", option.Name, desired and "ON" or "OFF", method))
-        if not clicked then return false end
-        task.wait(0.35)
     end
 
     local current = toggleState(option)
