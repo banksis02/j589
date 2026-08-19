@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.31"
+local TEST_VERSION = "0.32"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1113,8 +1113,73 @@ allButton.MouseButton1Click:Connect(function()
             end
             local total = 0
             for slot = 1, 6 do total += slotPlaced[slot] end
-            dbg(string.format("========== จบ Legend | กระจุก 75-85% | วางรวม %d | บนสนาม=%d | empty=%d ==========",
+            dbg(string.format("========== วาง Legend เสร็จ | กระจุก 75-85% | วางรวม %d | บนสนาม=%d | empty=%d ==========",
                 total, placementCount(), emptyRounds))
+
+            -- ⭐ ออโต้อัพเกรดเอง (Legend ปิดออโต้อัพเกรดเกม): ตัวเงินจน max ก่อน แล้วค่อยตัวดาเมจ
+            local function umSF()
+                local ok, sf = pcall(function()
+                    return player.PlayerGui.GameUI.ManagementFrame.UnitManagerFrame.Main.CanvasGroup.ScrollingFrame
+                end)
+                return ok and sf or nil
+            end
+            local function upgradeOnce(uuid)
+                if not placeRemote then return false end
+                local ok, res = pcall(function() return placeRemote:InvokeServer("UpgradeTower", uuid) end)
+                return ok and res == true
+            end
+            local function towerMaxed(uuid)
+                local sf = umSF(); if not sf then return false end
+                local c = sf:FindFirstChild(uuid); if not c then return true end
+                local maxed = false
+                pcall(function()
+                    for _, d in ipairs(c:GetDescendants()) do
+                        if d:IsA("TextLabel") and tostring(d.Text):upper():find("MAX") then maxed = true; break end
+                    end
+                end)
+                return maxed
+            end
+            local function readPlaced()
+                local moneyU, damageU = {}, {}
+                local sf = umSF()
+                if sf then
+                    for _, c in ipairs(sf:GetChildren()) do
+                        if c:IsA("GuiObject") and #c.Name >= 30 and c.Name:find("%-") then
+                            local nm = ""
+                            pcall(function() nm = tostring(c.Main.TowerButton.ImageLabel.Info.NameLabel.Text) end)
+                            if nm:lower():find("leorio") then moneyU[#moneyU + 1] = c.Name
+                            else damageU[#damageU + 1] = c.Name end
+                        end
+                    end
+                end
+                return moneyU, damageU
+            end
+            task.wait(0.5)
+            local moneyU, damageU = readPlaced()
+            dbg(("[Legend] อัพเกรดเอง: ตัวเงิน %d / ดาเมจ %d"):format(#moneyU, #damageU))
+            -- 1) ตัวเงินจน max (ทีละตัว) — เงินไม่พอก็รอ
+            for _, uuid in ipairs(moneyU) do
+                local t0 = os.clock()
+                while stillRunning() and os.clock() - t0 < 25 do
+                    if towerMaxed(uuid) then break end
+                    if upgradeOnce(uuid) then task.wait(0.15) else task.wait(0.6) end
+                end
+            end
+            dbg("[Legend] ตัวเงิน max แล้ว → อัพเกรดตัวดาเมจ")
+            -- 2) ตัวดาเมจทั้งหมด (วน round-robin จน max หรือหมดเวลา)
+            local dmgT0, allMax = os.clock(), false
+            while stillRunning() and not allMax and os.clock() - dmgT0 < 150 do
+                allMax = true
+                for _, uuid in ipairs(damageU) do
+                    if not stillRunning() then break end
+                    if not towerMaxed(uuid) then
+                        allMax = false
+                        if upgradeOnce(uuid) then task.wait(0.15) else task.wait(0.5) end
+                    end
+                end
+            end
+            dbg("[Legend] อัพเกรดตัวดาเมจเสร็จ (allMax=" .. tostring(allMax) .. ")")
+
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
