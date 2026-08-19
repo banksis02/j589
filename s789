@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.9"
+local SCRIPT_VERSION = "v11.10"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3924,14 +3924,14 @@ if GAME_ID == "anime_origins" then
             for _, v in ipairs(childrenOf(registry)) do scan(v, 1) end
             live = best
             aoBattlepassLive = best
-            print(("[AO %s] BP scan: nodes=%d bestExp=%d"):format(SCRIPT_VERSION, nodes, bestExp))
+            print(("[AO %s] BP scan: nodes=%s bestExp=%s"):format(SCRIPT_VERSION, tostring(nodes), tostring(bestExp)))
         end
         if type(live) ~= "table" then
             print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
             return nil
         end
 
-        local exp = math.max(0, tonumber(rawget(live, "Exp")) or 0)
+        local exp = math.floor(math.max(0, tonumber(rawget(live, "Exp")) or 0))
 
         -- ⭐ คำนวณ level เอง จากสูตรจริงของเกม (decompile BattlepassInfo v11.8):
         --   ฟังก์ชันเกม (NeededBattlepassExp/GetBattlepassLevelFromExp) เรียกจาก client
@@ -3967,7 +3967,7 @@ if GAME_ID == "anime_origins" then
         -- พิมพ์ทุก heartbeat ตราบใดที่ level ยังผิด (0) เพื่อให้เห็นใน log ล่าสุดเสมอ; พอใช้ได้แล้วพิมพ์แค่ 3 ครั้งแรกพอ
         if (level or 0) <= 0 or aoBattlepassDbg < 3 then
             aoBattlepassDbg = aoBattlepassDbg + 1
-            print(("[AO %s] BP debug: Exp=%d Level=%d src=%s"):format(SCRIPT_VERSION, exp, level or -1, levelSrc))
+            print(("[AO %s] BP debug: Exp=%s Level=%s src=%s"):format(SCRIPT_VERSION, tostring(exp), tostring(level or -1), levelSrc))
         end
 
         return {
@@ -8309,7 +8309,11 @@ end
 --    ถ้ายังไม่เรียนรู้ → ลองยิงทุก token ที่น่าจะใช่ (ตัวผิด server ignore)
 local learnedNodeToken = "MapData"   -- ⭐ ยืนยันแล้ว: SetNodeQueue = replica MapData
 local scriptFiring = false           -- กัน hook เรียนรู้จากการยิงของเราเอง
-local sig = RS.RemoteEvents.ReplicaSignal
+local sig
+pcall(function()   -- Anime Origins ไม่มี RS.RemoteEvents → เดิม index ตรงๆ throw → abort ครึ่งสคริปต์
+    local re = RS:FindFirstChild("RemoteEvents")
+    sig = re and re:FindFirstChild("ReplicaSignal")
+end)
 pcall(function()
     local oldNC
     oldNC = hookmetamethod(game, "__namecall", function(self, ...)
