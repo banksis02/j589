@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.11"
+local SCRIPT_VERSION = "v11.12"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3870,15 +3870,22 @@ if GAME_ID == "anime_origins" then
     -- exact EXP -> level formula, so do not estimate the level ourselves.
     local function aoBattlepassStatus()
         _G.AO_BP_TRACE = "enter"
+        -- module BattlepassInfo เป็น OPTIONAL: บาง executor require มันในบริบท chunk ไม่ได้
+        -- (โพรบ console require ได้ แต่ตัวสคริปต์เอง require คืน nil → เคยทำ battlepass พังทั้งระบบ).
+        -- เราไม่พึ่งมันจริง: live Exp มาจาก registry (getreg) ; season default "Season1" ;
+        -- ค่าคงที่ Base_Exp/Exp_Multiplier/Repeat/maxLv มี fallback ฝังไว้ (decompile ยืนยัน).
         if type(aoBattlepassInfo) ~= "table" then
+            local rerr
             pcall(function()
                 aoBattlepassInfo = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("BattlepassInfo"))
             end)
+            if type(aoBattlepassInfo) ~= "table" then
+                pcall(function()
+                    aoBattlepassInfo = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("BattlepassInfo"))
+                end)
+            end
         end
-        if type(aoBattlepassInfo) ~= "table" then
-            _G.AO_BP_TRACE = "nil@module type=" .. type(aoBattlepassInfo)
-            return nil
-        end
+        local infoTbl = (type(aoBattlepassInfo) == "table") and aoBattlepassInfo or nil
 
         local registry = nil
         if type(getreg) == "function" then
@@ -3891,8 +3898,8 @@ if GAME_ID == "anime_origins" then
             return nil
         end
 
-        local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
-        _G.AO_BP_TRACE = "past-guards season=" .. season
+        local season = tostring((infoTbl and infoTbl.CurrentBattlepass) or "Season1")
+        _G.AO_BP_TRACE = "past-guards season=" .. season .. " mod=" .. tostring(infoTbl ~= nil)
 
         -- ข้อมูลจริงของผู้เล่นอยู่ที่ PlayerData.Battlepasses[season] แต่ซ้อนลึกใน registry
         -- (recon เจอผ่าน deep search) และมี Template Exp=0 ปนอยู่ ~430 ก้อน
@@ -3952,7 +3959,7 @@ if GAME_ID == "anime_origins" then
         --   level > maxLv = ชั้น repeat ด้วย Repeat_Exp_Multiplier
         local level, levelSrc = 0, "gameFormula"
         do
-            local s1 = rawget(aoBattlepassInfo, season) or rawget(aoBattlepassInfo, "Season1")
+            local s1 = infoTbl and (rawget(infoTbl, season) or rawget(infoTbl, "Season1"))
             local base = (s1 and tonumber(rawget(s1, "Base_Exp"))) or 170
             local mult = (s1 and tonumber(rawget(s1, "Exp_Multiplier"))) or 1.34
             local rmult = (s1 and tonumber(rawget(s1, "Repeat_Exp_Multiplier"))) or 1.2
