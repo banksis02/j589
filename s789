@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.8"
+local SCRIPT_VERSION = "v11.9"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3897,27 +3897,34 @@ if GAME_ID == "anime_origins" then
         if looksLikeLive(aoBattlepassLive) then
             live = aoBattlepassLive
         else
+            -- ⭐ scan ทนต่อ error รายตาราง: บางตารางใน registry มี __pairs/__index ที่ error
+            -- ถ้าใช้ pcall รอบนอกอันเดียว → error ตารางเดียว = ทั้ง scan พังก่อนถึง Season1
+            -- (probe เจอ Exp แต่สคริปต์คืน nil เพราะเหตุนี้) → pcall ต่อตาราง ข้ามตัวพังไป
             local best, bestExp = nil, -1
             local seen, nodes = {}, 0
+            local function childrenOf(t)
+                local kids = {}
+                pcall(function()
+                    for _, v in pairs(t) do
+                        if type(v) == "table" then kids[#kids + 1] = v end
+                    end
+                end)
+                return kids
+            end
             local function scan(t, depth)
                 if type(t) ~= "table" or seen[t] or depth > 10 or nodes > 150000 then return end
                 seen[t] = true; nodes = nodes + 1
-                local entry = rawget(t, season)
-                if looksLikeLive(entry) then
+                local ok, entry = pcall(rawget, t, season)
+                if ok and looksLikeLive(entry) then
                     local exp = tonumber(rawget(entry, "Exp"))
-                    if exp > bestExp then bestExp = exp; best = entry end
+                    if exp and exp > bestExp then bestExp = exp; best = entry end
                 end
-                for _, v in pairs(t) do
-                    if type(v) == "table" then scan(v, depth + 1) end
-                end
+                for _, v in ipairs(childrenOf(t)) do scan(v, depth + 1) end
             end
-            pcall(function()
-                for _, v in pairs(registry) do
-                    if type(v) == "table" then scan(v, 1) end
-                end
-            end)
+            for _, v in ipairs(childrenOf(registry)) do scan(v, 1) end
             live = best
             aoBattlepassLive = best
+            print(("[AO %s] BP scan: nodes=%d bestExp=%d"):format(SCRIPT_VERSION, nodes, bestExp))
         end
         if type(live) ~= "table" then
             print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
