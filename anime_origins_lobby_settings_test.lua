@@ -3,7 +3,7 @@
 -- Applies settings only in the Anime Origins lobby.
 -- ============================================================
 
-local VERSION = "0.3"
+local VERSION = "0.4"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -233,10 +233,18 @@ local function applyLobbySettings()
         return false, "SettingsFrame not found"
     end
 
+    -- ⭐ Legend: ปิด AutoUpgradeOnPlacement ของเกม (module วางตัวจัดการอัพเกรดเอง —
+    --    ตัวเงินจน max ก่อน แล้วค่อยดาเมจ). โหมดอื่น (gem/battlepass) เปิดปกติ.
+    local legendMode = tostring(_G.AO_PLACE_MODE) == "ao_legend"
+
     local successCount = 0
     local total = #TARGET_TOGGLES + #TARGET_LOW
     for _, entry in ipairs(TARGET_TOGGLES) do
-        if setToggle(settings, entry[1], entry[2]) then successCount += 1 end
+        local want = entry[2]
+        if entry[1][1] == "AutoUpgradeOnPlacement" and legendMode then
+            want = false
+        end
+        if setToggle(settings, entry[1], want) then successCount += 1 end
         task.wait(0.08)
     end
     for _, names in ipairs(TARGET_LOW) do

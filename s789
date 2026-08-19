@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.12"
+local SCRIPT_VERSION = "v11.13"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -4154,6 +4154,10 @@ if GAME_ID == "anime_origins" then
             return _G.AO_ENTER_WESTCITY_INFINITE()
         end
         _G.AO_HEADLESS = true
+        -- ⭐ ตั้งโหมดก่อน apply settings เพื่อให้ lobby module รู้ว่าเป็น Legend
+        --    (Legend → ปิด AutoUpgradeOnPlacement ใช้ระบบอัพเกรดเราเอง). aoCurrentJob
+        --    ถูกเซ็ตแล้วในลูป poll ก่อนเรียก aoStartLobby ; aoStartGame จะเซ็ตซ้ำภายหลัง
+        _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
         -- โหลดโมดูล settings ครั้งเดียว (manual = ไม่ให้มัน apply เองตอนโหลด)
         if type(_G.AO_APPLY_LOBBY_SETTINGS) ~= "function" then
             _G.AO_SETTINGS_MANUAL = true
