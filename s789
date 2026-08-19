@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.7"
+local SCRIPT_VERSION = "v11.8"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3926,38 +3926,35 @@ if GAME_ID == "anime_origins" then
 
         local exp = math.max(0, tonumber(rawget(live, "Exp")) or 0)
 
-        -- level: GetBattlepassLevelFromExp พังทุก convention (index nil 'Base_Exp' ฝั่ง client)
-        -- → ใช้ NeededBattlepassExp(i) = "exp สะสมที่ต้องมีเพื่อถึงเลเวล i" (need(1)=0, need(2)=170, ...)
-        --   level = i สูงสุดที่ need(i) <= exp
-        local level, levelSrc = nil, "none"
-        local needFn = aoBattlepassInfo.NeededBattlepassExp
-        if type(needFn) == "function" then
-            local function needAt(i)
-                local ok, v = pcall(needFn, aoBattlepassInfo, i)
-                if not ok or not tonumber(v) then ok, v = pcall(needFn, season, i) end
-                if not ok or not tonumber(v) then ok, v = pcall(needFn, i) end
-                return ok and tonumber(v) or nil
-            end
-            if needAt(1) ~= nil then
-                local lv = 0
-                for i = 1, 500 do
-                    local nd = needAt(i)
-                    if nd == nil then break end
-                    if nd <= exp then lv = i else break end
-                end
-                level = lv; levelSrc = "needThreshold"
-            end
-        end
-        -- fallback: สูตรเรขาคณิต Base_Exp * Exp_Multiplier^n (เผื่อ needFn หาย)
-        if level == nil then
-            local s1 = rawget(aoBattlepassInfo, "Season1")
+        -- ⭐ คำนวณ level เอง จากสูตรจริงของเกม (decompile BattlepassInfo v11.8):
+        --   ฟังก์ชันเกม (NeededBattlepassExp/GetBattlepassLevelFromExp) เรียกจาก client
+        --   ไม่ได้ทุกทาง (index server data) → ฝังสูตรตรงๆ
+        --   need(L) = Base_Exp * (L-1)^Exp_Multiplier   (โพลิโนเมียล ไม่ใช่ exponential!)
+        --   maxLv = max(#Items.Normal, #Items.Premium)
+        --   level > maxLv = ชั้น repeat ด้วย Repeat_Exp_Multiplier
+        local level, levelSrc = 0, "gameFormula"
+        do
+            local s1 = rawget(aoBattlepassInfo, season) or rawget(aoBattlepassInfo, "Season1")
             local base = (s1 and tonumber(rawget(s1, "Base_Exp"))) or 170
             local mult = (s1 and tonumber(rawget(s1, "Exp_Multiplier"))) or 1.34
-            local lv, remain, need = 0, exp, base
-            while remain >= need and lv < 500 do
-                remain = remain - need; lv = lv + 1; need = base * (mult ^ lv)
+            local rmult = (s1 and tonumber(rawget(s1, "Repeat_Exp_Multiplier"))) or 1.2
+            local maxLv = 52
+            pcall(function()
+                local items = s1 and rawget(s1, "Items")
+                local nn = items and rawget(items, "Normal")
+                local pp = items and rawget(items, "Premium")
+                local m = math.max(nn and #nn or 0, pp and #pp or 0)
+                if m >= 1 then maxLv = m end
+            end)
+            local function need(L) return base * (L - 1) ^ mult end
+            if exp <= need(maxLv) then
+                level = math.floor((exp / base) ^ (1 / mult) + 1e-9) + 1
+            else
+                local d = need(maxLv) - need(maxLv - 1)
+                if d <= 0 then d = 1 end
+                level = maxLv + math.floor(((exp - need(maxLv)) / d) ^ (1 / rmult) + 1e-9)
             end
-            level = lv; levelSrc = "geoFormula"
+            if level < 1 then level = 1 end
         end
 
         -- พิมพ์ทุก heartbeat ตราบใดที่ level ยังผิด (0) เพื่อให้เห็นใน log ล่าสุดเสมอ; พอใช้ได้แล้วพิมพ์แค่ 3 ครั้งแรกพอ
