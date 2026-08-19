@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.32"
+local TEST_VERSION = "0.33"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -993,6 +993,14 @@ allButton.MouseButton1Click:Connect(function()
         dbg("ตั้ง game speed: " .. tostring(speedMessage))
         setStatus(speedMessage, speedLevel ~= nil)
         task.wait(0.15)
+
+        -- ⭐ Legend: ปิด AutoUpgradeOnPlacement ของเกม "ในด่านเลย" ก่อนวางตัวแรก
+        --    (ถ้าเปิด เกมจะอัพเกรดตัวที่วางทันที กินเงินที่เราต้องใช้วาง Leorio/ดาเมจ).
+        --    ระบบเราคุมอัพเกรดเอง: ตัวเงิน max ก่อน แล้วค่อยดาเมจ. โหมดอื่นไม่แตะ.
+        if tostring(_G.AO_PLACE_MODE) == "ao_legend" and type(_G.AO_SET_TOGGLE) == "function" then
+            local okUp = _G.AO_SET_TOGGLE("AutoUpgradeOnPlacement", false)
+            dbg("[Legend] ปิด AutoUpgradeOnPlacement เกม = " .. tostring(okUp))
+        end
 
         -- รอ hotbar โหลดยูนิตให้ "เสถียร" ก่อนเริ่มวาง
         -- (ตอน replay เกมรีเร็ว ช่องยูนิตยังขึ้นไม่ครบ → เดิมวางเอ๋อ:

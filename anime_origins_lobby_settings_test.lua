@@ -3,7 +3,7 @@
 -- Applies settings only in the Anime Origins lobby.
 -- ============================================================
 
-local VERSION = "0.4"
+local VERSION = "0.5"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -259,6 +259,18 @@ local function applyLobbySettings()
 end
 
 _G.AO_APPLY_LOBBY_SETTINGS = applyLobbySettings
+
+-- ⭐ toggle setting รายตัว ใช้ได้ทั้ง lobby และในด่าน (SettingsFrame อยู่ในทรีแม้ panel ปิด,
+--    fireButton ใช้ firesignal ไม่ต้องเปิด panel). Legend เรียกปิด AutoUpgradeOnPlacement
+--    ในเกมได้เลย ไม่ต้องออก lobby.
+_G.AO_SET_TOGGLE = function(name, desired)
+    local settings = waitForSettings(10)
+    if not settings then
+        print("[AO SETTINGS v" .. VERSION .. "] SET_TOGGLE: SettingsFrame not found")
+        return false
+    end
+    return setToggle(settings, { tostring(name) }, desired and true or false)
+end
 
 if game.PlaceId == LOBBY_PLACE_ID and _G.AO_SETTINGS_MANUAL ~= true then
     task.spawn(applyLobbySettings)
