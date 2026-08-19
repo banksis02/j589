@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.30"
+local TEST_VERSION = "0.31"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1085,6 +1085,41 @@ allButton.MouseButton1Click:Connect(function()
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
             setStatus("ไม่พบตัวดาเมจในช่องที่เหลือ", false)
+            placing = false
+            return
+        end
+
+        -- ⭐ โหมด Legend (ด่านยาก): นอกจากตัวเงิน → ตัวที่เหลือทั้งหมดกระจุกที่ 75-85%
+        --    + ใช้ Hill ด้วย (Auto = ลอง ground+hill) เพราะมอน Hill โผล่ตั้งแต่ต้นเกม
+        --    ข้ามชุดดักหน้ามอน/เติม 5-10% ของโหมดอื่น
+        if tostring(_G.AO_PLACE_MODE) == "ao_legend" then
+            dbg("[Legend] วางตัวที่เหลือกระจุก 75-85% (Auto=ground+hill)")
+            local legendPercents = {75, 78, 81, 84, 85, 82, 79, 76, 80, 83, 77}
+            local lpIdx, emptyRounds = 1, 0
+            local fillStart = os.clock()
+            while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 3 do
+                local placedThisRound, moneyBlocked = false, false
+                for _, slot in ipairs(damageSlots) do
+                    if not stillRunning() then break end
+                    local percent = legendPercents[lpIdx]
+                    lpIdx = lpIdx % #legendPercents + 1
+                    local ok, res = queueOne(slot, "Auto", percent, "Legend กระจุก 75-85%")
+                    if ok then placedThisRound = true
+                    elseif res == -1 then moneyBlocked = true end
+                end
+                if placedThisRound then emptyRounds = 0
+                elseif moneyBlocked then setStatus("[Legend] เงินไม่พอ — รอเงินแล้ววางต่อ"); task.wait(1.5)
+                else emptyRounds = emptyRounds + 1; task.wait(0.3) end
+            end
+            local total = 0
+            for slot = 1, 6 do total += slotPlaced[slot] end
+            dbg(string.format("========== จบ Legend | กระจุก 75-85% | วางรวม %d | บนสนาม=%d | empty=%d ==========",
+                total, placementCount(), emptyRounds))
+            smartRunning = false
+            allButton.Text = "SMART AUTO COMPLETE"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            status.Text = string.format("Legend วางครบ | รวม %d ตำแหน่ง", total)
+            status.TextColor3 = Color3.fromRGB(124, 225, 151)
             placing = false
             return
         end
