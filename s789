@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.10"
+local SCRIPT_VERSION = "v11.11"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3869,12 +3869,16 @@ if GAME_ID == "anime_origins" then
     -- while inside a match. BattlepassInfo is replicated and owns the game's
     -- exact EXP -> level formula, so do not estimate the level ourselves.
     local function aoBattlepassStatus()
-        if not aoBattlepassInfo then
+        _G.AO_BP_TRACE = "enter"
+        if type(aoBattlepassInfo) ~= "table" then
             pcall(function()
                 aoBattlepassInfo = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("BattlepassInfo"))
             end)
         end
-        if type(aoBattlepassInfo) ~= "table" then return nil end
+        if type(aoBattlepassInfo) ~= "table" then
+            _G.AO_BP_TRACE = "nil@module type=" .. type(aoBattlepassInfo)
+            return nil
+        end
 
         local registry = nil
         if type(getreg) == "function" then
@@ -3882,9 +3886,13 @@ if GAME_ID == "anime_origins" then
         elseif debug and type(debug.getregistry) == "function" then
             pcall(function() registry = debug.getregistry() end)
         end
-        if type(registry) ~= "table" then return nil end
+        if type(registry) ~= "table" then
+            _G.AO_BP_TRACE = "nil@registry getreg=" .. type(getreg) .. " reg=" .. type(registry)
+            return nil
+        end
 
         local season = tostring(aoBattlepassInfo.CurrentBattlepass or "Season1")
+        _G.AO_BP_TRACE = "past-guards season=" .. season
 
         -- ข้อมูลจริงของผู้เล่นอยู่ที่ PlayerData.Battlepasses[season] แต่ซ้อนลึกใน registry
         -- (recon เจอผ่าน deep search) และมี Template Exp=0 ปนอยู่ ~430 ก้อน
@@ -3896,6 +3904,7 @@ if GAME_ID == "anime_origins" then
         local live = nil
         if looksLikeLive(aoBattlepassLive) then
             live = aoBattlepassLive
+            _G.AO_BP_TRACE = "cache-hit"
         else
             -- ⭐ scan ทนต่อ error รายตาราง: บางตารางใน registry มี __pairs/__index ที่ error
             -- ถ้าใช้ pcall รอบนอกอันเดียว → error ตารางเดียว = ทั้ง scan พังก่อนถึง Season1
@@ -3924,9 +3933,11 @@ if GAME_ID == "anime_origins" then
             for _, v in ipairs(childrenOf(registry)) do scan(v, 1) end
             live = best
             aoBattlepassLive = best
+            _G.AO_BP_TRACE = "scanned nodes=" .. tostring(nodes) .. " bestExp=" .. tostring(bestExp)
             print(("[AO %s] BP scan: nodes=%s bestExp=%s"):format(SCRIPT_VERSION, tostring(nodes), tostring(bestExp)))
         end
         if type(live) ~= "table" then
+            _G.AO_BP_TRACE = (_G.AO_BP_TRACE or "") .. " | nil@live-not-table"
             print("[AO " .. SCRIPT_VERSION .. "] BP debug: live entry NOT found in registry")
             return nil
         end
@@ -3970,6 +3981,7 @@ if GAME_ID == "anime_origins" then
             print(("[AO %s] BP debug: Exp=%s Level=%s src=%s"):format(SCRIPT_VERSION, tostring(exp), tostring(level or -1), levelSrc))
         end
 
+        _G.AO_BP_TRACE = "ok Exp=" .. tostring(exp) .. " Lv=" .. tostring(level)
         return {
             Season = season,
             Exp = exp,
