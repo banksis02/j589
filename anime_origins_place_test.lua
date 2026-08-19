@@ -3,7 +3,7 @@
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.33"
+local TEST_VERSION = "0.34"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1064,12 +1064,18 @@ allButton.MouseButton1Click:Connect(function()
             local leoStart = os.clock()
             local leoPercents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
             local leoIdx = 1
+            -- ⭐ Legend: pre-block สั้น (วางเท่าที่เงินพอเร็วๆ) เพราะ fill loop เติม Leorio→3 + อัพเกรดต่อให้
+            --    (เดิมรอ 15 วิ = ตัวไม่อัพเลยช่วงนั้น). โหมดอื่น: คงเดิม 3 ตัว/15 วิ
+            local isLegend = tostring(_G.AO_PLACE_MODE) == "ao_legend"
+            local leoCap = isLegend and 5 or 15
             -- วาง Leo ให้ครบ 3 (ตัวเงิน=รายได้) — เงินไม่พอก็รอสั้นๆ ให้ตัวที่วางแล้วหาเงิน แล้วลองใหม่ (ไม่ STOP)
-            while stillRunning() and leorioQueued < 3 and os.clock() - leoStart < 15 do
+            while stillRunning() and leorioQueued < 3 and os.clock() - leoStart < leoCap do
                 local percent = leoPercents[leoIdx]
                 leoIdx = leoIdx % #leoPercents + 1
                 if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
                     leorioQueued += 1
+                elseif isLegend and leorioQueued >= 1 then
+                    break   -- Legend: ได้ตัวแรกแล้วเงินหมด → ไปวางดาเมจ+อัพเกรดขนานเลย ค่อยเติม Leorio ทีหลัง
                 else
                     task.wait(0.6)   -- เงินไม่พอ → รอเงินจาก Leo ที่วางไปแล้ว
                 end
@@ -1101,30 +1107,8 @@ allButton.MouseButton1Click:Connect(function()
         --    + ใช้ Hill ด้วย (Auto = ลอง ground+hill) เพราะมอน Hill โผล่ตั้งแต่ต้นเกม
         --    ข้ามชุดดักหน้ามอน/เติม 5-10% ของโหมดอื่น
         if tostring(_G.AO_PLACE_MODE) == "ao_legend" then
-            dbg("[Legend] วางตัวที่เหลือกระจุก 75-85% (Auto=ground+hill)")
-            local legendPercents = {75, 78, 81, 84, 85, 82, 79, 76, 80, 83, 77}
-            local lpIdx, emptyRounds = 1, 0
-            local fillStart = os.clock()
-            while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 3 do
-                local placedThisRound, moneyBlocked = false, false
-                for _, slot in ipairs(damageSlots) do
-                    if not stillRunning() then break end
-                    local percent = legendPercents[lpIdx]
-                    lpIdx = lpIdx % #legendPercents + 1
-                    local ok, res = queueOne(slot, "Auto", percent, "Legend กระจุก 75-85%")
-                    if ok then placedThisRound = true
-                    elseif res == -1 then moneyBlocked = true end
-                end
-                if placedThisRound then emptyRounds = 0
-                elseif moneyBlocked then setStatus("[Legend] เงินไม่พอ — รอเงินแล้ววางต่อ"); task.wait(1.5)
-                else emptyRounds = emptyRounds + 1; task.wait(0.3) end
-            end
-            local total = 0
-            for slot = 1, 6 do total += slotPlaced[slot] end
-            dbg(string.format("========== วาง Legend เสร็จ | กระจุก 75-85% | วางรวม %d | บนสนาม=%d | empty=%d ==========",
-                total, placementCount(), emptyRounds))
-
-            -- ⭐ ออโต้อัพเกรดเอง (Legend ปิดออโต้อัพเกรดเกม): ตัวเงินจน max ก่อน แล้วค่อยตัวดาเมจ
+            -- ⭐ อัพเกรดเอง (auto-upgrade เกมปิดแล้ว) — helpers ต้องนิยามก่อน เพื่ออัพเกรด "ขนาน" กับการวาง
+            --    (เดิมอัพหลังวางเสร็จ 90 วิ → ด่านยาก ตัวไม่อัพ 90 วิ ตายก่อน/ด่านจบก่อน upgrade เริ่ม)
             local function umSF()
                 local ok, sf = pcall(function()
                     return player.PlayerGui.GameUI.ManagementFrame.UnitManagerFrame.Main.CanvasGroup.ScrollingFrame
@@ -1138,7 +1122,7 @@ allButton.MouseButton1Click:Connect(function()
             end
             local function towerMaxed(uuid)
                 local sf = umSF(); if not sf then return false end
-                local c = sf:FindFirstChild(uuid); if not c then return true end
+                local c = sf:FindFirstChild(uuid); if not c then return false end
                 local maxed = false
                 pcall(function()
                     for _, d in ipairs(c:GetDescendants()) do
@@ -1155,38 +1139,82 @@ allButton.MouseButton1Click:Connect(function()
                         if c:IsA("GuiObject") and #c.Name >= 30 and c.Name:find("%-") then
                             local nm = ""
                             pcall(function() nm = tostring(c.Main.TowerButton.ImageLabel.Info.NameLabel.Text) end)
-                            if nm:lower():find("leorio") then moneyU[#moneyU + 1] = c.Name
+                            -- ⭐ ชื่อตัวในสนามคือ "Leo" (ไม่ใช่ "Leorio" แบบ hotbar) → match "leo"
+                            if nm:lower():find("leo") then moneyU[#moneyU + 1] = c.Name
                             else damageU[#damageU + 1] = c.Name end
                         end
                     end
                 end
                 return moneyU, damageU
             end
-            task.wait(0.5)
-            local moneyU, damageU = readPlaced()
-            dbg(("[Legend] อัพเกรดเอง: ตัวเงิน %d / ดาเมจ %d"):format(#moneyU, #damageU))
-            -- 1) ตัวเงินจน max (ทีละตัว) — เงินไม่พอก็รอ
-            for _, uuid in ipairs(moneyU) do
-                local t0 = os.clock()
-                while stillRunning() and os.clock() - t0 < 25 do
-                    if towerMaxed(uuid) then break end
-                    if upgradeOnce(uuid) then task.wait(0.15) else task.wait(0.6) end
-                end
-            end
-            dbg("[Legend] ตัวเงิน max แล้ว → อัพเกรดตัวดาเมจ")
-            -- 2) ตัวดาเมจทั้งหมด (วน round-robin จน max หรือหมดเวลา)
-            local dmgT0, allMax = os.clock(), false
-            while stillRunning() and not allMax and os.clock() - dmgT0 < 150 do
-                allMax = true
-                for _, uuid in ipairs(damageU) do
-                    if not stillRunning() then break end
+            -- อัพเกรด 1 รอบ: ตัวเงินให้ max ก่อน (รายได้) แล้วค่อยดาเมจ (เฉพาะเมื่อตัวเงิน max หมด)
+            local upStat = { money = 0, dmg = 0 }
+            local function upgradePass()
+                local moneyU, damageU = readPlaced()
+                local allMoneyMax = true
+                for _, uuid in ipairs(moneyU) do
+                    if not stillRunning() then return end
                     if not towerMaxed(uuid) then
-                        allMax = false
-                        if upgradeOnce(uuid) then task.wait(0.15) else task.wait(0.5) end
+                        allMoneyMax = false
+                        if upgradeOnce(uuid) then upStat.money += 1; task.wait(0.1) end
                     end
                 end
+                -- ดาเมจต่อเมื่อ "ตัวเงิน max ครบ" ตามสเปค
+                if allMoneyMax then
+                    for _, uuid in ipairs(damageU) do
+                        if not stillRunning() then return end
+                        if not towerMaxed(uuid) then
+                            if upgradeOnce(uuid) then upStat.dmg += 1; task.wait(0.1) end
+                        end
+                    end
+                end
+                return moneyU, damageU, allMoneyMax
             end
-            dbg("[Legend] อัพเกรดตัวดาเมจเสร็จ (allMax=" .. tostring(allMax) .. ")")
+
+            dbg("[Legend] วางกระจุก 75-85% + เติม Leorio→3 + อัพเกรดขนาน (ตัวเงิน max ก่อน)")
+            local legendPercents = {75, 78, 81, 84, 85, 82, 79, 76, 80, 83, 77}
+            local leoFill = {30, 36, 42, 33, 45, 27}
+            local lpIdx, leoFi, emptyRounds = 1, 1, 0
+            local fillStart = os.clock()
+            while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 3 do
+                local placedThisRound, moneyBlocked = false, false
+                -- เติมตัวเงิน Leorio จนครบ 3 ก่อน (ตัวเงิน=รายได้ ยิ่งครบยิ่งมีเงินอัพ/วาง)
+                if moneySlot and slotPlaced[moneySlot] < 3 then
+                    local pc = leoFill[leoFi]; leoFi = leoFi % #leoFill + 1
+                    local ok, res = queueOne(moneySlot, "Ground", pc, "Leorio เติม " .. (slotPlaced[moneySlot] + 1) .. "/3")
+                    if ok then placedThisRound = true elseif res == -1 then moneyBlocked = true end
+                end
+                for _, slot in ipairs(damageSlots) do
+                    if not stillRunning() then break end
+                    local percent = legendPercents[lpIdx]
+                    lpIdx = lpIdx % #legendPercents + 1
+                    local ok, res = queueOne(slot, "Auto", percent, "Legend กระจุก 75-85%")
+                    if ok then placedThisRound = true
+                    elseif res == -1 then moneyBlocked = true end
+                end
+                -- ⭐ อัพเกรดขนานทุกรอบ (ไม่รอวางเสร็จ)
+                upgradePass()
+                if placedThisRound then emptyRounds = 0
+                elseif moneyBlocked then setStatus("[Legend] เงินไม่พอ — อัพเกรด+รอเงินแล้ววางต่อ"); task.wait(0.8)
+                else emptyRounds = emptyRounds + 1; task.wait(0.3) end
+            end
+            local total = 0
+            for slot = 1, 6 do total += slotPlaced[slot] end
+            dbg(string.format("========== วาง Legend เสร็จ | Leorio=%d/3 | วางรวม %d | บนสนาม=%d ==========",
+                moneySlot and slotPlaced[moneySlot] or 0, total, placementCount()))
+
+            -- อัพเกรดต่อจนครบ max (หรือ stage จบ) — เงินมาเรื่อยๆ ระหว่างเวฟ, ทำต่อเนื่อง
+            local upT0 = os.clock()
+            while stillRunning() and os.clock() - upT0 < 240 do
+                local moneyU, damageU, allMoneyMax = upgradePass()
+                local allMax = allMoneyMax
+                if allMoneyMax and damageU then
+                    for _, uuid in ipairs(damageU) do if not towerMaxed(uuid) then allMax = false; break end end
+                end
+                if allMax then break end
+                task.wait(0.4)
+            end
+            dbg(("[Legend] อัพเกรดครบ/หมดเวลา (money=%d dmg=%d ครั้ง)"):format(upStat.money, upStat.dmg))
 
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
