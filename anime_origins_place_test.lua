@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.45
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.46
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.45"
+local TEST_VERSION = "0.46"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1114,6 +1114,21 @@ local slotPlaced = {0, 0, 0, 0, 0, 0}
 local slotFailures = {0, 0, 0, 0, 0, 0}
 local SMART_MAX_PER_SLOT = 3
 local shuffleRng = Random.new()
+local mansionCandidateCursors = {}
+
+local function mansionCandidateWindow(candidates, key, limit)
+    if tostring(_G.AO_PLACE_MODE or "") ~= "ao_mansion" or #candidates <= limit then
+        return candidates
+    end
+    local selected = {}
+    local startIndex = mansionCandidateCursors[key] or 1
+    for offset = 0, limit - 1 do
+        local index = (startIndex + offset - 1) % #candidates + 1
+        selected[#selected + 1] = candidates[index]
+    end
+    mansionCandidateCursors[key] = (startIndex + limit - 1) % #candidates + 1
+    return selected
+end
 
 local function shuffledCopy(source)
     local result = {}
@@ -1246,10 +1261,18 @@ end
 
 local function placeSlot(slot, placementType, percent)
     if placementType == "Auto" then
-        local ground = groundCandidates(percent)
-        local hill = hillCandidates(percent)
+        local ground = mansionCandidateWindow(
+            groundCandidates(percent),
+            tostring(slot) .. ":Auto:Ground",
+            1
+        )
+        local hill = mansionCandidateWindow(
+            hillCandidates(percent),
+            tostring(slot) .. ":Auto:Hill",
+            1
+        )
         local isMansionAuto = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
-        local candidateCount = math.min(isMansionAuto and 14 or 6, math.max(#ground, #hill))
+        local candidateCount = math.min(isMansionAuto and 1 or 6, math.max(#ground, #hill))
 
         -- ไม่ลอง Ground จนหมดก่อน เพราะถ้ายูนิตเป็น Hill จะทำให้แต่ละตัวช้ามาก
         -- สลับ Ground/Hill ทีละตำแหน่งและจำกัดจำนวน probe
@@ -1284,19 +1307,21 @@ local function placeSlot(slot, placementType, percent)
     end
 
     if placementType == "Ground" then
-        local candidates = groundCandidates(percent)
-        if tostring(_G.AO_PLACE_MODE or "") == "ao_mansion" then
-            while #candidates > 14 do table.remove(candidates) end
-        end
+        local candidates = mansionCandidateWindow(
+            groundCandidates(percent),
+            tostring(slot) .. ":Ground",
+            2
+        )
         local ok, position, res = tryCandidates(slot, candidates, false, setStatus)
         if ok then return true, "Ground", position, res end
         return false, nil, nil, res
     end
     if placementType == "Hill" then
-        local candidates = hillCandidates(percent)
-        if tostring(_G.AO_PLACE_MODE or "") == "ao_mansion" then
-            while #candidates > 14 do table.remove(candidates) end
-        end
+        local candidates = mansionCandidateWindow(
+            hillCandidates(percent),
+            tostring(slot) .. ":Hill",
+            2
+        )
         local ok, position, res = tryCandidates(slot, candidates, true, setStatus)
         if ok then return true, "Hill", position, res end
         return false, nil, nil, res
@@ -1334,6 +1359,7 @@ allButton.MouseButton1Click:Connect(function()
     smartGeneration += 1
     local myGeneration = smartGeneration
     smartPlanIndex = 1
+    mansionCandidateCursors = {}
     for slot = 1, 6 do
         slotPlaced[slot] = 0
         slotFailures[slot] = 0
@@ -1529,6 +1555,25 @@ allButton.MouseButton1Click:Connect(function()
                 return ok and result == true
             end
 
+            local function mansionUpgradeBatch(units, maxCount)
+                local launched = math.min(#units, maxCount)
+                if launched <= 0 then return 0 end
+                local completed = 0
+                local successes = 0
+                for index = 1, launched do
+                    local uuid = units[index].uuid
+                    task.spawn(function()
+                        if mansionUpgradeOnce(uuid) then successes += 1 end
+                        completed += 1
+                    end)
+                end
+                local started = os.clock()
+                while completed < launched and os.clock() - started < 8 do
+                    task.wait(0.02)
+                end
+                return successes
+            end
+
             local function exactName(actual, expected)
                 return tostring(actual):lower() == tostring(expected):lower()
             end
@@ -1581,21 +1626,21 @@ allButton.MouseButton1Click:Connect(function()
                         if exactName(unit.name, placedName) then matched[#matched + 1] = unit end
                     end
                     local allReady = #matched >= target
-                    local upgraded = false
+                    local pending = {}
                     for _, unit in ipairs(matched) do
                         if not mansionTowerMaxed(unit.uuid) then
                             allReady = false
-                            if mansionUpgradeOnce(unit.uuid) then
-                                upgraded = true
-                                upgradeCount += 1
-                                setStatus(string.format("[Mansion] อัป %s ให้ MAX | รวม %d ครั้ง",
-                                    label, upgradeCount))
-                                task.wait(0.08)
-                            end
+                            pending[#pending + 1] = unit
                         end
                     end
                     if allReady then break end
-                    task.wait(upgraded and 0.12 or 0.7)
+                    local upgraded = mansionUpgradeBatch(pending, target)
+                    if upgraded > 0 then
+                        upgradeCount += upgraded
+                        setStatus(string.format("[Mansion] อัป %s พร้อมกัน +%d | รวม %d ครั้ง",
+                            label, upgraded, upgradeCount))
+                    end
+                    task.wait(upgraded > 0 and 0.06 or 0.35)
                 end
                 return upgradeCount
             end
@@ -1671,7 +1716,7 @@ allButton.MouseButton1Click:Connect(function()
                 .. table.concat(damageSlots, ",Tower") .. "]")
 
             -- คงตำแหน่งดาเมจไว้ที่ 70-80% ตามเดิม
-            -- เส้นสั้นจะลองจุดรอบข้างเพิ่มสูงสุด 14 จุดโดยไม่เปลี่ยนเปอร์เซ็นต์
+            -- เส้นสั้นจะหมุนลองจุดรอบข้างทั้งหมด แต่ลองครั้งละ 1-2 จุดเพื่อไม่ให้ InvokeServer บล็อกนาน
             local damagePercents = {70, 72, 74, 76, 78, 80, 71, 73, 75, 77, 79}
             local damagePercentIndex = 1
             local function placeDamageBatch(targetCount, timeoutSeconds, phaseLabel)
@@ -1759,19 +1804,14 @@ allButton.MouseButton1Click:Connect(function()
                         pending[#pending + 1] = unit
                     end
                 end
-                local successCount = 0
-                local attemptCount = 0
-                for _, unit in ipairs(shuffledCopy(pending)) do
-                    if not stillRunning() or mansionEnded()
-                        or successCount >= maxSuccess or attemptCount >= maxSuccess * 2 then break end
-                    attemptCount += 1
-                    if mansionUpgradeOnce(unit.uuid) then
-                        successCount += 1
-                        damageUpgradeCount += 1
-                        setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป %s | รวม %d ครั้ง",
-                            unit.name, damageUpgradeCount))
-                        task.wait(0.04)
-                    end
+                local successCount = mansionUpgradeBatch(shuffledCopy(pending), maxSuccess)
+                if successCount > 0 then
+                    damageUpgradeCount += successCount
+                    setStatus(string.format(
+                        "[Mansion] วางต่อเนื่อง + อัปดาเมจพร้อมกัน +%d | รวม %d ครั้ง",
+                        successCount,
+                        damageUpgradeCount
+                    ))
                 end
                 return successCount
             end
