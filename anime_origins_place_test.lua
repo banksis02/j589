@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.43
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.44
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.43"
+local TEST_VERSION = "0.44"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1280,12 +1280,20 @@ local function placeSlot(slot, placementType, percent)
     end
 
     if placementType == "Ground" then
-        local ok, position, res = tryCandidates(slot, groundCandidates(percent), false, setStatus)
+        local candidates = groundCandidates(percent)
+        if tostring(_G.AO_PLACE_MODE or "") == "ao_mansion" then
+            while #candidates > 14 do table.remove(candidates) end
+        end
+        local ok, position, res = tryCandidates(slot, candidates, false, setStatus)
         if ok then return true, "Ground", position, res end
         return false, nil, nil, res
     end
     if placementType == "Hill" then
-        local ok, position, res = tryCandidates(slot, hillCandidates(percent), true, setStatus)
+        local candidates = hillCandidates(percent)
+        if tostring(_G.AO_PLACE_MODE or "") == "ao_mansion" then
+            while #candidates > 14 do table.remove(candidates) end
+        end
+        local ok, position, res = tryCandidates(slot, candidates, true, setStatus)
         if ok then return true, "Hill", position, res end
         return false, nil, nil, res
     end
@@ -1710,18 +1718,35 @@ allButton.MouseButton1Click:Connect(function()
             local leoUpgradeCount = upgradeNamedToMax("Leo", leoSlot and 3 or 0, "Leo")
             dbg("[Mansion 5] Leo MAX ครบ/หมดเวลา | อัป " .. leoUpgradeCount .. " ครั้ง")
 
-            -- วางดาเมจที่เหลือต่อจนเต็มพื้นที่/ลิมิต
-            local remainingDamage = placeDamageBatch(999, 180, "Mansion ดาเมจที่เหลือ")
-            dbg(string.format("[Mansion 6] วางดาเมจที่เหลือเพิ่ม %d ตัว", remainingDamage))
-
-            -- หลังวางครบแล้วจึงอัป Bluma MAX
-            local bulmaUpgradeCount = upgradeNamedToMax("Bluma", bulmaSlot and 1 or 0, "Bluma")
-            dbg("[Mansion 7] Bluma MAX ครบ/หมดเวลา | อัป " .. bulmaUpgradeCount .. " ครั้ง")
-
-            -- สุดท้ายสุ่มอัปเฉพาะตัวดาเมจทั้งหมด
+            -- หลัง Leo MAX ให้ทำทุกอย่างต่อเนื่องจนด่านจบ:
+            -- วางดาเมจทีละตัว + อัป Bluma ก่อน และเมื่อ Bluma MAX แล้วจึงอัปดาเมจ
+            -- ไม่รอขั้นวางดาเมจ 180 วินาทีให้จบก่อนเหมือนเวอร์ชันเก่า
+            local remainingDamage = 0
+            local bulmaUpgradeCount = 0
             local damageUpgradeCount = 0
-            local damageUpgradeStarted = os.clock()
-            while stillRunning() and not mansionEnded() and os.clock() - damageUpgradeStarted < 300 do
+
+            local function namedAllMax(placedName, target)
+                if target <= 0 then return true end
+                local matched = 0
+                for _, unit in ipairs(mansionPlacedUnits()) do
+                    if exactName(unit.name, placedName) then
+                        matched += 1
+                        if not mansionTowerMaxed(unit.uuid) then return false end
+                    end
+                end
+                return matched >= target
+            end
+
+            local function upgradeOneNamed(placedName)
+                for _, unit in ipairs(mansionPlacedUnits()) do
+                    if exactName(unit.name, placedName) and not mansionTowerMaxed(unit.uuid) then
+                        return mansionUpgradeOnce(unit.uuid)
+                    end
+                end
+                return false
+            end
+
+            local function upgradeDamagePass(maxSuccess)
                 local pending = {}
                 for _, unit in ipairs(mansionPlacedUnits()) do
                     if not exactName(unit.name, "Leo") and not exactName(unit.name, "Bluma")
@@ -1729,21 +1754,84 @@ allButton.MouseButton1Click:Connect(function()
                         pending[#pending + 1] = unit
                     end
                 end
-                if #pending == 0 then break end
-
-                local upgraded = false
+                local successCount = 0
+                local attemptCount = 0
                 for _, unit in ipairs(shuffledCopy(pending)) do
-                    if not stillRunning() or mansionEnded() then break end
+                    if not stillRunning() or mansionEnded()
+                        or successCount >= maxSuccess or attemptCount >= maxSuccess * 2 then break end
+                    attemptCount += 1
                     if mansionUpgradeOnce(unit.uuid) then
-                        upgraded = true
+                        successCount += 1
                         damageUpgradeCount += 1
-                        setStatus(string.format("[Mansion] สุ่มอัป %s | รวม %d ครั้ง",
+                        setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป %s | รวม %d ครั้ง",
                             unit.name, damageUpgradeCount))
                         task.wait(0.04)
                     end
                 end
-                task.wait(upgraded and 0.08 or 0.4)
+                return successCount
             end
+
+            local function continuousUpgradeStep()
+                local bulmaReady = namedAllMax("Bluma", bulmaSlot and 1 or 0)
+                if not bulmaReady then
+                    if upgradeOneNamed("Bluma") then
+                        bulmaUpgradeCount += 1
+                        setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป Bluma | %d ครั้ง",
+                            bulmaUpgradeCount))
+                        return true
+                    end
+                    return false
+                end
+                return upgradeDamagePass(3) > 0
+            end
+
+            local continuousRounds = 0
+            local damageSlotIndex = 1
+            dbg("[Mansion 6] เริ่มลูปต่อเนื่อง: วางดาเมจ + อัป Bluma/ดาเมจจนด่านจบ")
+            while stillRunning() and not mansionEnded() do
+                continuousRounds += 1
+                local didWork = false
+                local moneyBlocked = false
+                local upgradeFirst = continuousRounds % 2 == 1
+
+                -- สลับสิทธิ์ใช้เงินรอบละครั้ง ป้องกันการวางตัวกินเงินหมดจน Bluma/ดาเมจไม่ได้อัป
+                if upgradeFirst and continuousUpgradeStep() then didWork = true end
+
+                -- ลองวางเพียงหนึ่งช่องต่อรอบ เพื่อไม่ให้การวางเต็มสนามบล็อกงานอัปเกรด
+                if #damageSlots > 0 then
+                    local shuffledSlots = shuffledCopy(damageSlots)
+                    damageSlotIndex = damageSlotIndex % #shuffledSlots + 1
+                    local slot = shuffledSlots[damageSlotIndex]
+                    local percent = damagePercents[damagePercentIndex]
+                    damagePercentIndex = damagePercentIndex % #damagePercents + 1
+                    local ok, result = queueOne(
+                        slot,
+                        slotTypes[slot] or "Auto",
+                        percent,
+                        "Mansion วางต่อเนื่อง 70-80%"
+                    )
+                    if ok then
+                        didWork = true
+                        remainingDamage += 1
+                    elseif result == -1 then
+                        moneyBlocked = true
+                    end
+                end
+
+                if not upgradeFirst and continuousUpgradeStep() then didWork = true end
+
+                if didWork then
+                    task.wait(0.08)
+                elseif moneyBlocked then
+                    task.wait(0.45)
+                else
+                    task.wait(math.min(2, 0.25 + continuousRounds * 0.02))
+                end
+            end
+            dbg(string.format(
+                "[Mansion 7] จบลูปต่อเนื่อง | วางเพิ่ม=%d อัป Bluma=%d อัปดาเมจ=%d",
+                remainingDamage, bulmaUpgradeCount, damageUpgradeCount
+            ))
 
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
