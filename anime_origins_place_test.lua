@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.44
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.45
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.44"
+local TEST_VERSION = "0.45"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -529,25 +529,26 @@ local function invokePlacement(slot, position, isHill)
     if not ok then return false, tostring(result) end
 
     -- server คืน "table" (object ของ tower ที่วางแล้ว) = วางติดจริง
-    -- result = -1 (number) = เงินไม่พอ / วางไม่ได้ ; false/nil = จุดผิด
+    -- result = -1 (number) = server ปฏิเสธได้หลายเหตุผล เช่น เงิน/ลิมิต/จุด/สถานะยังไม่พร้อม
     if _G.AO_INVOKE_LOG == nil then _G.AO_INVOKE_LOG = 0 end
     if _G.AO_INVOKE_LOG < 10 then
         _G.AO_INVOKE_LOG += 1
         print(string.format("[AO DBG invoke] T%d result=%s (%s) dt=%.2fวิ", slot, tostring(result), typeof(result), invDt))
     end
     if typeof(result) == "table" then return true, result end
-    return false, result   -- result อาจเป็น -1 (เงินไม่พอ) — ผู้เรียกเช็คได้
+    return false, result
 end
 
 local function tryCandidates(slot, candidates, isHill, statusCallback)
+    local isMansion = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
     for index, position in ipairs(candidates) do
         statusCallback(string.format("Tower%d %s จุด %d/%d", slot, isHill and "Hill" or "Ground", index, #candidates))
         local placed, result = invokePlacement(slot, position, isHill)
         if placed then
             return true, position, result
         end
-        if result == -1 then
-            return false, nil, -1   -- เงินไม่พอ → จุดอื่นก็ไม่ติด ไม่ต้องเสียเวลาลองต่อ
+        if result == -1 and not isMansion then
+            return false, nil, -1
         end
         task.wait(0.04)
     end
@@ -1271,8 +1272,11 @@ local function placeSlot(slot, placementType, percent)
                 hRes = result; lastRes = result
             end
 
-            -- ข้ามจุดอื่นเฉพาะตอนทั้ง Ground+Hill คืน -1 (เงินไม่พอจริง) — ไม่ใช่แค่ Ground -1
-            if gRes == -1 and (hRes == -1 or not hill[index]) then return false, nil, nil, -1 end
+            -- Infinite Mansion พบว่า -1 อาจเป็นจุด/ลิมิต/สถานะ ไม่ใช่เงินอย่างเดียว
+            -- จึงลอง candidate ถัดไป; โหมดเดิมคงพฤติกรรมเดิมไว้
+            if not isMansionAuto and gRes == -1 and (hRes == -1 or not hill[index]) then
+                return false, nil, nil, -1
+            end
             task.wait(0.04)
         end
 
@@ -1449,8 +1453,9 @@ allButton.MouseButton1Click:Connect(function()
             local ok, kind, position, result = placeSlot(slot, placementType, percent)
             local took = os.clock() - t0
             placing = false
+            local rejectedReason = isMansion and "[server ปฏิเสธ: เงิน/ลิมิต/จุด]" or "[เงินไม่พอ]"
             local reason = ok and ("สำเร็จ " .. tostring(kind))
-                or ("ไม่ติด" .. (result == -1 and "[เงินไม่พอ]" or "[จุดผิด/เต็ม]"))
+                or ("ไม่ติด" .. (result == -1 and rejectedReason or "[จุดผิด/เต็ม]"))
             dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s (ใช้ %.1f วิ)",
                 slot, tostring(placementType), percent, label, reason, took))
 
@@ -1465,7 +1470,7 @@ allButton.MouseButton1Click:Connect(function()
 
             setStatus(string.format("%s ไม่สำเร็จ | Tower%d @ %.1f%%", label, slot, percent), false)
             task.wait(0.15)
-            return false, result   -- result == -1 = เงินไม่พอ ; อื่นๆ = จุดผิด/เต็ม
+            return false, result
         end
 
         -- Infinite Mansion ใช้แผนวางเฉพาะโหมด ห้ามไหลเข้าโลจิค Gem/Legend/ด่านทั่วไป:
@@ -1550,11 +1555,11 @@ allButton.MouseButton1Click:Connect(function()
                 if not slot then return 0 end
                 local started = os.clock()
                 while stillRunning() and not mansionEnded()
-                    and countPlacedName(placedName) < target
+                    and (slotPlaced[slot] or 0) < target
                     and os.clock() - started < timeoutSeconds do
                     local percent = moneyPercents[moneyPercentIndex]
                     moneyPercentIndex = moneyPercentIndex % #moneyPercents + 1
-                    local current = countPlacedName(placedName)
+                    local current = slotPlaced[slot] or 0
                     local ok, result = queueOne(
                         slot,
                         placementType,
@@ -1563,7 +1568,7 @@ allButton.MouseButton1Click:Connect(function()
                     )
                     if not ok then task.wait(result == -1 and 0.8 or 0.25) end
                 end
-                return countPlacedName(placedName)
+                return slotPlaced[slot] or 0
             end
 
             local function upgradeNamedToMax(placedName, target, label)
@@ -1700,7 +1705,7 @@ allButton.MouseButton1Click:Connect(function()
                     if placedThisRound then
                         noPointRounds = 0
                     elseif moneyBlocked then
-                        setStatus("[Mansion] เงินไม่พอ — รอแล้ววางดาเมจต่อ")
+                        setStatus("[Mansion] Server ปฏิเสธจุดนี้ — รอสั้น ๆ แล้วลองจุดอื่น")
                         task.wait(0.8)
                     else
                         noPointRounds += 1
