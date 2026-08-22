@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.35
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.36
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.35"
+local TEST_VERSION = "0.36"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -1010,9 +1010,32 @@ allButton.MouseButton1Click:Connect(function()
 
         -- Legend/Gem คุมลำดับอัพเกรดเอง: ปิด AutoUpgradeOnPlacement ก่อนวางตัวแรก
         -- ไม่ให้เกมกินเงินไปอัพดาเมจก่อนตัวเงินและชุดดักหน้ามอนพร้อม
-        if (isLegend or isGem) and type(_G.AO_SET_TOGGLE) == "function" then
-            local okUp = _G.AO_SET_TOGGLE("AutoUpgradeOnPlacement", false)
-            dbg("[" .. (isLegend and "Legend" or "Gem") .. "] ปิด AutoUpgradeOnPlacement เกม = " .. tostring(okUp))
+        if isLegend or isGem then
+            local modeLabel = isLegend and "Legend" or "Gem"
+            local autoUpgradeDisabled = false
+            if type(_G.AO_SET_TOGGLE) == "function" then
+                for attempt = 1, 3 do
+                    local called, result = pcall(_G.AO_SET_TOGGLE, "AutoUpgradeOnPlacement", false)
+                    autoUpgradeDisabled = called and result == true
+                    dbg(string.format("[%s] ปิด AutoUpgradeOnPlacement ในด่าน รอบ %d = %s",
+                        modeLabel, attempt, tostring(autoUpgradeDisabled)))
+                    if autoUpgradeDisabled then break end
+                    task.wait(0.5)
+                end
+            else
+                dbg("[" .. modeLabel .. "] ไม่พบ AO_SET_TOGGLE ในด่าน")
+            end
+
+            -- ห้ามวางแม้แต่ตัวแรกถ้ายังยืนยันไม่ได้ เพราะ Auto Upgrade ของเกมจะแย่งเงิน
+            if not autoUpgradeDisabled then
+                smartRunning = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                setStatus("ยังปิด Auto Upgrade ของเกมไม่ได้ — ยังไม่เริ่มวางตัว", false)
+                placing = false
+                warn("[AO PLACE v" .. TEST_VERSION .. "] STOP: AutoUpgradeOnPlacement is not confirmed OFF")
+                return
+            end
         end
 
         -- รอ hotbar โหลดยูนิตให้ "เสถียร" ก่อนเริ่มวาง

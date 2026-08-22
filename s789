@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.14"
+local SCRIPT_VERSION = "v11.15"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3810,6 +3810,7 @@ if GAME_ID == "anime_origins" then
     local aoBattlepassInfo = nil
     local aoBattlepassLive = nil
     local aoBattlepassDbg = 0
+    local aoGameUpgradeDisabled = false
 
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
@@ -4154,8 +4155,8 @@ if GAME_ID == "anime_origins" then
             return _G.AO_ENTER_WESTCITY_INFINITE()
         end
         _G.AO_HEADLESS = true
-        -- ⭐ ตั้งโหมดก่อน apply settings เพื่อให้ lobby module รู้ว่าเป็น Legend
-        --    (Legend → ปิด AutoUpgradeOnPlacement ใช้ระบบอัพเกรดเราเอง). aoCurrentJob
+        -- ⭐ ตั้งโหมดก่อน apply settings เพื่อให้ lobby module รู้ว่าเป็น Legend/Gem
+        --    (สองโหมดนี้ปิด AutoUpgradeOnPlacement และใช้ระบบอัปเกรดของเราเอง). aoCurrentJob
         --    ถูกเซ็ตแล้วในลูป poll ก่อนเรียก aoStartLobby ; aoStartGame จะเซ็ตซ้ำภายหลัง
         _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
         -- โหลดโมดูล settings ครั้งเดียว (manual = ไม่ให้มัน apply เองตอนโหลด)
@@ -4189,6 +4190,36 @@ if GAME_ID == "anime_origins" then
 
     local function aoStartGame()
         _G.AO_HEADLESS = true
+        -- Teleport เข้าเกมจะสร้าง environment ใหม่: โหลดตัวควบคุม Settings ซ้ำในด่าน
+        -- และต้องยืนยันปิด AutoUpgradeOnPlacement ก่อนโหลด/เริ่มโมดูลวางตัว
+        _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
+        local scriptedUpgradeMode = aoCurrentJob
+            and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_legend")
+        if scriptedUpgradeMode and not aoGameUpgradeDisabled then
+            if type(_G.AO_SET_TOGGLE) ~= "function" then
+                _G.AO_SETTINGS_MANUAL = true
+                aoLoadModule("anime_origins_lobby_settings_test.lua")
+                _G.AO_SETTINGS_MANUAL = nil
+            end
+
+            local disabled = false
+            if type(_G.AO_SET_TOGGLE) == "function" then
+                for attempt = 1, 3 do
+                    local called, result = pcall(_G.AO_SET_TOGGLE, "AutoUpgradeOnPlacement", false)
+                    disabled = called and result == true
+                    print(string.format("[AO %s] game AutoUpgradeOnPlacement OFF attempt %d = %s",
+                        SCRIPT_VERSION, attempt, tostring(disabled)))
+                    if disabled then break end
+                    task.wait(0.5)
+                end
+            end
+            if not disabled then
+                warn("[AO " .. SCRIPT_VERSION .. "] ยังยืนยัน AutoUpgradeOnPlacement=OFF ไม่ได้ — ยังไม่เริ่มวางตัว")
+                return false
+            end
+            aoGameUpgradeDisabled = true
+        end
+
         if not aoGameLoaded or not _G.AO_CORE_READY then
             aoGameLoaded = aoLoadModule("anime_origins_place_test.lua") == true
         end
@@ -4200,8 +4231,7 @@ if GAME_ID == "anime_origins" then
             pcall(_G.AO_GEM_W20_STOP)
         end
         if _G.AO_SET_BEST_SPEED then pcall(_G.AO_SET_BEST_SPEED) end
-        -- ส่งโหมดปัจจุบันเข้า module วางตัว (ao_gem ใช้ adaptive money/damage placement)
-        _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
+        -- AO_PLACE_MODE ตั้งก่อนโหลด module แล้ว เพื่อให้ตรวจ Settings ได้ตั้งแต่ต้น
         if _G.AO_SMART_START and not aoInitialPlacementStarted then
             aoInitialPlacementStarted = true
             task.delay(1, function()
@@ -4214,6 +4244,7 @@ if GAME_ID == "anime_origins" then
 
     local function aoStop()
         aoFarming = false
+        aoGameUpgradeDisabled = false
         aoInitialPlacementStarted = false
         aoLastWave = nil
         if _G.AO_GEM_W20_STOP then pcall(_G.AO_GEM_W20_STOP) end

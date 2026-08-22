@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS LOBBY SETTINGS TEST v0.2
--- Applies settings only in the Anime Origins lobby.
+-- ANIME ORIGINS SETTINGS v0.6
+-- Applies the full preset in lobby and exposes one-setting control inside a game.
 -- ============================================================
 
-local VERSION = "0.5"
+local VERSION = "0.6"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -233,15 +233,16 @@ local function applyLobbySettings()
         return false, "SettingsFrame not found"
     end
 
-    -- ⭐ Legend: ปิด AutoUpgradeOnPlacement ของเกม (module วางตัวจัดการอัพเกรดเอง —
-    --    ตัวเงินจน max ก่อน แล้วค่อยดาเมจ). โหมดอื่น (gem/battlepass) เปิดปกติ.
-    local legendMode = tostring(_G.AO_PLACE_MODE) == "ao_legend"
+    -- ⭐ Legend/Gem ใช้ลำดับอัปเกรดของสคริปต์เอง จึงต้องปิดของเกมตั้งแต่ Lobby
+    --    และจะตรวจปิดซ้ำในด่านก่อนเริ่มวางตัว; Battlepass ยังใช้ค่าปกติของเกม
+    local placeMode = tostring(_G.AO_PLACE_MODE or "")
+    local scriptedUpgradeMode = placeMode == "ao_legend" or placeMode == "ao_gem"
 
     local successCount = 0
     local total = #TARGET_TOGGLES + #TARGET_LOW
     for _, entry in ipairs(TARGET_TOGGLES) do
         local want = entry[2]
-        if entry[1][1] == "AutoUpgradeOnPlacement" and legendMode then
+        if entry[1][1] == "AutoUpgradeOnPlacement" and scriptedUpgradeMode then
             want = false
         end
         if setToggle(settings, entry[1], want) then successCount += 1 end
@@ -261,8 +262,7 @@ end
 _G.AO_APPLY_LOBBY_SETTINGS = applyLobbySettings
 
 -- ⭐ toggle setting รายตัว ใช้ได้ทั้ง lobby และในด่าน (SettingsFrame อยู่ในทรีแม้ panel ปิด,
---    fireButton ใช้ firesignal ไม่ต้องเปิด panel). Legend เรียกปิด AutoUpgradeOnPlacement
---    ในเกมได้เลย ไม่ต้องออก lobby.
+--    fireButton ใช้ firesignal ไม่ต้องเปิด panel). Legend/Gem เรียกตรวจปิดซ้ำในเกมก่อนวางตัว
 _G.AO_SET_TOGGLE = function(name, desired)
     local settings = waitForSettings(10)
     if not settings then
