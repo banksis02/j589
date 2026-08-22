@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.40
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.41
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.40"
+local TEST_VERSION = "0.41"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -162,18 +162,40 @@ local function groundCandidates(percent)
     local base, direction = posAndDirectionAt(percent)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
-    local candidates, params = {}, raycastParams()
+    local candidates, params, seen = {}, raycastParams(), {}
+    local isMansion = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
     -- ชิดขอบถนนก่อน แล้วค่อยขยายออกเมื่อพื้นที่เต็ม
     -- Ground ต้องอยู่ชิดขอบทาง ลดโอกาสล้ำเข้าอาคาร/สิ่งกีดขวาง
-    local offsets = {2.25, -2.25, 3, -3, 3.75, -3.75, 4.5, -4.5, 5.25, -5.25}
+    -- Infinite Mansion มีทางมอนกว้างกว่าด่านปกติ จึงค้นแบบขยายออกทั้งสองฝั่ง
+    -- โดยยังคำนวณจาก PathFolder ทุกจุด ไม่ใช้พิกัดแผนที่ตายตัว
+    local offsets = isMansion
+        and {6, -6, 8, -8, 10, -10, 12, -12, 14, -14, 16, -16,
+             18, -18, 21, -21, 24, -24, 28, -28, 32, -32}
+        or {2.25, -2.25, 3, -3, 3.75, -3.75, 4.5, -4.5, 5.25, -5.25}
+    local alongs = isMansion and {0, 4, -4, 8, -8} or {0}
 
     for _, offset in ipairs(offsets) do
-        local sample = base + perpendicular * offset
-        local hit = workspace:Raycast(sample + Vector3.new(0, 18, 0), Vector3.new(0, -40, 0), params)
-        if hit and hit.Normal.Y >= 0.65 and math.abs(hit.Position.Y - base.Y) <= 3.5 then
-            candidates[#candidates + 1] = hit.Position + hit.Normal * 0.08
-        else
-            candidates[#candidates + 1] = Vector3.new(sample.X, base.Y - 0.1, sample.Z)
+        for _, along in ipairs(alongs) do
+            local sample = base + perpendicular * offset + direction * along
+            local castHeight = isMansion and 40 or 18
+            local castDepth = isMansion and 80 or 40
+            local hit = workspace:Raycast(
+                sample + Vector3.new(0, castHeight, 0),
+                Vector3.new(0, -castDepth, 0),
+                params
+            )
+            if hit and hit.Normal.Y >= 0.65
+                and math.abs(hit.Position.Y - base.Y) <= (isMansion and 8 or 3.5) then
+                local position = hit.Position + hit.Normal * 0.08
+                local key = string.format("%.1f:%.1f:%.1f", position.X, position.Y, position.Z)
+                if not seen[key] then
+                    seen[key] = true
+                    candidates[#candidates + 1] = position
+                end
+            elseif not isMansion then
+                candidates[#candidates + 1] = Vector3.new(sample.X, base.Y - 0.1, sample.Z)
+            end
+            if isMansion and #candidates >= 48 then return candidates end
         end
     end
     return candidates
