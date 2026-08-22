@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.27"
+local SCRIPT_VERSION = "v11.28"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -4022,7 +4022,8 @@ if GAME_ID == "anime_origins" then
             }
             local stage = names[tostring(aoCurrentJob.stage)] or tostring(aoCurrentJob.stage or "Legend")
             local act = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
-            return stage .. " - Legend Act " .. tostring(act)
+            local cycleLabel = aoCurrentJob.legendActMode == "cycle" and " (วน 1-2-3 · 4ชม./Act)" or ""
+            return stage .. " - Legend Act " .. tostring(act) .. cycleLabel
         end
         return "West City - Infinite (Hard)"
     end
@@ -4337,8 +4338,16 @@ if GAME_ID == "anime_origins" then
                         .. ":" .. tostring(aoCurrentJob.difficulty)
                     if aoFarming and aoEnteredKey ~= "" and key ~= aoEnteredKey then
                         -- ⭐ งานเปลี่ยนระหว่างฟาร์ม → กลับล็อบบี้ไปเข้างานใหม่ (เดิมวน Replay ด่านเก่า)
-                        print("[AO " .. SCRIPT_VERSION .. "] งานเปลี่ยน: " .. aoEnteredKey
-                            .. " -> " .. key .. " → กลับล็อบบี้")
+                        if aoCurrentJob.mode == "ao_legend" and aoCurrentJob.legendActMode == "cycle" then
+                            print(string.format(
+                                "[AO %s] Legend ครบช่วง 4 ชั่วโมง → เปลี่ยนเป็น Act %d แล้วกลับ Lobby",
+                                SCRIPT_VERSION,
+                                math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+                            ))
+                        else
+                            print("[AO " .. SCRIPT_VERSION .. "] งานเปลี่ยน: " .. aoEnteredKey
+                                .. " -> " .. key .. " → กลับล็อบบี้")
+                        end
                         aoStop()
                         aoEnteredKey = ""
                         aoLastLobbyAttempt = 0
