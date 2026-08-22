@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.17"
+local SCRIPT_VERSION = "v11.18"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3790,7 +3790,7 @@ end
 if GAME_ID == "anime_origins" then
     local AO_LOBBY_PLACE_ID = 129932912185311
     local AO_GAME_PLACE_ID = 116173040971120
-    local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true }
+    local AO_MODES = { ao_gem = true, ao_legend = true, ao_battlepass = true, ao_mansion = true }
     local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
     local aoEnteredKey = ""   -- คีย์ของงานที่กำลังฟาร์มอยู่ (mode:stage:difficulty) — เปลี่ยน = กลับล็อบบี้เข้างานใหม่
@@ -3811,6 +3811,12 @@ if GAME_ID == "anime_origins" then
     local aoBattlepassLive = nil
     local aoBattlepassDbg = 0
     local aoGameUpgradeDisabled = false
+    local aoMansionFloor = 0
+    local aoMansionConsecutiveLosses = 0
+    local aoMansionLastResult = ""
+    local aoMansionExhausted = false
+    local aoMansionStateLoaded = false
+    local aoMansionJobId = ""
 
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
@@ -4004,6 +4010,9 @@ if GAME_ID == "anime_origins" then
 
     local function aoStageLabel()
         if not aoCurrentJob then return "Anime Origins Stage" end
+        if aoCurrentJob.mode == "ao_mansion" then
+            return "Infinite Mansion - Floor " .. tostring(math.max(1, aoMansionFloor))
+        end
         if aoCurrentJob.mode == "ao_legend" then
             local names = {
                 WestCity = "West City",
@@ -4042,6 +4051,7 @@ if GAME_ID == "anime_origins" then
         end
         local runCount = math.max(0, tonumber(stats.Runs) or 0)
         local isBattlepassJob = aoCurrentJob and aoCurrentJob.mode == "ao_battlepass"
+        local isMansionJob = aoCurrentJob and aoCurrentJob.mode == "ao_mansion"
         -- โหมดที่วนเวฟ 20 (gem/battlepass) นับ run จาก runCount ; โหมดที่ต้องเล่นจบด่าน
         -- (legend ฯลฯ) นับจบด่านจาก popup Obtained Rewards → aoStagePending
         local isStageMode = aoCurrentJob and aoCurrentJob.mode ~= "ao_gem" and aoCurrentJob.mode ~= "ao_battlepass"
@@ -4068,6 +4078,10 @@ if GAME_ID == "anime_origins" then
                             wave = wave,
                             battlepass = battlepassLevel,
                             battlepassExp = battlepass and tonumber(battlepass.Exp) or 0,
+                            towerFloor = isMansionJob and aoMansionFloor or 0,
+                            towerConsecutiveLosses = isMansionJob and aoMansionConsecutiveLosses or 0,
+                            towerLastResult = isMansionJob and aoMansionLastResult or "",
+                            towerExhausted = isMansionJob and aoMansionExhausted or false,
                         },
                     }),
                 })
@@ -4084,6 +4098,10 @@ if GAME_ID == "anime_origins" then
                 traitRerolls = tonumber(stats.TraitRerolls) or 0,
                 runs = runCount,
                 bp = battlepassLevel,
+                towerFloor = isMansionJob and aoMansionFloor or 0,
+                towerConsecutiveLosses = isMansionJob and aoMansionConsecutiveLosses or 0,
+                towerLastResult = isMansionJob and aoMansionLastResult or "",
+                towerExhausted = isMansionJob and aoMansionExhausted or false,
             },
             matchInfo = {
                 map = game.PlaceId == AO_GAME_PLACE_ID and aoStageLabel() or "Lobby",
@@ -4094,7 +4112,14 @@ if GAME_ID == "anime_origins" then
             local lastWave = math.max(0, tonumber(stats.LastWave) or 20)
             local playTime = aoFormatDuration(stats.LastPlaySeconds)
             local rewardText, actText
-            if isStageMode then
+            if isMansionJob then
+                rewardText = (aoStageRewardText ~= "" and aoStageRewardText) or "จบชั้น"
+                actText = string.format("Infinite Mansion Floor %d - %s | แพ้ติดกัน %d/10",
+                    aoMansionFloor,
+                    aoMansionLastResult == "win" and "Victory" or "Defeat",
+                    aoMansionConsecutiveLosses)
+                if aoStagePlayTime ~= "" then playTime = aoStagePlayTime end
+            elseif isStageMode then
                 -- โหมดเล่นจบด่าน: รางวัล+เวลาฟามจริง (Real Time) จากหน้า Victory + ป้ายด่าน
                 rewardText = (aoStageRewardText ~= "" and aoStageRewardText) or "จบด่าน"
                 actText = "จบด่าน - " .. aoStageLabel() .. " (รอบ " .. tostring(aoStageRuns) .. ")"
@@ -4147,6 +4172,9 @@ if GAME_ID == "anime_origins" then
     local function aoStartLobby()
         local function enterSelectedJob()
             if not aoCurrentJob then return false, "ไม่มีข้อมูลงาน" end
+            if aoCurrentJob.mode == "ao_mansion" then
+                return _G.AO_ENTER_INFINITY_MANSION()
+            end
             if aoCurrentJob.mode == "ao_legend" then
                 local stage = tostring(aoCurrentJob.stage or "WestCity")
                 local act = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
@@ -4173,12 +4201,14 @@ if GAME_ID == "anime_origins" then
         end
         -- โหลดโมดูล enter ครั้งเดียว
         if not (aoLobbyLoaded and type(_G.AO_ENTER_WESTCITY_INFINITE) == "function"
-            and type(_G.AO_ENTER_STAGE) == "function") then
+            and type(_G.AO_ENTER_STAGE) == "function"
+            and type(_G.AO_ENTER_INFINITY_MANSION) == "function") then
             task.wait(1)
             local loaded = aoLoadModule("anime_origins_test.lua")
             aoLobbyLoaded = loaded == true
                 and type(_G.AO_ENTER_WESTCITY_INFINITE) == "function"
                 and type(_G.AO_ENTER_STAGE) == "function"
+                and type(_G.AO_ENTER_INFINITY_MANSION) == "function"
         end
         if not aoLobbyLoaded then return false end
         local ok, success, message = pcall(enterSelectedJob)
@@ -4194,7 +4224,8 @@ if GAME_ID == "anime_origins" then
         -- และต้องยืนยันปิด AutoUpgradeOnPlacement ก่อนโหลด/เริ่มโมดูลวางตัว
         _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
         local scriptedUpgradeMode = aoCurrentJob
-            and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_legend")
+            and (aoCurrentJob.mode == "ao_gem" or aoCurrentJob.mode == "ao_legend"
+                or aoCurrentJob.mode == "ao_mansion")
         if scriptedUpgradeMode and not aoGameUpgradeDisabled then
             if type(_G.AO_SET_TOGGLE) ~= "function" then
                 _G.AO_SETTINGS_MANUAL = true
@@ -4258,6 +4289,18 @@ if GAME_ID == "anime_origins" then
             aoCurrentJob = ok and job or nil
             local active = aoCurrentJob and aoCurrentJob.status == "active" and AO_MODES[aoCurrentJob.mode] == true
             if active then
+                local mansionJobId = tostring(aoCurrentJob.id or "")
+                if aoCurrentJob.mode == "ao_mansion"
+                    and (not aoMansionStateLoaded or aoMansionJobId ~= mansionJobId) then
+                    aoMansionFloor = math.max(0, tonumber(aoCurrentJob.towerFloor) or 0)
+                    aoMansionConsecutiveLosses = math.max(0, tonumber(aoCurrentJob.towerConsecutiveLosses) or 0)
+                    aoMansionLastResult = tostring(aoCurrentJob.towerLastResult or "")
+                    aoMansionExhausted = aoCurrentJob.towerExhausted == true
+                    aoMansionStateLoaded = true
+                    aoMansionJobId = mansionJobId
+                    print(string.format("[AO %s] Mansion state: Floor %d | แพ้ติดกัน %d/10",
+                        SCRIPT_VERSION, aoMansionFloor, aoMansionConsecutiveLosses))
+                end
                 if game.PlaceId == AO_LOBBY_PLACE_ID then
                     aoFarming = false
                     if os.clock() - aoLastLobbyAttempt >= 45 then
@@ -4367,31 +4410,61 @@ if GAME_ID == "anime_origins" then
         end
         return result, table.concat(rewards, ", "), realTime
     end
-    local function aoClickReplay()
+    local function aoClickEndButton(buttonName)
         local ao = aoVictoryFrame()
         if not ao then return false end
         local btn
-        pcall(function() btn = ao.Main.ContentFrame.Main.BottomButtons.Inner.Replay end)
+        pcall(function() btn = ao.Main.ContentFrame.Main.BottomButtons.Inner:FindFirstChild(buttonName) end)
         if not btn then return false end
-        pcall(function()
-            local gb = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
-            if gb and getconnections then
-                for _, c in ipairs(getconnections(gb.Activated)) do c:Fire() end
-                for _, c in ipairs(getconnections(gb.MouseButton1Click)) do c:Fire() end
+        local gb = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
+        if not gb then return false end
+        if getconnections then
+            for _, signal in ipairs({gb.Activated, gb.MouseButton1Click}) do
+                local connections = {}
+                pcall(function() connections = getconnections(signal) end)
+                for _, connection in ipairs(connections) do
+                    local fired = pcall(function() connection:Fire() end)
+                    if fired then return true end
+                end
             end
-        end)
+        end
+        if firesignal then
+            local fired = pcall(function() firesignal(gb.Activated) end)
+            if fired then return true end
+        end
         pcall(function()
-            local cx = math.floor(btn.AbsolutePosition.X + btn.AbsoluteSize.X / 2)
-            local cy = math.floor(btn.AbsolutePosition.Y + btn.AbsoluteSize.Y / 2)
+            local cx = math.floor(gb.AbsolutePosition.X + gb.AbsoluteSize.X / 2)
+            local cy = math.floor(gb.AbsolutePosition.Y + gb.AbsoluteSize.Y / 2)
             VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.06)
             VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
         end)
         return true
     end
 
+    local function aoClickReplay()
+        return aoClickEndButton("Replay")
+    end
+
+    local function aoResultFloor()
+        local floor = 0
+        local ao = aoVictoryFrame()
+        pcall(function()
+            local text = ao.Main.ContentFrame.Main.MapInfo.ImageLabel.Act.Text
+            floor = tonumber(tostring(text):match("(%d+)")) or 0
+        end)
+        if floor <= 0 then
+            pcall(function()
+                local text = player.PlayerGui.GameUI.ManagementFrame.SideButtons.ActInfo.Act.Text
+                floor = tonumber(tostring(text):match("(%d+)")) or 0
+            end)
+        end
+        return floor
+    end
+
     task.spawn(function()
         task.wait(3)
-        local victoryWasVisible = false
+        local initialEndScreen = aoVictoryFrame()
+        local victoryWasVisible = initialEndScreen ~= nil and initialEndScreen.Visible == true
         while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
             local visible = false
             pcall(function()
@@ -4403,17 +4476,55 @@ if GAME_ID == "anime_origins" then
                 and aoCurrentJob.mode ~= "ao_gem" and aoCurrentJob.mode ~= "ao_battlepass" then
                 task.wait(0.5)   -- รอ reward/stat populate
                 local result, rewardText, realTime = aoReadVictory()
+                local isMansion = aoCurrentJob.mode == "ao_mansion"
                 aoStageRuns += 1
                 aoStageRewardText = rewardText or ""
                 aoStagePlayTime = realTime or ""
                 aoStagePending = true
+                if isMansion then
+                    local floor = aoResultFloor()
+                    aoMansionFloor = math.max(aoMansionFloor, floor)
+                    if tostring(result):lower():find("victory", 1, true) then
+                        aoMansionConsecutiveLosses = 0
+                        aoMansionLastResult = "win"
+                        aoMansionExhausted = false
+                    else
+                        aoMansionConsecutiveLosses = math.min(10, aoMansionConsecutiveLosses + 1)
+                        aoMansionLastResult = "lose"
+                        aoMansionExhausted = aoMansionConsecutiveLosses >= 10
+                    end
+                end
                 print(("[AO %s] 🏁 %s รอบ %d | เวลาจริง %s | รางวัล: %s"):format(
                     SCRIPT_VERSION, tostring(result or "จบด่าน"), aoStageRuns,
                     aoStagePlayTime ~= "" and aoStagePlayTime or "-",
                     aoStageRewardText ~= "" and aoStageRewardText or "(อ่านไม่ได้)"))
                 pcall(aoHeartbeat)          -- แจ้งเตือนทันที
                 task.wait(0.4)
-                if aoClickReplay() then
+                if isMansion then
+                    if aoMansionExhausted then
+                        print(string.format("[AO %s] Mansion แพ้ติดกัน %d/10 → จบงาน ไม่กด Replay",
+                            SCRIPT_VERSION, aoMansionConsecutiveLosses))
+                    else
+                        local nextButton = aoMansionLastResult == "win" and "Next" or "Replay"
+                        local closed = false
+                        for attempt = 1, 15 do
+                            local endScreen = aoVictoryFrame()
+                            if not endScreen or endScreen.Visible ~= true then
+                                closed = true
+                                break
+                            end
+                            aoClickEndButton(nextButton)
+                            task.wait(1)
+                        end
+                        if closed then
+                            print(string.format("[AO %s] Mansion %s สำเร็จ Floor %d | แพ้ติดกัน %d/10",
+                                SCRIPT_VERSION, nextButton, aoMansionFloor, aoMansionConsecutiveLosses))
+                        else
+                            warn(string.format("[AO %s] Mansion กด %s ไม่สำเร็จภายใน 15 วินาที",
+                                SCRIPT_VERSION, nextButton))
+                        end
+                    end
+                elseif aoClickReplay() then
                     print("[AO " .. SCRIPT_VERSION .. "] กด Replay เล่นด่านต่อ")
                 end
             end

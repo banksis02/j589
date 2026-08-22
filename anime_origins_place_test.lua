@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.38
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.39
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.38"
+local TEST_VERSION = "0.39"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1113,6 +1113,7 @@ allButton.MouseButton1Click:Connect(function()
         local placeMode = tostring(_G.AO_PLACE_MODE or "")
         local isLegend = placeMode == "ao_legend"
         local isGem = placeMode == "ao_gem"
+        local isMansion = placeMode == "ao_mansion"
         local function hotbarSnap()
             local parts = {}
             for slot = 1, 6 do parts[#parts + 1] = "T" .. slot .. (slotHasUnit(slot) and "=Y" or "=-") end
@@ -1127,10 +1128,10 @@ allButton.MouseButton1Click:Connect(function()
         setStatus(speedMessage, speedLevel ~= nil)
         task.wait(0.15)
 
-        -- Legend/Gem คุมลำดับอัพเกรดเอง: ปิด AutoUpgradeOnPlacement ก่อนวางตัวแรก
+        -- Legend/Gem/Mansion คุมลำดับอัพเกรดเอง: ปิด AutoUpgradeOnPlacement ก่อนวางตัวแรก
         -- ไม่ให้เกมกินเงินไปอัพดาเมจก่อนตัวเงินและชุดดักหน้ามอนพร้อม
-        if isLegend or isGem then
-            local modeLabel = isLegend and "Legend" or "Gem"
+        if isLegend or isGem or isMansion then
+            local modeLabel = isLegend and "Legend" or (isMansion and "Mansion" or "Gem")
             local autoUpgradeDisabled = false
             if type(_G.AO_SET_TOGGLE) == "function" then
                 for attempt = 1, 3 do
@@ -1207,6 +1208,237 @@ allButton.MouseButton1Click:Connect(function()
             setStatus(string.format("%s ไม่สำเร็จ | Tower%d @ %.1f%%", label, slot, percent), false)
             task.wait(0.15)
             return false, result   -- result == -1 = เงินไม่พอ ; อื่นๆ = จุดผิด/เต็ม
+        end
+
+        -- Infinite Mansion ใช้แผนวางเฉพาะโหมด ห้ามไหลเข้าโลจิค Gem/Legend/ด่านทั่วไป:
+        -- 1) Leorio 3 + Bulma 1 (วางเฉพาะตัวที่มีในช่อง 1-6)
+        -- 2) อัปตัวเงินทุกตัวให้ MAX
+        -- 3) วางตัวดาเมจทั้งหมดช่วง 70-80% แล้วสุ่มอัปทุกตัวให้ MAX
+        if isMansion then
+            local function mansionEnded()
+                local gameUI = player.PlayerGui:FindFirstChild("GameUI")
+                local actOver = gameUI and gameUI:FindFirstChild("ActOver")
+                return actOver ~= nil and actOver.Visible == true
+            end
+
+            local function mansionUnitManager()
+                local ok, scrolling = pcall(function()
+                    return player.PlayerGui.GameUI.ManagementFrame.UnitManagerFrame.Main.CanvasGroup.ScrollingFrame
+                end)
+                return ok and scrolling or nil
+            end
+
+            local function mansionPlacedUnits()
+                local units = {}
+                local scrolling = mansionUnitManager()
+                if not scrolling then return units end
+                for _, card in ipairs(scrolling:GetChildren()) do
+                    if card:IsA("GuiObject") and #card.Name >= 30 and card.Name:find("%-") then
+                        local unitName = ""
+                        pcall(function()
+                            unitName = tostring(card.Main.TowerButton.ImageLabel.Info.NameLabel.Text)
+                        end)
+                        units[#units + 1] = { uuid = card.Name, name = unitName }
+                    end
+                end
+                return units
+            end
+
+            local function mansionTowerMaxed(uuid)
+                local scrolling = mansionUnitManager()
+                local card = scrolling and scrolling:FindFirstChild(uuid)
+                if not card then return false end
+                for _, object in ipairs(card:GetDescendants()) do
+                    if object:IsA("TextLabel") and tostring(object.Text):upper() == "MAX" then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function mansionUpgradeOnce(uuid)
+                if not placeRemote then return false end
+                local ok, result = pcall(function()
+                    return placeRemote:InvokeServer("UpgradeTower", uuid)
+                end)
+                return ok and result == true
+            end
+
+            local function exactName(actual, expected)
+                return tostring(actual):lower() == tostring(expected):lower()
+            end
+
+            local leoSlot = findSlotByUnitName("Leorio")
+            local bulmaSlot = findSlotByUnitName("Bulma")
+            local moneySpecs = {}
+            if leoSlot then
+                moneySpecs[#moneySpecs + 1] = {
+                    slot = leoSlot, placed = "Leo", target = 3, placementType = "Ground",
+                }
+                slotTypes[leoSlot] = "Ground"
+            end
+            if bulmaSlot then
+                moneySpecs[#moneySpecs + 1] = {
+                    slot = bulmaSlot, placed = "Bluma", target = 1, placementType = "Auto",
+                }
+            end
+
+            local function countPlacedName(name)
+                local count = 0
+                for _, unit in ipairs(mansionPlacedUnits()) do
+                    if exactName(unit.name, name) then count += 1 end
+                end
+                return count
+            end
+
+            dbg(string.format("[Mansion 1] ตัวเงิน Leorio=%s | Bulma=%s",
+                leoSlot and ("Tower" .. leoSlot .. " x3") or "ไม่มี",
+                bulmaSlot and ("Tower" .. bulmaSlot .. " x1") or "ไม่มี"))
+
+            local moneyPercents = {30, 34, 38, 42, 46, 26, 50, 22}
+            local moneyPercentIndex = 1
+            for _, spec in ipairs(moneySpecs) do
+                local started = os.clock()
+                while stillRunning() and not mansionEnded()
+                    and countPlacedName(spec.placed) < spec.target
+                    and os.clock() - started < 120 do
+                    local percent = moneyPercents[moneyPercentIndex]
+                    moneyPercentIndex = moneyPercentIndex % #moneyPercents + 1
+                    local current = countPlacedName(spec.placed)
+                    local ok, result = queueOne(
+                        spec.slot,
+                        spec.placementType,
+                        percent,
+                        string.format("Mansion %s %d/%d", spec.placed, current + 1, spec.target)
+                    )
+                    if not ok then task.wait(result == -1 and 0.8 or 0.25) end
+                end
+            end
+
+            -- ตัวเงินทุกชนิดที่มีต้องวางครบและ MAX ก่อนจึงปล่อยเงินให้ตัวดาเมจ
+            local moneyUpgradeCount = 0
+            local moneyUpgradeStarted = os.clock()
+            while stillRunning() and not mansionEnded() and os.clock() - moneyUpgradeStarted < 300 do
+                local units = mansionPlacedUnits()
+                local allMoneyReady = true
+                local upgraded = false
+
+                for _, spec in ipairs(moneySpecs) do
+                    local matched = {}
+                    for _, unit in ipairs(units) do
+                        if exactName(unit.name, spec.placed) then matched[#matched + 1] = unit end
+                    end
+                    if #matched < spec.target then
+                        allMoneyReady = false
+                        local percent = moneyPercents[moneyPercentIndex]
+                        moneyPercentIndex = moneyPercentIndex % #moneyPercents + 1
+                        local placed = queueOne(
+                            spec.slot,
+                            spec.placementType,
+                            percent,
+                            string.format("Mansion retry %s %d/%d", spec.placed, #matched + 1, spec.target)
+                        )
+                        if placed then upgraded = true end
+                    end
+                    for _, unit in ipairs(matched) do
+                        if not mansionTowerMaxed(unit.uuid) then
+                            allMoneyReady = false
+                            if mansionUpgradeOnce(unit.uuid) then
+                                upgraded = true
+                                moneyUpgradeCount += 1
+                                setStatus(string.format("[Mansion] อัป %s ให้ MAX | รวม %d ครั้ง",
+                                    spec.placed, moneyUpgradeCount))
+                                task.wait(0.08)
+                            end
+                        end
+                    end
+                end
+
+                if allMoneyReady then break end
+                task.wait(upgraded and 0.12 or 0.7)
+            end
+            dbg("[Mansion 2] จบช่วงอัปตัวเงิน MAX | อัป " .. moneyUpgradeCount .. " ครั้ง")
+
+            local damageSlots = {}
+            for slot = 1, 6 do
+                if slot ~= leoSlot and slot ~= bulmaSlot and slotHasUnit(slot) then
+                    damageSlots[#damageSlots + 1] = slot
+                end
+            end
+            dbg("[Mansion 3] ช่องดาเมจ " .. #damageSlots .. " ช่อง [Tower"
+                .. table.concat(damageSlots, ",Tower") .. "]")
+
+            -- กระจายทุกตัวในช่วงท้ายทาง 70-80%; Auto ตรวจ Ground/Hill จากผลวางจริง
+            local damagePercents = {70, 72, 74, 76, 78, 80, 71, 73, 75, 77, 79}
+            local damagePercentIndex = 1
+            local fillStarted = os.clock()
+            local emptyRounds = 0
+            while stillRunning() and not mansionEnded()
+                and #damageSlots > 0 and os.clock() - fillStarted < 180 and emptyRounds < 4 do
+                local placedThisRound = false
+                local moneyBlocked = false
+                for _, slot in ipairs(shuffledCopy(damageSlots)) do
+                    if not stillRunning() or mansionEnded() then break end
+                    local percent = damagePercents[damagePercentIndex]
+                    damagePercentIndex = damagePercentIndex % #damagePercents + 1
+                    local ok, result = queueOne(
+                        slot,
+                        slotTypes[slot] or "Auto",
+                        percent,
+                        "Mansion ดาเมจ 70-80%"
+                    )
+                    if ok then placedThisRound = true
+                    elseif result == -1 then moneyBlocked = true end
+                end
+
+                if placedThisRound then
+                    emptyRounds = 0
+                elseif moneyBlocked then
+                    setStatus("[Mansion] เงินไม่พอ — รอแล้ววางดาเมจต่อ")
+                    task.wait(1)
+                else
+                    emptyRounds += 1
+                    task.wait(0.3)
+                end
+            end
+
+            -- สุ่มอัปเฉพาะตัวดาเมจทั้งหมด; Leo/Bluma ถูกจัดการก่อนหน้านี้แล้ว
+            local damageUpgradeCount = 0
+            local damageUpgradeStarted = os.clock()
+            while stillRunning() and not mansionEnded() and os.clock() - damageUpgradeStarted < 300 do
+                local pending = {}
+                for _, unit in ipairs(mansionPlacedUnits()) do
+                    if not exactName(unit.name, "Leo") and not exactName(unit.name, "Bluma")
+                        and not mansionTowerMaxed(unit.uuid) then
+                        pending[#pending + 1] = unit
+                    end
+                end
+                if #pending == 0 then break end
+
+                local upgraded = false
+                for _, unit in ipairs(shuffledCopy(pending)) do
+                    if not stillRunning() or mansionEnded() then break end
+                    if mansionUpgradeOnce(unit.uuid) then
+                        upgraded = true
+                        damageUpgradeCount += 1
+                        setStatus(string.format("[Mansion] สุ่มอัป %s | รวม %d ครั้ง",
+                            unit.name, damageUpgradeCount))
+                        task.wait(0.04)
+                    end
+                end
+                task.wait(upgraded and 0.08 or 0.4)
+            end
+
+            smartRunning = false
+            allButton.Text = "SMART AUTO COMPLETE"
+            allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+            status.Text = string.format("Mansion เสร็จ | Leo=%d/3 Bluma=%d/1 | ดาเมจ 70-80%%",
+                countPlacedName("Leo"), countPlacedName("Bluma"))
+            status.TextColor3 = Color3.fromRGB(124, 225, 151)
+            placing = false
+            dbg(string.format("========== MANSION COMPLETE | Leo=%d Bluma=%d | อัปเงิน=%d อัปดาเมจ=%d ==========" ,
+                countPlacedName("Leo"), countPlacedName("Bluma"), moneyUpgradeCount, damageUpgradeCount))
+            return
         end
 
         -- ตัวเงินใน hotbar ใช้ internal name จริง: Leorio / Bulma

@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI/HEADLESS v2.0
+-- ANIME ORIGINS TEST UI/HEADLESS v2.1
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.0"
+local AO_TEST_VERSION = "2.1"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -400,27 +400,93 @@ local function fireGuiButton(button)
     end
 
     if type(getconnections) == "function" then
-        local fired = false
-        local ok = pcall(function()
-            for _, connection in ipairs(getconnections(button.MouseButton1Click)) do
-                connection:Fire()
-                fired = true
-            end
-        end)
-
-        if ok and fired then
-            return true
+        for _, signal in ipairs({button.Activated, button.MouseButton1Click}) do
+            local fired = false
+            local ok = pcall(function()
+                for _, connection in ipairs(getconnections(signal)) do
+                    connection:Fire()
+                    fired = true
+                end
+            end)
+            if ok and fired then return true end
         end
     end
 
     if type(firesignal) == "function" then
-        local ok = pcall(firesignal, button.MouseButton1Click)
+        local ok = pcall(firesignal, button.Activated)
+        if ok then
+            return true
+        end
+        ok = pcall(firesignal, button.MouseButton1Click)
         if ok then
             return true
         end
     end
 
     return false, "กด connection ของปุ่มไม่ได้"
+end
+
+local function performInfinityMansionEntry()
+    if busy then return false, "entry already running" end
+    if game.PlaceId ~= AO_LOBBY_PLACE_ID then return false, "ต้องใช้งานจาก Lobby" end
+
+    busy = true
+    local function finish(ok, message)
+        busy = false
+        return ok, message
+    end
+
+    local character = player.Character or player.CharacterAdded:Wait()
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local mainFolder = workspace:FindFirstChild("MainFolder")
+    local zones = mainFolder and mainFolder:FindFirstChild("Zones")
+    local zone = zones and zones:FindFirstChild("InfinityCastle")
+    if not root or not humanoid or not zone or not zone:IsA("BasePart") then
+        return finish(false, "ไม่พบ Zones.InfinityCastle หรือตัวละคร")
+    end
+
+    status.Text = "กำลังเปิด Infinite Mansion"
+    humanoid:Move(Vector3.zero, false)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.CFrame = zone.CFrame * CFrame.new(0, 2, 0)
+    if type(firetouchinterest) == "function" then
+        pcall(firetouchinterest, root, zone, 0)
+        task.wait(0.1)
+        pcall(firetouchinterest, root, zone, 1)
+    end
+
+    local mansionFrame
+    local openedAt = os.clock()
+    while os.clock() - openedAt < 10 do
+        local playerGui = player:FindFirstChildOfClass("PlayerGui")
+        local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+        local misc = mainUI and mainUI:FindFirstChild("Misc")
+        mansionFrame = misc and misc:FindFirstChild("InfinityCastleFrame")
+        if mansionFrame and mansionFrame.Visible then break end
+        root.CFrame = zone.CFrame * CFrame.new(0, 2, 0)
+        task.wait(0.25)
+    end
+    if not mansionFrame or not mansionFrame.Visible then
+        return finish(false, "หน้า InfinityCastleFrame ไม่เปิดภายใน 10 วินาที")
+    end
+
+    local enterButton
+    pcall(function()
+        enterButton = mansionFrame.Main.ContentFrame.Main.EnterButton
+    end)
+    local clicked, clickError = fireGuiButton(enterButton)
+    if not clicked then return finish(false, "กด Enter Floor ไม่ได้: " .. tostring(clickError)) end
+
+    status.Text = "กด Enter Floor แล้ว — รอเข้าด่าน"
+    local waitStarted = os.clock()
+    while game.PlaceId == AO_LOBBY_PLACE_ID and os.clock() - waitStarted < 30 do
+        task.wait(0.5)
+    end
+    if game.PlaceId == AO_LOBBY_PLACE_ID then
+        return finish(false, "กด Enter Floor แล้วแต่ยังอยู่ Lobby")
+    end
+    return finish(true, "เข้า Infinite Mansion สำเร็จ")
 end
 
 local function waitForMapSelectContent(timeout)
@@ -684,5 +750,7 @@ _G.AO_ENTER_STAGE = function(mode, mapValue, actValue)
     selectedAct = actInfo
     return performEntry()
 end
+
+_G.AO_ENTER_INFINITY_MANSION = performInfinityMansionEntry
 
 print("[AO TEST v" .. AO_TEST_VERSION .. "] " .. (AO_HEADLESS and "headless loaded" or "UI loaded"))
