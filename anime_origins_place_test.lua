@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.37
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.38
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.37"
+local TEST_VERSION = "0.38"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1508,19 +1508,45 @@ allButton.MouseButton1Click:Connect(function()
             return false
         end
 
-        -- หลังวางครบ สุ่มอัปเกรดดาเมจทั้งหมดแทนการไล่ตามช่อง 1-6
+        -- สุ่มอัปดาเมจเป็นรอบสั้น ๆ ใช้ได้ทั้ง "ระหว่างวาง" และช่วงเร่งอัปท้าย
         -- Leo ถูก MAX ไปก่อนแล้วจึงไม่รวม; Bluma รวมในคิวเฉพาะกรณีที่มี Leo+Bluma พร้อมกัน
+        local gemDamageUpgradeCount = 0
+        local function gemUpgradeDamagePass(maxAttempts)
+            local units = gemPlacedUnits()
+            local pool = {}
+            for _, unit in ipairs(units) do
+                local isLeo = exactPlacedName(unit.name, "Leo")
+                local isSingleBluma = exactPlacedName(unit.name, "Bluma") and not hasBothMoney
+                if not isLeo and not isSingleBluma and not gemTowerMaxed(unit.uuid) then
+                    pool[#pool + 1] = unit
+                end
+            end
+
+            local attempts, upgraded = 0, 0
+            for _, unit in ipairs(shuffledCopy(pool)) do
+                if not stillRunning() or attempts >= (maxAttempts or #pool) then break end
+                attempts += 1
+                if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
+                    upgraded += 1
+                    gemDamageUpgradeCount += 1
+                    setStatus(string.format("[Gem] สุ่มอัป %s | รวม %d ครั้ง", unit.name, gemDamageUpgradeCount))
+                    task.wait(0.04)
+                end
+            end
+            return #units, #pool, upgraded
+        end
+
         local function gemUpgradeDamageAndDeferredBulma()
             if not isGem then return true end
 
             local started = os.clock()
-            local upgradeCount = 0
             local sawPlacedUnits = false
             local missingSince = nil
 
             while stillRunning() and os.clock() - started < 240 do
-                local units = gemPlacedUnits()
-                if #units > 0 then
+                -- รอบท้ายยิงได้สูงสุด 24 ยูนิต/รอบ และลด delay เพื่อใช้เงินที่ค้างอยู่ให้ทันเวฟ
+                local unitCount, pendingCount, upgradedThisPass = gemUpgradeDamagePass(24)
+                if unitCount > 0 then
                     sawPlacedUnits = true
                     missingSince = nil
                 elseif sawPlacedUnits then
@@ -1531,35 +1557,15 @@ allButton.MouseButton1Click:Connect(function()
                     end
                 end
 
-                local pool = {}
-                for _, unit in ipairs(units) do
-                    local isLeo = exactPlacedName(unit.name, "Leo")
-                    local isSingleBluma = exactPlacedName(unit.name, "Bluma") and not hasBothMoney
-                    if not isLeo and not isSingleBluma and not gemTowerMaxed(unit.uuid) then
-                        pool[#pool + 1] = unit
-                    end
-                end
-
-                if #units > 0 and #pool == 0 then
+                if unitCount > 0 and pendingCount == 0 then
                     dbg("[Gem Upgrade] ดาเมจ" .. (hasBothMoney and "+Bluma" or "") .. " MAX ครบทั้งหมด")
                     return true
                 end
 
-                local upgradedThisPass = false
-                for _, unit in ipairs(shuffledCopy(pool)) do
-                    if not stillRunning() then return false end
-                    if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
-                        upgradedThisPass = true
-                        upgradeCount += 1
-                        setStatus(string.format("[Gem] สุ่มอัป %s | รวม %d ครั้ง", unit.name, upgradeCount))
-                        task.wait(0.12)
-                    end
-                end
-
-                task.wait(upgradedThisPass and 0.2 or 0.7)
+                task.wait(upgradedThisPass > 0 and 0.08 or 0.35)
             end
 
-            dbg("[Gem Upgrade] หมดเวลาอัปดาเมจ | สำเร็จ " .. upgradeCount .. " ครั้ง")
+            dbg("[Gem Upgrade] หมดเวลาอัปดาเมจ | สำเร็จ " .. gemDamageUpgradeCount .. " ครั้ง")
             return false
         end
 
@@ -1826,6 +1832,16 @@ allButton.MouseButton1Click:Connect(function()
                     placedThisRound = true
                 elseif res == -1 then
                     moneyBlockedThisRound = true
+                end
+            end
+
+            -- ไม่รอให้ fill loop จบ 60 วิ: หลังตัวเงินหลัก MAX แล้วให้อัปดาเมจแทรกทุกรอบ
+            -- สูงสุด 12 ยูนิตต่อรอบเพื่อไม่ให้การอัปกินเวลาจนหยุดวางตัวใหม่
+            if isGem then
+                local _, pending, upgraded = gemUpgradeDamagePass(12)
+                if upgraded > 0 then
+                    dbg(string.format("[5 Gem] อัปแทรกระหว่างวาง %d ครั้ง | ยังรออัปก่อนรอบนี้ %d ตัว",
+                        upgraded, pending))
                 end
             end
 
