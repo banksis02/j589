@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.39
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.40
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.39"
+local TEST_VERSION = "0.40"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1154,6 +1154,31 @@ allButton.MouseButton1Click:Connect(function()
                 setStatus("ยังปิด Auto Upgrade ของเกมไม่ได้ — ยังไม่เริ่มวางตัว", false)
                 placing = false
                 warn("[AO PLACE v" .. TEST_VERSION .. "] STOP: AutoUpgradeOnPlacement is not confirmed OFF")
+                return
+            end
+        end
+
+        -- Mansion ใช้ผล Victory/Defeat เลือก Next หรือ Replay เอง
+        -- ยืนยันซ้ำตรงโมดูลวางตัวเพื่อกัน Auto Replay ของเกมกลับมาเปิดระหว่างโหลดด่าน
+        if isMansion then
+            local autoReplayDisabled = false
+            if type(_G.AO_SET_TOGGLE) == "function" then
+                for attempt = 1, 3 do
+                    local called, result = pcall(_G.AO_SET_TOGGLE, "AutoReplayGame", false)
+                    autoReplayDisabled = called and result == true
+                    dbg(string.format("[Mansion] ปิด AutoReplayGame ในด่าน รอบ %d = %s",
+                        attempt, tostring(autoReplayDisabled)))
+                    if autoReplayDisabled then break end
+                    task.wait(0.5)
+                end
+            end
+            if not autoReplayDisabled then
+                smartRunning = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                setStatus("ยังปิด Auto Replay ของเกมไม่ได้ — ยังไม่เริ่ม Mansion", false)
+                placing = false
+                warn("[AO PLACE v" .. TEST_VERSION .. "] STOP: AutoReplayGame is not confirmed OFF")
                 return
             end
         end

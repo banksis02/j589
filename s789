@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.18"
+local SCRIPT_VERSION = "v11.19"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3811,6 +3811,7 @@ if GAME_ID == "anime_origins" then
     local aoBattlepassLive = nil
     local aoBattlepassDbg = 0
     local aoGameUpgradeDisabled = false
+    local aoMansionReplayDisabled = false
     local aoMansionFloor = 0
     local aoMansionConsecutiveLosses = 0
     local aoMansionLastResult = ""
@@ -4251,6 +4252,27 @@ if GAME_ID == "anime_origins" then
             aoGameUpgradeDisabled = true
         end
 
+        -- Infinite Mansion ต้องให้สคริปต์เป็นคนเลือก Next/Replay ตามผลของรอบเท่านั้น
+        -- ถ้า AutoReplayGame ของเกมเปิดอยู่ เกมจะกด Replay เองก่อนที่เราจะอ่านผล/นับแพ้ติดกัน
+        if aoCurrentJob and aoCurrentJob.mode == "ao_mansion" and not aoMansionReplayDisabled then
+            local disabled = false
+            if type(_G.AO_SET_TOGGLE) == "function" then
+                for attempt = 1, 3 do
+                    local called, result = pcall(_G.AO_SET_TOGGLE, "AutoReplayGame", false)
+                    disabled = called and result == true
+                    print(string.format("[AO %s] game AutoReplayGame OFF attempt %d = %s",
+                        SCRIPT_VERSION, attempt, tostring(disabled)))
+                    if disabled then break end
+                    task.wait(0.5)
+                end
+            end
+            if not disabled then
+                warn("[AO " .. SCRIPT_VERSION .. "] ยังยืนยัน AutoReplayGame=OFF ไม่ได้ — ยังไม่เริ่ม Mansion")
+                return false
+            end
+            aoMansionReplayDisabled = true
+        end
+
         if not aoGameLoaded or not _G.AO_CORE_READY then
             aoGameLoaded = aoLoadModule("anime_origins_place_test.lua") == true
         end
@@ -4276,6 +4298,7 @@ if GAME_ID == "anime_origins" then
     local function aoStop()
         aoFarming = false
         aoGameUpgradeDisabled = false
+        aoMansionReplayDisabled = false
         aoInitialPlacementStarted = false
         aoLastWave = nil
         if _G.AO_GEM_W20_STOP then pcall(_G.AO_GEM_W20_STOP) end

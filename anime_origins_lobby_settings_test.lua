@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS SETTINGS v0.6
+-- ANIME ORIGINS SETTINGS v0.7
 -- Applies the full preset in lobby and exposes one-setting control inside a game.
 -- ============================================================
 
-local VERSION = "0.6"
+local VERSION = "0.7"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -187,7 +187,7 @@ local TARGET_TOGGLES = {
     {{"AutoSkipWave"}, true},
     {{"AutoStartGame"}, true},
     {{"AutoNextGame"}, false},
-    {{"AutoReplayGame"}, true},
+    {{"AutoReplayGame"}, tostring(_G.AO_PLACE_MODE or "") ~= "ao_mansion"},
     {{"SkipSummonCutscene"}, true},
     {{"SummonMax"}, true},
     {{"SkipGameCutscene"}, false},
