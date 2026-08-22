@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.28"
+local SCRIPT_VERSION = "v11.29"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3819,6 +3819,17 @@ if GAME_ID == "anime_origins" then
     local aoMansionStateLoaded = false
     local aoMansionJobId = ""
 
+    local function aoMansionLossLimit()
+        local completion = aoCurrentJob and aoCurrentJob.completion
+        local configured = tonumber(aoCurrentJob and aoCurrentJob.towerLossLimit)
+            or tonumber(completion and completion.maxConsecutiveLosses)
+        if configured and configured > 0 then
+            return math.max(1, math.floor(configured))
+        end
+        local target = tonumber(aoCurrentJob and aoCurrentJob.target) or 0
+        return target >= 100 and 20 or 10
+    end
+
     local function aoLoadModule(fileName)
         local ok, result = pcall(function()
             local source = game:HttpGet(AO_RAW .. fileName .. "?main=" .. SCRIPT_VERSION)
@@ -4116,10 +4127,11 @@ if GAME_ID == "anime_origins" then
             local rewardText, actText
             if isMansionJob then
                 rewardText = (aoStageRewardText ~= "" and aoStageRewardText) or "จบชั้น"
-                actText = string.format("Infinite Mansion Floor %d - %s | แพ้ติดกัน %d/10",
+                actText = string.format("Infinite Mansion Floor %d - %s | แพ้ติดกัน %d/%d",
                     aoMansionFloor,
                     aoMansionLastResult == "win" and "Victory" or "Defeat",
-                    aoMansionConsecutiveLosses)
+                    aoMansionConsecutiveLosses,
+                    aoMansionLossLimit())
                 if aoStagePlayTime ~= "" then playTime = aoStagePlayTime end
             elseif isStageMode then
                 -- โหมดเล่นจบด่าน: รางวัล+เวลาฟามจริง (Real Time) จากหน้า Victory + ป้ายด่าน
@@ -4317,13 +4329,16 @@ if GAME_ID == "anime_origins" then
                 if aoCurrentJob.mode == "ao_mansion"
                     and (not aoMansionStateLoaded or aoMansionJobId ~= mansionJobId) then
                     aoMansionFloor = math.max(0, tonumber(aoCurrentJob.towerFloor) or 0)
-                    aoMansionConsecutiveLosses = math.max(0, tonumber(aoCurrentJob.towerConsecutiveLosses) or 0)
+                    local mansionLossLimit = aoMansionLossLimit()
+                    aoMansionConsecutiveLosses = math.min(mansionLossLimit,
+                        math.max(0, tonumber(aoCurrentJob.towerConsecutiveLosses) or 0))
                     aoMansionLastResult = tostring(aoCurrentJob.towerLastResult or "")
                     aoMansionExhausted = aoCurrentJob.towerExhausted == true
+                        and aoMansionConsecutiveLosses >= mansionLossLimit
                     aoMansionStateLoaded = true
                     aoMansionJobId = mansionJobId
-                    print(string.format("[AO %s] Mansion state: Floor %d | แพ้ติดกัน %d/10",
-                        SCRIPT_VERSION, aoMansionFloor, aoMansionConsecutiveLosses))
+                    print(string.format("[AO %s] Mansion state: Floor %d | แพ้ติดกัน %d/%d",
+                        SCRIPT_VERSION, aoMansionFloor, aoMansionConsecutiveLosses, aoMansionLossLimit()))
                 end
                 if game.PlaceId == AO_LOBBY_PLACE_ID then
                     aoFarming = false
@@ -4514,6 +4529,7 @@ if GAME_ID == "anime_origins" then
                 aoStagePlayTime = realTime or ""
                 aoStagePending = true
                 if isMansion then
+                    local lossLimit = aoMansionLossLimit()
                     local floor = aoResultFloor()
                     aoMansionFloor = math.max(aoMansionFloor, floor)
                     if tostring(result):lower():find("victory", 1, true) then
@@ -4521,9 +4537,9 @@ if GAME_ID == "anime_origins" then
                         aoMansionLastResult = "win"
                         aoMansionExhausted = false
                     else
-                        aoMansionConsecutiveLosses = math.min(10, aoMansionConsecutiveLosses + 1)
+                        aoMansionConsecutiveLosses = math.min(lossLimit, aoMansionConsecutiveLosses + 1)
                         aoMansionLastResult = "lose"
-                        aoMansionExhausted = aoMansionConsecutiveLosses >= 10
+                        aoMansionExhausted = aoMansionConsecutiveLosses >= lossLimit
                     end
                 end
                 print(("[AO %s] 🏁 %s รอบ %d | เวลาจริง %s | รางวัล: %s"):format(
@@ -4534,8 +4550,8 @@ if GAME_ID == "anime_origins" then
                 task.wait(0.4)
                 if isMansion then
                     if aoMansionExhausted then
-                        print(string.format("[AO %s] Mansion แพ้ติดกัน %d/10 → จบงาน ไม่กด Replay",
-                            SCRIPT_VERSION, aoMansionConsecutiveLosses))
+                        print(string.format("[AO %s] Mansion แพ้ติดกัน %d/%d → จบงาน ไม่กด Replay",
+                            SCRIPT_VERSION, aoMansionConsecutiveLosses, aoMansionLossLimit()))
                     else
                         local nextButton = aoMansionLastResult == "win" and "Next" or "Replay"
                         local closed = false
@@ -4549,8 +4565,9 @@ if GAME_ID == "anime_origins" then
                             task.wait(1)
                         end
                         if closed then
-                            print(string.format("[AO %s] Mansion %s สำเร็จ Floor %d | แพ้ติดกัน %d/10",
-                                SCRIPT_VERSION, nextButton, aoMansionFloor, aoMansionConsecutiveLosses))
+                            print(string.format("[AO %s] Mansion %s สำเร็จ Floor %d | แพ้ติดกัน %d/%d",
+                                SCRIPT_VERSION, nextButton, aoMansionFloor, aoMansionConsecutiveLosses,
+                                aoMansionLossLimit()))
                         else
                             warn(string.format("[AO %s] Mansion กด %s ไม่สำเร็จภายใน 15 วินาที",
                                 SCRIPT_VERSION, nextButton))
