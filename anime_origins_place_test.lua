@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.41
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.42
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.41"
+local TEST_VERSION = "0.42"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -29,17 +29,9 @@ local remoteFolder = RS:FindFirstChild("LobbyRemotes")
 local handlerFolder = remoteFolder and remoteFolder:FindFirstChild("TowerHandlerRemotes")
 local placeRemote = handlerFolder and handlerFolder:FindFirstChild("TowerHandlerFunction")
 
-local function buildPath()
-    if not pathFolder then return nil, "ไม่พบ Workspace.PathFolder" end
-
-    local parts = {}
-    for _, object in ipairs(pathFolder:GetChildren()) do
-        if object:IsA("BasePart") and tonumber(object.Name) then
-            parts[#parts + 1] = object
-        end
-    end
+local function buildOnePath(parts)
+    if #parts < 2 then return nil end
     table.sort(parts, function(a, b) return tonumber(a.Name) < tonumber(b.Name) end)
-    if #parts < 2 then return nil, "PathFolder มี Waypoint น้อยกว่า 2 จุด" end
 
     local points, cumulative = {}, {0}
     for index, part in ipairs(parts) do
@@ -51,23 +43,182 @@ local function buildPath()
     return {Points = points, Cumulative = cumulative, Total = cumulative[#cumulative]}
 end
 
-local path, pathError = buildPath()
+local function numericParts(container, recursive)
+    local parts = {}
+    local objects = recursive and container:GetDescendants() or container:GetChildren()
+    for _, object in ipairs(objects) do
+        if object:IsA("BasePart") and tonumber(object.Name) then
+            parts[#parts + 1] = object
+        end
+    end
+    return parts
+end
 
-local function posAndDirectionAt(percent)
-    if not path then return nil end
-    local distance = math.clamp(percent, 0, 100) / 100 * path.Total
-    for index = 2, #path.Points do
-        if path.Cumulative[index] >= distance then
-            local startDistance = path.Cumulative[index - 1]
-            local segmentLength = path.Cumulative[index] - startDistance
+local function buildPaths()
+    if not pathFolder then return nil, "ไม่พบ Workspace.PathFolder" end
+
+    -- ด่านทั่วไป: PathFolder.1, PathFolder.2, ... เป็น BasePart โดยตรง
+    local direct = numericParts(pathFolder, false)
+    if #direct >= 2 then
+        return {buildOnePath(direct)}
+    end
+
+    -- Infinite Mansion: PathFolder มีโฟลเดอร์เลน 1-7 และแต่ละเลนมีจุด 1..N
+    local lanes = {}
+    for _, lane in ipairs(pathFolder:GetChildren()) do
+        if tonumber(lane.Name) then
+            local lanePath = buildOnePath(numericParts(lane, true))
+            if lanePath then
+                lanePath.Lane = tonumber(lane.Name)
+                lanes[#lanes + 1] = {Order = tonumber(lane.Name), Path = lanePath}
+            end
+        end
+    end
+    table.sort(lanes, function(a, b) return a.Order < b.Order end)
+
+    local paths = {}
+    for _, lane in ipairs(lanes) do paths[#paths + 1] = lane.Path end
+    if #paths == 0 then
+        return nil, "PathFolder ไม่มีเส้นทางที่มี Waypoint อย่างน้อย 2 จุด"
+    end
+    return paths
+end
+
+local paths, pathError = buildPaths()
+local path = paths and paths[1] or nil
+local activeMansionPath = nil
+local activeMansionLane = nil
+
+local function distanceToPathXZ(position, selectedPath)
+    local bestDistance = math.huge
+    for index = 2, #selectedPath.Points do
+        local a = selectedPath.Points[index - 1]
+        local b = selectedPath.Points[index]
+        local segmentX = b.X - a.X
+        local segmentZ = b.Z - a.Z
+        local lengthSquared = segmentX * segmentX + segmentZ * segmentZ
+        local alpha = 0
+        if lengthSquared > 0 then
+            alpha = math.clamp(
+                ((position.X - a.X) * segmentX + (position.Z - a.Z) * segmentZ) / lengthSquared,
+                0,
+                1
+            )
+        end
+        local nearestX = a.X + segmentX * alpha
+        local nearestZ = a.Z + segmentZ * alpha
+        local dx = position.X - nearestX
+        local dz = position.Z - nearestZ
+        local distance = math.sqrt(dx * dx + dz * dz)
+        if distance < bestDistance then bestDistance = distance end
+    end
+    return bestDistance
+end
+
+local function currentEnemyPositions()
+    local positions = {}
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return positions end
+
+    for _, enemy in ipairs(enemies:GetChildren()) do
+        if enemy:IsA("Model") then
+            local ok, pivot = pcall(enemy.GetPivot, enemy)
+            if ok then positions[#positions + 1] = pivot.Position end
+        elseif enemy:IsA("BasePart") then
+            positions[#positions + 1] = enemy.Position
+        end
+    end
+    return positions
+end
+
+local function scoreMansionPath(selectedPath, enemyPositions)
+    local totalDistance = 0
+    local farthestDistance = 0
+    for _, position in ipairs(enemyPositions) do
+        local distance = distanceToPathXZ(position, selectedPath)
+        totalDistance += distance
+        if distance > farthestDistance then farthestDistance = distance end
+    end
+    local averageDistance = #enemyPositions > 0 and totalDistance / #enemyPositions or math.huge
+    -- ใช้ตัวที่แยกออกจากช่วงต้นร่วมเป็นน้ำหนักหลัก เพราะทั้ง 7 เส้นเริ่มทับกัน
+    return farthestDistance + averageDistance * 0.15, averageDistance, farthestDistance
+end
+
+local function detectActiveMansionPath(timeoutSeconds, shouldContinue, progressCallback)
+    if not paths or #paths == 0 then return nil, nil, "ไม่มีข้อมูลเส้นทาง" end
+    if #paths == 1 then return paths[1], paths[1].Lane or 1, "มีเส้นทางเดียว" end
+
+    local started = os.clock()
+    local lastSummary = "ยังไม่มีมอน"
+    while os.clock() - started < (timeoutSeconds or 30) do
+        if shouldContinue and not shouldContinue() then
+            return nil, nil, "ยกเลิกการหาเส้นทาง"
+        end
+
+        local enemyPositions = currentEnemyPositions()
+        if #enemyPositions > 0 then
+            local ranked = {}
+            for index, candidatePath in ipairs(paths) do
+                local score, average, farthest = scoreMansionPath(candidatePath, enemyPositions)
+                ranked[#ranked + 1] = {
+                    Path = candidatePath,
+                    Lane = candidatePath.Lane or index,
+                    Score = score,
+                    Average = average,
+                    Farthest = farthest,
+                }
+            end
+            table.sort(ranked, function(a, b) return a.Score < b.Score end)
+
+            local best = ranked[1]
+            local second = ranked[2]
+            local gap = second and (second.Score - best.Score) or math.huge
+            lastSummary = string.format(
+                "มอน %d | เส้น %d %.2f | อันดับสอง %.2f | gap %.2f",
+                #enemyPositions,
+                best.Lane,
+                best.Score,
+                second and second.Score or -1,
+                gap
+            )
+
+            -- เส้นจริงต้องเกาะตำแหน่งมอน และต้องชนะอันดับสองชัดเจน
+            -- ถ้ามอนยังอยู่ช่วงต้นที่ทุกเส้นทับกัน จะรอต่อโดยไม่เดา
+            if best.Farthest <= 4 and gap >= 0.75 then
+                return best.Path, best.Lane, lastSummary
+            end
+        end
+
+        if progressCallback then progressCallback(lastSummary) end
+        task.wait(0.25)
+    end
+
+    return nil, nil, "หมดเวลารอเส้นทางที่แยกได้ชัดเจน | " .. lastSummary
+end
+
+local function selectedPlacementPath()
+    if tostring(_G.AO_PLACE_MODE or "") == "ao_mansion" then
+        return activeMansionPath
+    end
+    return path
+end
+
+local function posAndDirectionAt(percent, selectedPath)
+    selectedPath = selectedPath or selectedPlacementPath()
+    if not selectedPath then return nil end
+    local distance = math.clamp(percent, 0, 100) / 100 * selectedPath.Total
+    for index = 2, #selectedPath.Points do
+        if selectedPath.Cumulative[index] >= distance then
+            local startDistance = selectedPath.Cumulative[index - 1]
+            local segmentLength = selectedPath.Cumulative[index] - startDistance
             local alpha = segmentLength > 0 and (distance - startDistance) / segmentLength or 0
-            local a, b = path.Points[index - 1], path.Points[index]
+            local a, b = selectedPath.Points[index - 1], selectedPath.Points[index]
             local direction = b - a
             return a:Lerp(b, alpha), direction.Magnitude > 0 and direction.Unit or Vector3.zAxis
         end
     end
-    local last = #path.Points
-    return path.Points[last], (path.Points[last] - path.Points[last - 1]).Unit
+    local last = #selectedPath.Points
+    return selectedPath.Points[last], (selectedPath.Points[last] - selectedPath.Points[last - 1]).Unit
 end
 
 local function addPercentLabel(parent, position, text)
@@ -104,15 +255,16 @@ end
 local function drawPath()
     local existing = workspace:FindFirstChild("AO_Path_Debug")
     if existing then existing:Destroy() end
-    if not path then return false, pathError end
+    local drawTarget = selectedPlacementPath() or path
+    if not drawTarget then return false, pathError end
 
     local folder = Instance.new("Folder")
     folder.Name = "AO_Path_Debug"
     folder.Parent = workspace
 
-    for index = 2, #path.Points do
-        local a = path.Points[index - 1] + Vector3.new(0, 0.35, 0)
-        local b = path.Points[index] + Vector3.new(0, 0.35, 0)
+    for index = 2, #drawTarget.Points do
+        local a = drawTarget.Points[index - 1] + Vector3.new(0, 0.35, 0)
+        local b = drawTarget.Points[index] + Vector3.new(0, 0.35, 0)
         local length = (b - a).Magnitude
         local segment = Instance.new("Part")
         segment.Name = "Segment_" .. tostring(index - 1)
@@ -129,11 +281,16 @@ local function drawPath()
     end
 
     for _, percent in ipairs({0, 25, 50, 75, 100}) do
-        local position = posAndDirectionAt(percent)
+        local position = posAndDirectionAt(percent, drawTarget)
         addPercentLabel(folder, position, tostring(percent) .. "%")
     end
 
-    return true, string.format("เส้นทาง %d จุด | %.1f studs", #path.Points, path.Total)
+    return true, string.format(
+        "เส้นทาง%s %d จุด | %.1f studs",
+        drawTarget.Lane and (" " .. tostring(drawTarget.Lane)) or "",
+        #drawTarget.Points,
+        drawTarget.Total
+    )
 end
 
 local function placementCount()
@@ -159,17 +316,28 @@ local function raycastParams()
 end
 
 local function groundCandidates(percent)
-    local base, direction = posAndDirectionAt(percent)
+    local selectedPath = selectedPlacementPath()
+    local base, direction = posAndDirectionAt(percent, selectedPath)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
-    local candidates, params, seen = {}, raycastParams(), {}
+    local candidates, seen = {}, {}
     local isMansion = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
+    local params = raycastParams()
+    if isMansion then
+        local placementParts = workspace:FindFirstChild("PlacementParts")
+        local groundPart = placementParts and placementParts:FindFirstChild("Ground", true)
+        if groundPart and groundPart:IsA("BasePart") then
+            params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = {groundPart}
+        end
+    end
     -- ชิดขอบถนนก่อน แล้วค่อยขยายออกเมื่อพื้นที่เต็ม
     -- Ground ต้องอยู่ชิดขอบทาง ลดโอกาสล้ำเข้าอาคาร/สิ่งกีดขวาง
     -- Infinite Mansion มีทางมอนกว้างกว่าด่านปกติ จึงค้นแบบขยายออกทั้งสองฝั่ง
     -- โดยยังคำนวณจาก PathFolder ทุกจุด ไม่ใช้พิกัดแผนที่ตายตัว
     local offsets = isMansion
-        and {6, -6, 8, -8, 10, -10, 12, -12, 14, -14, 16, -16,
+        and {4, -4, 5, -5, 6, -6, 8, -8, 10, -10, 12, -12, 14, -14, 16, -16,
              18, -18, 21, -21, 24, -24, 28, -28, 32, -32}
         or {2.25, -2.25, 3, -3, 3.75, -3.75, 4.5, -4.5, 5.25, -5.25}
     local alongs = isMansion and {0, 4, -4, 8, -8} or {0}
@@ -202,7 +370,8 @@ local function groundCandidates(percent)
 end
 
 local function hillCandidates(percent)
-    local base, direction = posAndDirectionAt(percent)
+    local selectedPath = selectedPlacementPath()
+    local base, direction = posAndDirectionAt(percent, selectedPath)
     if not base then return {} end
     local perpendicular = Vector3.new(-direction.Z, 0, direction.X).Unit
     local candidates, params, seen = {}, raycastParams(), {}
@@ -1000,7 +1169,8 @@ local function slotHasUnit(slot)
 end
 
 local function enemyProgressPercent()
-    if not path then return nil end
+    local progressPath = selectedPlacementPath()
+    if not progressPath then return nil end
     local enemies = workspace:FindFirstChild("Enemies")
     if not enemies then return nil end
 
@@ -1013,8 +1183,8 @@ local function enemyProgressPercent()
             local bestDistance = math.huge
             local bestPathDistance = 0
 
-            for index = 2, #path.Points do
-                local a, b = path.Points[index - 1], path.Points[index]
+            for index = 2, #progressPath.Points do
+                local a, b = progressPath.Points[index - 1], progressPath.Points[index]
                 local segment = b - a
                 local lengthSquared = segment:Dot(segment)
                 local alpha = lengthSquared > 0 and math.clamp((root.Position - a):Dot(segment) / lengthSquared, 0, 1) or 0
@@ -1023,11 +1193,11 @@ local function enemyProgressPercent()
 
                 if distance < bestDistance then
                     bestDistance = distance
-                    bestPathDistance = path.Cumulative[index - 1] + segment.Magnitude * alpha
+                    bestPathDistance = progressPath.Cumulative[index - 1] + segment.Magnitude * alpha
                 end
             end
 
-            local percent = bestPathDistance / path.Total * 100
+            local percent = bestPathDistance / progressPath.Total * 100
             if not furthest or percent > furthest then furthest = percent end
         end
     end
@@ -1228,6 +1398,35 @@ allButton.MouseButton1Click:Connect(function()
                 task.wait(0.2)
             end
             dbg("hotbar พร้อม: " .. lastCount .. " ช่อง [" .. hotbarSnap() .. "]")
+        end
+
+        -- Infinite Mansion สุ่ม 1 จาก 7 เส้นใหม่ทุกชั้น
+        -- รอจนตำแหน่งมอนแยกเส้นได้ชัด แล้วค่อยสร้างจุดวางจากเส้นนั้นเท่านั้น
+        if isMansion then
+            activeMansionPath = nil
+            activeMansionLane = nil
+            setStatus("[Mansion] รอดูเส้นทางที่มอนเดินจริง...")
+            local detectedPath, detectedLane, routeMessage = detectActiveMansionPath(
+                30,
+                stillRunning,
+                function(message)
+                    setStatus("[Mansion] กำลังหาเส้นทาง | " .. tostring(message))
+                end
+            )
+            if not detectedPath then
+                smartRunning = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                setStatus("[Mansion] ยังแยกเส้นทางมอนไม่ได้ — จะลองใหม่", false)
+                placing = false
+                warn("[AO Mansion PATH] " .. tostring(routeMessage))
+                return
+            end
+            activeMansionPath = detectedPath
+            activeMansionLane = detectedLane
+            dbg(string.format("[Mansion PATH] เลือกเส้น %d | %s",
+                activeMansionLane, tostring(routeMessage)))
+            setStatus(string.format("[Mansion] พบเส้นที่มอนเดิน: เส้น %d", activeMansionLane), true)
         end
 
         local function queueOne(slot, placementType, percent, label)
