@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.48
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.49
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.48"
+local TEST_VERSION = "0.49"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -16,6 +16,11 @@ local VIM = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 local guiParent = gethui and gethui() or CoreGui
+
+local function usesResilientPlacement()
+    local mode = tostring(_G.AO_PLACE_MODE or "")
+    return mode == "ao_mansion" or mode == "ao_gem" or mode == "ao_legend"
+end
 
 local oldGui = guiParent:FindFirstChild("AOPlaceTestUI")
 if oldGui then oldGui:Destroy() end
@@ -540,19 +545,21 @@ local function invokePlacement(slot, position, isHill)
 end
 
 local function tryCandidates(slot, candidates, isHill, statusCallback)
-    local isMansion = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
+    local resilient = usesResilientPlacement()
+    local lastResult = nil
     for index, position in ipairs(candidates) do
         statusCallback(string.format("Tower%d %s จุด %d/%d", slot, isHill and "Hill" or "Ground", index, #candidates))
         local placed, result = invokePlacement(slot, position, isHill)
+        lastResult = result
         if placed then
             return true, position, result
         end
-        if result == -1 and not isMansion then
+        if result == -1 and not resilient then
             return false, nil, -1
         end
         task.wait(0.04)
     end
-    return false
+    return false, nil, lastResult
 end
 
 local gui = Instance.new("ScreenGui")
@@ -899,6 +906,13 @@ local function readCurrentWave()
     return tonumber(text:match("(%d+)")), text
 end
 
+local function isActOverVisible()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
+    local actOver = gameUI and gameUI:FindFirstChild("ActOver")
+    return actOver ~= nil and actOver.Visible == true
+end
+
 local function findRestartButton()
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
@@ -1114,19 +1128,20 @@ local slotPlaced = {0, 0, 0, 0, 0, 0}
 local slotFailures = {0, 0, 0, 0, 0, 0}
 local SMART_MAX_PER_SLOT = 3
 local shuffleRng = Random.new()
-local mansionCandidateCursors = {}
+local resilientCandidateCursors = {}
+local expectedHotbarSlots = 0
 
-local function mansionCandidateWindow(candidates, key, limit)
-    if tostring(_G.AO_PLACE_MODE or "") ~= "ao_mansion" or #candidates <= limit then
+local function resilientCandidateWindow(candidates, key, limit)
+    if not usesResilientPlacement() or #candidates <= limit then
         return candidates
     end
     local selected = {}
-    local startIndex = mansionCandidateCursors[key] or 1
+    local startIndex = resilientCandidateCursors[key] or 1
     for offset = 0, limit - 1 do
         local index = (startIndex + offset - 1) % #candidates + 1
         selected[#selected + 1] = candidates[index]
     end
-    mansionCandidateCursors[key] = (startIndex + limit - 1) % #candidates + 1
+    resilientCandidateCursors[key] = (startIndex + limit - 1) % #candidates + 1
     return selected
 end
 
@@ -1261,18 +1276,18 @@ end
 
 local function placeSlot(slot, placementType, percent)
     if placementType == "Auto" then
-        local ground = mansionCandidateWindow(
+        local ground = resilientCandidateWindow(
             groundCandidates(percent),
             tostring(slot) .. ":Auto:Ground",
             1
         )
-        local hill = mansionCandidateWindow(
+        local hill = resilientCandidateWindow(
             hillCandidates(percent),
             tostring(slot) .. ":Auto:Hill",
             1
         )
-        local isMansionAuto = tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"
-        local candidateCount = math.min(isMansionAuto and 1 or 6, math.max(#ground, #hill))
+        local resilientAuto = usesResilientPlacement()
+        local candidateCount = math.min(resilientAuto and 1 or 6, math.max(#ground, #hill))
 
         -- ไม่ลอง Ground จนหมดก่อน เพราะถ้ายูนิตเป็น Hill จะทำให้แต่ละตัวช้ามาก
         -- สลับ Ground/Hill ทีละตำแหน่งและจำกัดจำนวน probe
@@ -1295,9 +1310,9 @@ local function placeSlot(slot, placementType, percent)
                 hRes = result; lastRes = result
             end
 
-            -- Infinite Mansion พบว่า -1 อาจเป็นจุด/ลิมิต/สถานะ ไม่ใช่เงินอย่างเดียว
-            -- จึงลอง candidate ถัดไป; โหมดเดิมคงพฤติกรรมเดิมไว้
-            if not isMansionAuto and gRes == -1 and (hRes == -1 or not hill[index]) then
+            -- รอบใหม่ของ Mansion/Gem/Legend อาจคืน -1 ระหว่างที่จุด/สถานะยังไม่พร้อม
+            -- จึงหมุน candidate ในรอบถัดไปแทนการสรุปทันทีว่าเงินไม่พอ
+            if not resilientAuto and gRes == -1 and (hRes == -1 or not hill[index]) then
                 return false, nil, nil, -1
             end
             task.wait(0.04)
@@ -1307,7 +1322,7 @@ local function placeSlot(slot, placementType, percent)
     end
 
     if placementType == "Ground" then
-        local candidates = mansionCandidateWindow(
+        local candidates = resilientCandidateWindow(
             groundCandidates(percent),
             tostring(slot) .. ":Ground",
             2
@@ -1317,7 +1332,7 @@ local function placeSlot(slot, placementType, percent)
         return false, nil, nil, res
     end
     if placementType == "Hill" then
-        local candidates = mansionCandidateWindow(
+        local candidates = resilientCandidateWindow(
             hillCandidates(percent),
             tostring(slot) .. ":Hill",
             2
@@ -1359,7 +1374,7 @@ allButton.MouseButton1Click:Connect(function()
     smartGeneration += 1
     local myGeneration = smartGeneration
     smartPlanIndex = 1
-    mansionCandidateCursors = {}
+    resilientCandidateCursors = {}
     for slot = 1, 6 do
         slotPlaced[slot] = 0
         slotFailures[slot] = 0
@@ -1369,14 +1384,16 @@ allButton.MouseButton1Click:Connect(function()
     allButton.BackgroundColor3 = Color3.fromRGB(174, 60, 72)
 
     task.spawn(function()
-        local function stillRunning()
-            return smartRunning and myGeneration == smartGeneration
-        end
-        local function dbg(msg) print(string.format("[AO DBG v%s|gen%d] %s", TEST_VERSION, myGeneration, msg)) end
         local placeMode = tostring(_G.AO_PLACE_MODE or "")
         local isLegend = placeMode == "ao_legend"
         local isGem = placeMode == "ao_gem"
         local isMansion = placeMode == "ao_mansion"
+        local isScriptedRound = isLegend or isGem or isMansion
+        local function stillRunning()
+            return smartRunning and myGeneration == smartGeneration
+                and (not isScriptedRound or not isActOverVisible())
+        end
+        local function dbg(msg) print(string.format("[AO DBG v%s|gen%d] %s", TEST_VERSION, myGeneration, msg)) end
         local function hotbarSnap()
             local parts = {}
             for slot = 1, 6 do parts[#parts + 1] = "T" .. slot .. (slotHasUnit(slot) and "=Y" or "=-") end
@@ -1411,6 +1428,7 @@ allButton.MouseButton1Click:Connect(function()
 
             -- ห้ามวางแม้แต่ตัวแรกถ้ายังยืนยันไม่ได้ เพราะ Auto Upgrade ของเกมจะแย่งเงิน
             if not autoUpgradeDisabled then
+                if myGeneration ~= smartGeneration then return end
                 smartRunning = false
                 allButton.Text = "START SMART AUTO"
                 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1436,6 +1454,7 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
             if not autoReplayDisabled then
+                if myGeneration ~= smartGeneration then return end
                 smartRunning = false
                 allButton.Text = "START SMART AUTO"
                 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1473,19 +1492,32 @@ allButton.MouseButton1Click:Connect(function()
                 return n
             end
             local waitStart = os.clock()
-            local lastCount, stableSince = -1, os.clock()
-            while stillRunning() and os.clock() - waitStart < 8 do
+            local lastCount, maxCount, stableSince = -1, 0, os.clock()
+            while stillRunning() and os.clock() - waitStart < 10 do
                 local c = countUnitSlots()
                 if c ~= lastCount then
                     lastCount = c
                     stableSince = os.clock()
-                elseif c > 0 and os.clock() - stableSince >= 0.6 then
+                end
+                if c > maxCount then maxCount = c end
+                if c > 0 and c >= expectedHotbarSlots and os.clock() - stableSince >= 2 then
                     break
                 end
-                setStatus("รอ hotbar โหลดยูนิต... (" .. c .. " ช่อง)")
+                setStatus(string.format("รอ hotbar โหลดยูนิต... (%d/%d ช่อง)", c, expectedHotbarSlots))
                 task.wait(0.2)
             end
-            dbg("hotbar พร้อม: " .. lastCount .. " ช่อง [" .. hotbarSnap() .. "]")
+            expectedHotbarSlots = math.max(expectedHotbarSlots, maxCount)
+            dbg(string.format("hotbar พร้อม: %d ช่อง | คาดหวัง=%d [%s]",
+                lastCount, expectedHotbarSlots, hotbarSnap()))
+            if lastCount <= 0 then
+                if myGeneration ~= smartGeneration then return end
+                smartRunning = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                setStatus("hotbar ยังไม่พร้อม — รอระบบเริ่มใหม่", false)
+                placing = false
+                return
+            end
         end
 
         local function queueOne(slot, placementType, percent, label)
@@ -1496,7 +1528,7 @@ allButton.MouseButton1Click:Connect(function()
             local ok, kind, position, result = placeSlot(slot, placementType, percent)
             local took = os.clock() - t0
             placing = false
-            local rejectedReason = isMansion and "[server ปฏิเสธ: เงิน/ลิมิต/จุด]" or "[เงินไม่พอ]"
+            local rejectedReason = isScriptedRound and "[server ปฏิเสธ: เงิน/ลิมิต/จุด/สถานะ]" or "[เงินไม่พอ]"
             local reason = ok and ("สำเร็จ " .. tostring(kind))
                 or ("ไม่ติด" .. (result == -1 and rejectedReason or "[จุดผิด/เต็ม]"))
             dbg(string.format("  วาง T%d %s @%.1f%% [%s] -> %s (ใช้ %.1f วิ)",
@@ -1524,9 +1556,7 @@ allButton.MouseButton1Click:Connect(function()
         -- 5) อัป Bluma ถึง 4/6 แล้วอัป Aneko/Vegita ถึง 8/10 ทีละตัว ก่อนสุ่มอัปตัวอื่น
         if isMansion then
             local function mansionEnded()
-                local gameUI = player.PlayerGui:FindFirstChild("GameUI")
-                local actOver = gameUI and gameUI:FindFirstChild("ActOver")
-                return actOver ~= nil and actOver.Visible == true
+                return isActOverVisible()
             end
 
             local function mansionUnitManager()
@@ -1703,6 +1733,7 @@ allButton.MouseButton1Click:Connect(function()
             activeMansionPath = mansionEntrancePath
             activeMansionLane = nil
             if leoSlot and not activeMansionPath then
+                if myGeneration ~= smartGeneration then return end
                 smartRunning = false
                 allButton.Text = "START SMART AUTO"
                 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1742,6 +1773,7 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
             if not detectedPath then
+                if myGeneration ~= smartGeneration then return end
                 smartRunning = false
                 allButton.Text = "START SMART AUTO"
                 allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -2039,6 +2071,7 @@ allButton.MouseButton1Click:Connect(function()
                 remainingDamage, bulmaUpgradeCount, damageUpgradeCount
             ))
 
+            if myGeneration ~= smartGeneration then return end
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -2114,6 +2147,7 @@ allButton.MouseButton1Click:Connect(function()
 
         if #damageSlots == 0 then
             dbg("❌ STOP: ไม่มีตัวดาเมจในช่องที่เหลือ")
+            if myGeneration ~= smartGeneration then return end
             smartRunning = false
             allButton.Text = "START SMART AUTO"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -2235,6 +2269,7 @@ allButton.MouseButton1Click:Connect(function()
             end
             dbg(("[Legend] อัพเกรดครบ/หมดเวลา (money=%d dmg=%d ครั้ง)"):format(upStat.money, upStat.dmg))
 
+            if myGeneration ~= smartGeneration then return end
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -2708,6 +2743,7 @@ allButton.MouseButton1Click:Connect(function()
             gemUpgradeDamageAndDeferredBulma()
         end
 
+        if myGeneration ~= smartGeneration then return end
         smartRunning = false
         allButton.Text = "SMART AUTO COMPLETE"
         allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -2765,7 +2801,52 @@ task.spawn(function()
     if speedLevel then setStatus(speedMessage) end
 end)
 
-local lastEmptyFieldRecovery = 0
+local lastEmptyFieldRecovery = os.clock()
+local roundRecoveryToken = 0
+local lastObservedWave = nil
+local wasActOverVisible = false
+
+local function cancelOldSmartRound(reason)
+    if not smartRunning then return end
+    smartRunning = false
+    smartGeneration += 1
+    placing = false
+    allButton.Text = "START SMART AUTO"
+    allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+    print(string.format("[AO PLACE v%s] cancel old generation: %s", TEST_VERSION, tostring(reason)))
+end
+
+local function scheduleSmartRoundRecovery(reason, replaceRunning)
+    roundRecoveryToken += 1
+    local token = roundRecoveryToken
+    task.spawn(function()
+        -- ให้ Towers/UnitNodes, hotbar และเงินเริ่มต้นของรอบใหม่รีเซ็ตก่อน
+        task.wait(1.5)
+        local started = os.clock()
+        while gui.Parent and token == roundRecoveryToken and os.clock() - started < 12 do
+            local wave = readCurrentWave()
+            if not isActOverVisible() and wave and wave > 0 and placementCount() == 0 then
+                if smartRunning and not replaceRunning then return end
+                if replaceRunning then
+                    cancelOldSmartRound("เริ่มรอบใหม่: " .. tostring(reason))
+                end
+                task.wait(0.35)
+                if token == roundRecoveryToken and not smartRunning and placementCount() == 0 then
+                    print(string.format(
+                        "[AO PLACE v%s] new round Wave %d -> start fresh Smart Auto (%s)",
+                        TEST_VERSION,
+                        wave,
+                        tostring(reason)
+                    ))
+                    pcall(_G.AO_SMART_START)
+                end
+                return
+            end
+            task.wait(0.35)
+        end
+    end)
+end
+
 task.spawn(function()
     while gui.Parent do
         -- ไม่ผูกกับ Wave 20: ตอนแพ้ก่อนถึงเป้าก็มีรูปไอเทมบัง Auto Replay
@@ -2774,6 +2855,24 @@ task.spawn(function()
         end
 
         local wave = readCurrentWave()
+        local actOverVisible = isActOverVisible()
+
+        -- ใช้ lifecycle แบบ Mansion กับ Gem/Legend ด้วย: generation เก่าต้องจบทันที
+        -- เมื่อรอบจบ และสร้าง generation ใหม่หลัง Wave รีเซ็ต/หน้าจบหายแล้วเท่านั้น
+        if AO_HEADLESS and usesResilientPlacement() then
+            if actOverVisible and not wasActOverVisible then
+                cancelOldSmartRound("พบหน้าจบรอบ")
+            elseif wasActOverVisible and not actOverVisible and wave and wave > 0 then
+                scheduleSmartRoundRecovery("หน้าจบรอบปิด", true)
+            end
+
+            if wave and lastObservedWave and lastObservedWave >= 4 and wave <= 2 then
+                cancelOldSmartRound(string.format("Wave %d -> %d", lastObservedWave, wave))
+                scheduleSmartRoundRecovery(string.format("Wave %d -> %d", lastObservedWave, wave), true)
+            end
+        end
+        wasActOverVisible = actOverVisible
+        if wave then lastObservedWave = wave end
 
         -- Replay อาจรีเซ็ตเร็วเกินจนตัวตรวจจากสคริปต์หลักพลาด Wave 1-2
         -- ใช้สถานะจริงของสนามเป็นตัวตัดสิน: ถ้ายังเล่นอยู่แต่ไม่มี Tower ให้เริ่มวางใหม่เอง
@@ -2786,18 +2885,7 @@ task.spawn(function()
                 TEST_VERSION,
                 wave
             ))
-            task.spawn(function()
-                -- รีเวฟ (20→1) ในแมตช์เดิมมีช่วง transition: เงิน/มอน/remote ยังไม่พร้อม
-                -- ถ้าวางทันทีจะโดนปฏิเสธบางตัว → วางไม่ครบ แล้ว placementCount>0 ทำให้ไม่ retry
-                -- หน่วงให้รีเซ็ตเสร็จก่อน แล้วยืนยันซ้ำว่ายังเป็นรอบใหม่ที่ว่างจริง
-                task.wait(2)
-                if not smartRunning then
-                    local w = readCurrentWave()
-                    if w and w > 0 and w < 20 and placementCount() == 0 then
-                        pcall(_G.AO_SMART_START)
-                    end
-                end
-            end)
+            scheduleSmartRoundRecovery("ตรวจพบสนามว่าง Wave " .. tostring(wave), false)
         end
 
         if gemFarmEnabled then
