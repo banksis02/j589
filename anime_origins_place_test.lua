@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.46
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.47
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.46"
+local TEST_VERSION = "0.47"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1444,6 +1444,23 @@ allButton.MouseButton1Click:Connect(function()
                 warn("[AO PLACE v" .. TEST_VERSION .. "] STOP: AutoReplayGame is not confirmed OFF")
                 return
             end
+
+            -- หอคอยควรขายตัวเงินอัตโนมัติในเวฟท้าย เพื่อนำเงินไปอัปตัวดาเมจ
+            -- ถ้ายืนยันค่าไม่ได้ยังให้เล่นต่อได้ เพราะไม่ใช่เงื่อนไขบังคับก่อนเริ่มวางตัว
+            local sellFarmsEnabled = false
+            if type(_G.AO_SET_TOGGLE) == "function" then
+                for attempt = 1, 3 do
+                    local called, result = pcall(_G.AO_SET_TOGGLE, "SellFarms", true)
+                    sellFarmsEnabled = called and result == true
+                    dbg(string.format("[Mansion] เปิด SellFarms ในด่าน รอบ %d = %s",
+                        attempt, tostring(sellFarmsEnabled)))
+                    if sellFarmsEnabled then break end
+                    task.wait(0.5)
+                end
+            end
+            if not sellFarmsEnabled then
+                warn("[AO PLACE v" .. TEST_VERSION .. "] Mansion: ยังยืนยัน SellFarms=ON ไม่ได้ — เล่นต่อ")
+            end
         end
 
         -- รอ hotbar โหลดยูนิตให้ "เสถียร" ก่อนเริ่มวาง
@@ -1502,9 +1519,9 @@ allButton.MouseButton1Click:Connect(function()
         -- Infinite Mansion ใช้แผนวางเฉพาะโหมด ห้ามไหลเข้าโลจิค Gem/Legend/ด่านทั่วไป:
         -- 1) วาง Leo 3 ตัวทันทีบนช่วงทางเข้าร่วม เพื่อให้ตัวแรกลงตั้งแต่ Wave 1
         -- 2) ตรวจเส้นที่มอนเดินจริง แล้ววาง Bluma 1 ตัว
-        -- 3) วางดาเมจช่วง 70-80% ให้ได้ 5 ตัวก่อน
+        -- 3) วางดาเมจช่วง 60-80% ให้ได้ 5 ตัวก่อน
         -- 4) อัป Leo ทั้ง 3 ตัว MAX
-        -- 5) วางดาเมจที่เหลือ แล้วอัป Bluma MAX ก่อนสุ่มอัปดาเมจ
+        -- 5) อัป Bluma ถึง 4/6 แล้วอัป Aneko/Vegita ถึง 8/10 ทีละตัว ก่อนสุ่มอัปตัวอื่น
         if isMansion then
             local function mansionEnded()
                 local gameUI = player.PlayerGui:FindFirstChild("GameUI")
@@ -1529,7 +1546,11 @@ allButton.MouseButton1Click:Connect(function()
                         pcall(function()
                             unitName = tostring(card.Main.TowerButton.ImageLabel.Info.NameLabel.Text)
                         end)
-                        units[#units + 1] = { uuid = card.Name, name = unitName }
+                        units[#units + 1] = {
+                            uuid = card.Name,
+                            name = unitName,
+                            towerName = tostring(card:GetAttribute("TowerName") or ""),
+                        }
                     end
                 end
                 return units
@@ -1545,6 +1566,21 @@ allButton.MouseButton1Click:Connect(function()
                     end
                 end
                 return false
+            end
+
+            local function mansionTowerUpgradeLevel(uuid)
+                local scrolling = mansionUnitManager()
+                local card = scrolling and scrolling:FindFirstChild(uuid)
+                if not card then return nil, nil end
+                for _, object in ipairs(card:GetDescendants()) do
+                    if object:IsA("TextLabel") or object:IsA("TextButton") then
+                        local current, maximum = tostring(object.Text):match("[Uu]pgrade%s*(%d+)%s*/%s*(%d+)")
+                        if current and maximum then
+                            return tonumber(current), tonumber(maximum)
+                        end
+                    end
+                end
+                return nil, nil
             end
 
             local function mansionUpgradeOnce(uuid)
@@ -1578,14 +1614,31 @@ allButton.MouseButton1Click:Connect(function()
                 return tostring(actual):lower() == tostring(expected):lower()
             end
 
+            local function internalName(unit, expected)
+                return exactName(unit and unit.towerName, expected)
+            end
+
+            -- ชื่อภายในที่ยืนยันจาก Dump จริง ไม่อิงชื่อแสดงผลและไม่อิงเลขช่อง
+            -- Hotbar/Workspace: Vegeta_Evolved, Unit Manager: VegetaSSJ_Evolved
+            local PRIORITY_INTERNAL_NAMES = {
+                ["akeno_evolved"] = true,
+                ["vegeta_evolved"] = true,
+                ["vegetassj_evolved"] = true,
+            }
+            local function isPriorityDamage(unit)
+                return PRIORITY_INTERNAL_NAMES[tostring(unit and unit.towerName or ""):lower()] == true
+            end
+
             local leoSlot = findSlotByUnitName("Leorio")
             local bulmaSlot = findSlotByUnitName("Bulma")
+            local akenoSlot = findSlotByUnitName("Akeno_Evolved")
+            local vegetaSlot = findSlotByUnitName("Vegeta_Evolved")
             if leoSlot then slotTypes[leoSlot] = "Ground" end
 
-            local function countPlacedName(name)
+            local function countPlacedInternal(towerName)
                 local count = 0
                 for _, unit in ipairs(mansionPlacedUnits()) do
-                    if exactName(unit.name, name) then count += 1 end
+                    if internalName(unit, towerName) then count += 1 end
                 end
                 return count
             end
@@ -1616,14 +1669,14 @@ allButton.MouseButton1Click:Connect(function()
                 return slotPlaced[slot] or 0
             end
 
-            local function upgradeNamedToMax(placedName, target, label)
+            local function upgradeNamedToMax(towerName, target, label)
                 if target <= 0 then return 0 end
                 local upgradeCount = 0
                 local started = os.clock()
                 while stillRunning() and not mansionEnded() and os.clock() - started < 300 do
                     local matched = {}
                     for _, unit in ipairs(mansionPlacedUnits()) do
-                        if exactName(unit.name, placedName) then matched[#matched + 1] = unit end
+                        if internalName(unit, towerName) then matched[#matched + 1] = unit end
                     end
                     local allReady = #matched >= target
                     local pending = {}
@@ -1715,10 +1768,30 @@ allButton.MouseButton1Click:Connect(function()
             dbg("[Mansion 3] ช่องดาเมจ " .. #damageSlots .. " ช่อง [Tower"
                 .. table.concat(damageSlots, ",Tower") .. "]")
 
-            -- คงตำแหน่งดาเมจไว้ที่ 70-80% ตามเดิม
+            local priorityDamageSlots = {}
+            if akenoSlot then priorityDamageSlots[#priorityDamageSlots + 1] = akenoSlot end
+            if vegetaSlot and vegetaSlot ~= akenoSlot then
+                priorityDamageSlots[#priorityDamageSlots + 1] = vegetaSlot
+            end
+            dbg(string.format("[Mansion 3] ตัวแบกภายใน Akeno_Evolved=%s | Vegeta_Evolved=%s",
+                akenoSlot and ("Tower" .. akenoSlot) or "ไม่มี",
+                vegetaSlot and ("Tower" .. vegetaSlot) or "ไม่มี"))
+
+            -- วางตำแหน่งดาเมจตามระยะทางมอนช่วง 60-80%
             -- เส้นสั้นจะหมุนลองจุดรอบข้างทั้งหมด แต่ลองครั้งละ 1-2 จุดเพื่อไม่ให้ InvokeServer บล็อกนาน
-            local damagePercents = {70, 72, 74, 76, 78, 80, 71, 73, 75, 77, 79}
+            local damagePercents = {60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 61, 65, 69, 73, 77, 79}
             local damagePercentIndex = 1
+            local function placeDamageSlot(slot, phaseLabel)
+                local percent = damagePercents[damagePercentIndex]
+                damagePercentIndex = damagePercentIndex % #damagePercents + 1
+                return queueOne(
+                    slot,
+                    slotTypes[slot] or "Auto",
+                    percent,
+                    phaseLabel .. " 60-80%"
+                )
+            end
+
             local function placeDamageBatch(targetCount, timeoutSeconds, phaseLabel)
                 if #damageSlots == 0 or targetCount <= 0 then return 0 end
                 local placedCount = 0
@@ -1732,14 +1805,7 @@ allButton.MouseButton1Click:Connect(function()
                     local moneyBlocked = false
                     for _, slot in ipairs(shuffledCopy(damageSlots)) do
                         if not stillRunning() or mansionEnded() or placedCount >= targetCount then break end
-                        local percent = damagePercents[damagePercentIndex]
-                        damagePercentIndex = damagePercentIndex % #damagePercents + 1
-                        local ok, result = queueOne(
-                            slot,
-                            slotTypes[slot] or "Auto",
-                            percent,
-                            phaseLabel .. " 70-80%"
-                        )
+                        local ok, result = placeDamageSlot(slot, phaseLabel)
                         if ok then
                             placedThisRound = true
                             placedCount += 1
@@ -1760,46 +1826,122 @@ allButton.MouseButton1Click:Connect(function()
                 return placedCount
             end
 
-            -- วางตัวดาเมจ 5 ตัวก่อนนำเงินไปอัป Leo
-            local openingDamage = placeDamageBatch(5, 150, "Mansion ดาเมจชุดแรก")
+            -- ให้ Aneko/Vegita ที่มีในทีมลงสนามอย่างน้อยชนิดละหนึ่งตัวก่อน
+            -- เพื่อรับประกันว่าหลังอัปตัวเงินแล้วจะมีตัวแบกให้อัป 8/10 ได้ทันที
+            local openingDamage = 0
+            for _, slot in ipairs(priorityDamageSlots) do
+                if openingDamage >= 5 then break end
+                local started = os.clock()
+                local before = slotPlaced[slot] or 0
+                while stillRunning() and not mansionEnded()
+                    and (slotPlaced[slot] or 0) <= before
+                    and os.clock() - started < 45 do
+                    local ok, result = placeDamageSlot(slot, "Mansion ตัวแบกชุดแรก")
+                    if ok then
+                        openingDamage += 1
+                        break
+                    end
+                    task.wait(result == -1 and 0.8 or 0.25)
+                end
+            end
+            openingDamage += placeDamageBatch(5 - openingDamage, 150, "Mansion ดาเมจชุดแรก")
             dbg(string.format("[Mansion 4] ดาเมจชุดแรก %d/5 ตัว", openingDamage))
 
             -- จากนั้นอัป Leo ทั้ง 3 ตัวให้ MAX
-            local leoUpgradeCount = upgradeNamedToMax("Leo", leoSlot and 3 or 0, "Leo")
+            local leoUpgradeCount = upgradeNamedToMax("Leorio", leoSlot and 3 or 0, "Leo")
             dbg("[Mansion 5] Leo MAX ครบ/หมดเวลา | อัป " .. leoUpgradeCount .. " ครั้ง")
 
             -- หลัง Leo MAX ให้ทำทุกอย่างต่อเนื่องจนด่านจบ:
-            -- วางดาเมจทีละตัว + อัป Bluma ก่อน และเมื่อ Bluma MAX แล้วจึงอัปดาเมจ
+            -- วางดาเมจทีละตัว + อัป Bluma 4/6 ก่อน แล้วจึงอัปตัวแบกและดาเมจอื่น
             -- ไม่รอขั้นวางดาเมจ 180 วินาทีให้จบก่อนเหมือนเวอร์ชันเก่า
             local remainingDamage = 0
             local bulmaUpgradeCount = 0
             local damageUpgradeCount = 0
 
-            local function namedAllMax(placedName, target)
+            local function namedReachedStage(towerName, target, targetStage)
                 if target <= 0 then return true end
-                local matched = 0
+                local matched, ready = 0, 0
                 for _, unit in ipairs(mansionPlacedUnits()) do
-                    if exactName(unit.name, placedName) then
+                    if internalName(unit, towerName) then
                         matched += 1
-                        if not mansionTowerMaxed(unit.uuid) then return false end
+                        local current = mansionTowerUpgradeLevel(unit.uuid)
+                        if current and current >= targetStage then ready += 1 end
                     end
                 end
-                return matched >= target
+                return matched >= target and ready >= target
             end
 
-            local function upgradeOneNamed(placedName)
+            local function upgradeOneNamed(towerName, targetStage)
                 for _, unit in ipairs(mansionPlacedUnits()) do
-                    if exactName(unit.name, placedName) and not mansionTowerMaxed(unit.uuid) then
-                        return mansionUpgradeOnce(unit.uuid)
+                    if internalName(unit, towerName) then
+                        local current = mansionTowerUpgradeLevel(unit.uuid)
+                        if current and current < targetStage then
+                            return mansionUpgradeOnce(unit.uuid)
+                        end
                     end
                 end
                 return false
             end
 
+            -- ล็อกตัวแบกทีละ UUID: อัปตัวแรกถึง 8/10 ก่อน แล้วค่อยเปลี่ยนตัว
+            local activePriorityUuid = nil
+            local function upgradePriorityDamageStep()
+                local units = mansionPlacedUnits()
+                local selected = nil
+                local foundAkeno = false
+                local foundVegeta = false
+                for _, unit in ipairs(units) do
+                    if internalName(unit, "Akeno_Evolved") then foundAkeno = true end
+                    if internalName(unit, "Vegeta_Evolved")
+                        or internalName(unit, "VegetaSSJ_Evolved") then
+                        foundVegeta = true
+                    end
+                end
+                if activePriorityUuid then
+                    for _, unit in ipairs(units) do
+                        if unit.uuid == activePriorityUuid and isPriorityDamage(unit) then
+                            local current = mansionTowerUpgradeLevel(unit.uuid)
+                            if current and current < 8 then selected = unit end
+                            break
+                        end
+                    end
+                    if not selected then activePriorityUuid = nil end
+                end
+                if not selected then
+                    for _, unit in ipairs(units) do
+                        if isPriorityDamage(unit) then
+                            local current = mansionTowerUpgradeLevel(unit.uuid)
+                            if current and current < 8 then
+                                selected = unit
+                                activePriorityUuid = unit.uuid
+                                break
+                            end
+                        end
+                    end
+                end
+                if not selected then
+                    -- ถ้ามีตัวแบกในทีมแต่ Unit Manager ยังไม่เห็นตัวที่วาง ห้ามข้ามไปสุ่มอัปตัวอื่น
+                    -- ลูปวางด้านนอกจะพยายามวางต่อ แล้วรอบถัดไปจึงกลับมาตรวจชื่อภายในใหม่
+                    if (akenoSlot and not foundAkeno) or (vegetaSlot and not foundVegeta) then
+                        return false, true
+                    end
+                    return false, false
+                end
+
+                local current = mansionTowerUpgradeLevel(selected.uuid)
+                local upgraded = mansionUpgradeOnce(selected.uuid)
+                if upgraded then
+                    setStatus(string.format("[Mansion] อัปตัวแบก %s %d/10 → เป้าหมาย 8/10",
+                        tostring(selected.towerName), tonumber(current) or 0))
+                end
+                return upgraded, true
+            end
+
             local function upgradeDamagePass(maxSuccess)
                 local pending = {}
                 for _, unit in ipairs(mansionPlacedUnits()) do
-                    if not exactName(unit.name, "Leo") and not exactName(unit.name, "Bluma")
+                    if not internalName(unit, "Leorio") and not internalName(unit, "Bulma")
+                        and not isPriorityDamage(unit)
                         and not mansionTowerMaxed(unit.uuid) then
                         pending[#pending + 1] = unit
                     end
@@ -1817,22 +1959,25 @@ allButton.MouseButton1Click:Connect(function()
             end
 
             local function continuousUpgradeStep()
-                local bulmaReady = namedAllMax("Bluma", bulmaSlot and 1 or 0)
+                local bulmaReady = namedReachedStage("Bulma", bulmaSlot and 1 or 0, 4)
                 if not bulmaReady then
-                    if upgradeOneNamed("Bluma") then
+                    if upgradeOneNamed("Bulma", 4) then
                         bulmaUpgradeCount += 1
-                        setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป Bluma | %d ครั้ง",
+                        setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป Bluma ถึง 4/6 | %d ครั้ง",
                             bulmaUpgradeCount))
                         return true
                     end
                     return false
                 end
+
+                local priorityUpgraded, priorityPending = upgradePriorityDamageStep()
+                if priorityPending then return priorityUpgraded end
                 return upgradeDamagePass(3) > 0
             end
 
             local continuousRounds = 0
             local damageSlotIndex = 1
-            dbg("[Mansion 6] เริ่มลูปต่อเนื่อง: วางดาเมจ + อัป Bluma/ดาเมจจนด่านจบ")
+            dbg("[Mansion 6] เริ่มลูปต่อเนื่อง: Bluma 4/6 → Aneko/Vegita 8/10 → สุ่มอัปตัวอื่น")
             while stillRunning() and not mansionEnded() do
                 continuousRounds += 1
                 local didWork = false
@@ -1844,17 +1989,19 @@ allButton.MouseButton1Click:Connect(function()
 
                 -- ลองวางเพียงหนึ่งช่องต่อรอบ เพื่อไม่ให้การวางเต็มสนามบล็อกงานอัปเกรด
                 if #damageSlots > 0 then
-                    local shuffledSlots = shuffledCopy(damageSlots)
-                    damageSlotIndex = damageSlotIndex % #shuffledSlots + 1
-                    local slot = shuffledSlots[damageSlotIndex]
-                    local percent = damagePercents[damagePercentIndex]
-                    damagePercentIndex = damagePercentIndex % #damagePercents + 1
-                    local ok, result = queueOne(
-                        slot,
-                        slotTypes[slot] or "Auto",
-                        percent,
-                        "Mansion วางต่อเนื่อง 70-80%"
-                    )
+                    local slot = nil
+                    for _, prioritySlot in ipairs(priorityDamageSlots) do
+                        if (slotPlaced[prioritySlot] or 0) < 1 then
+                            slot = prioritySlot
+                            break
+                        end
+                    end
+                    if not slot then
+                        local shuffledSlots = shuffledCopy(damageSlots)
+                        damageSlotIndex = damageSlotIndex % #shuffledSlots + 1
+                        slot = shuffledSlots[damageSlotIndex]
+                    end
+                    local ok, result = placeDamageSlot(slot, "Mansion วางต่อเนื่อง")
                     if ok then
                         didWork = true
                         remainingDamage += 1
@@ -1881,12 +2028,12 @@ allButton.MouseButton1Click:Connect(function()
             smartRunning = false
             allButton.Text = "SMART AUTO COMPLETE"
             allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
-            status.Text = string.format("Mansion เสร็จ | Leo=%d/3 Bluma=%d/1 | ดาเมจ 70-80%%",
-                countPlacedName("Leo"), countPlacedName("Bluma"))
+            status.Text = string.format("Mansion เสร็จ | Leo=%d/3 Bluma=%d/1 (4/6) | ดาเมจ 60-80%%",
+                countPlacedInternal("Leorio"), countPlacedInternal("Bulma"))
             status.TextColor3 = Color3.fromRGB(124, 225, 151)
             placing = false
             dbg(string.format("========== MANSION COMPLETE | Leo=%d Bluma=%d | อัปเงิน=%d อัปดาเมจ=%d ==========" ,
-                countPlacedName("Leo"), countPlacedName("Bluma"),
+                countPlacedInternal("Leorio"), countPlacedInternal("Bulma"),
                 leoUpgradeCount + bulmaUpgradeCount, damageUpgradeCount))
             return
         end

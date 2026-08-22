@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS SETTINGS v0.7
+-- ANIME ORIGINS SETTINGS v0.8
 -- Applies the full preset in lobby and exposes one-setting control inside a game.
 -- ============================================================
 
-local VERSION = "0.7"
+local VERSION = "0.8"
 local LOBBY_PLACE_ID = 129932912185311
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
@@ -200,7 +200,7 @@ local TARGET_TOGGLES = {
     {{"UnitHover"}, true},
     {{"AutoUpgradeOnPlacement"}, true},
     {{"AutoUpgradeDropDown"}, false},
-    {{"SellFarms"}, false},
+    {{"SellFarms"}, tostring(_G.AO_PLACE_MODE or "") == "ao_mansion"},
 
     {{"HideVFX"}, true},
     {{"HideOtherVFX"}, true},
@@ -233,10 +233,11 @@ local function applyLobbySettings()
         return false, "SettingsFrame not found"
     end
 
-    -- ⭐ Legend/Gem ใช้ลำดับอัปเกรดของสคริปต์เอง จึงต้องปิดของเกมตั้งแต่ Lobby
+    -- ⭐ Legend/Gem/Mansion ใช้ลำดับอัปเกรดของสคริปต์เอง จึงต้องปิดของเกมตั้งแต่ Lobby
     --    และจะตรวจปิดซ้ำในด่านก่อนเริ่มวางตัว; Battlepass ยังใช้ค่าปกติของเกม
     local placeMode = tostring(_G.AO_PLACE_MODE or "")
     local scriptedUpgradeMode = placeMode == "ao_legend" or placeMode == "ao_gem"
+        or placeMode == "ao_mansion"
 
     local successCount = 0
     local total = #TARGET_TOGGLES + #TARGET_LOW
