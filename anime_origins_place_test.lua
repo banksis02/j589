@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.17
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.35
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.34"
+local TEST_VERSION = "0.35"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -770,6 +770,17 @@ local slotTypes = {}
 local slotPlaced = {0, 0, 0, 0, 0, 0}
 local slotFailures = {0, 0, 0, 0, 0, 0}
 local SMART_MAX_PER_SLOT = 3
+local shuffleRng = Random.new()
+
+local function shuffledCopy(source)
+    local result = {}
+    for index, value in ipairs(source) do result[index] = value end
+    for index = #result, 2, -1 do
+        local swapIndex = shuffleRng:NextInteger(1, index)
+        result[index], result[swapIndex] = result[swapIndex], result[index]
+    end
+    return result
+end
 
 -- ต้นทางก่อนเพื่อเริ่มยิงไว → กลางทาง → ด่านท้ายสำรอง
 local SMART_PERCENT_PLAN = {
@@ -980,6 +991,9 @@ allButton.MouseButton1Click:Connect(function()
             return smartRunning and myGeneration == smartGeneration
         end
         local function dbg(msg) print(string.format("[AO DBG v%s|gen%d] %s", TEST_VERSION, myGeneration, msg)) end
+        local placeMode = tostring(_G.AO_PLACE_MODE or "")
+        local isLegend = placeMode == "ao_legend"
+        local isGem = placeMode == "ao_gem"
         local function hotbarSnap()
             local parts = {}
             for slot = 1, 6 do parts[#parts + 1] = "T" .. slot .. (slotHasUnit(slot) and "=Y" or "=-") end
@@ -994,12 +1008,11 @@ allButton.MouseButton1Click:Connect(function()
         setStatus(speedMessage, speedLevel ~= nil)
         task.wait(0.15)
 
-        -- ⭐ Legend: ปิด AutoUpgradeOnPlacement ของเกม "ในด่านเลย" ก่อนวางตัวแรก
-        --    (ถ้าเปิด เกมจะอัพเกรดตัวที่วางทันที กินเงินที่เราต้องใช้วาง Leorio/ดาเมจ).
-        --    ระบบเราคุมอัพเกรดเอง: ตัวเงิน max ก่อน แล้วค่อยดาเมจ. โหมดอื่นไม่แตะ.
-        if tostring(_G.AO_PLACE_MODE) == "ao_legend" and type(_G.AO_SET_TOGGLE) == "function" then
+        -- Legend/Gem คุมลำดับอัพเกรดเอง: ปิด AutoUpgradeOnPlacement ก่อนวางตัวแรก
+        -- ไม่ให้เกมกินเงินไปอัพดาเมจก่อนตัวเงินและชุดดักหน้ามอนพร้อม
+        if (isLegend or isGem) and type(_G.AO_SET_TOGGLE) == "function" then
             local okUp = _G.AO_SET_TOGGLE("AutoUpgradeOnPlacement", false)
-            dbg("[Legend] ปิด AutoUpgradeOnPlacement เกม = " .. tostring(okUp))
+            dbg("[" .. (isLegend and "Legend" or "Gem") .. "] ปิด AutoUpgradeOnPlacement เกม = " .. tostring(okUp))
         end
 
         -- รอ hotbar โหลดยูนิตให้ "เสถียร" ก่อนเริ่มวาง
@@ -1054,40 +1067,61 @@ allButton.MouseButton1Click:Connect(function()
             return false, result   -- result == -1 = เงินไม่พอ ; อื่นๆ = จุดผิด/เต็ม
         end
 
-        -- 1) ตัวเงิน Leorio ก่อน 3 ตัว ไม่สนเงิน (เกมจะจองตำแหน่งไว้)
-        --    บางไอดีไม่มี Leorio → ข้ามขั้นวางตัวเงิน ไปวางตัวดาเมจแทน (ไม่หยุดค้าง)
-        local moneySlot = findSlotByUnitName("Leorio")
-        dbg("[1] ตัวเงิน: Leorio = " .. (moneySlot and ("Tower" .. moneySlot) or "ไม่พบ"))
-        if moneySlot then
-            slotTypes[moneySlot] = "Ground"
-            local leorioQueued = 0
-            local leoStart = os.clock()
-            local leoPercents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
-            local leoIdx = 1
+        -- ตัวเงินใน hotbar ใช้ internal name จริง: Leorio / Bulma
+        -- Gem: มีทั้งคู่เปิดด้วย Leo เท่านั้น; Bulma เก็บไปวางพร้อมชุดดาเมจภายหลัง
+        local leoSlot = findSlotByUnitName("Leorio")
+        local bulmaSlot = isGem and findSlotByUnitName("Bulma") or nil
+        local moneySlot = leoSlot
+        local initialMoneyName = leoSlot and "Leorio" or nil
+        local initialMoneyPlacedName = leoSlot and "Leo" or nil
+        local initialMoneyTarget = leoSlot and 3 or 0
+        local deferredBulmaSlot = nil
+        if isGem and not leoSlot and bulmaSlot then
+            moneySlot = bulmaSlot
+            initialMoneyName = "Bulma"
+            initialMoneyPlacedName = "Bluma"
+            initialMoneyTarget = 1
+        elseif isGem and leoSlot and bulmaSlot then
+            deferredBulmaSlot = bulmaSlot
+        end
+        local hasBothMoney = isGem and leoSlot ~= nil and bulmaSlot ~= nil
+
+        dbg(string.format("[1] ตัวเงิน: Leorio=%s | Bulma=%s | เปิดด้วย=%s x%d",
+            leoSlot and ("Tower" .. leoSlot) or "ไม่พบ",
+            bulmaSlot and ("Tower" .. bulmaSlot) or "ไม่พบ",
+            tostring(initialMoneyName or "ไม่มี"), initialMoneyTarget))
+
+        if moneySlot and initialMoneyTarget > 0 then
+            if initialMoneyName == "Leorio" then slotTypes[moneySlot] = "Ground" end
+            local moneyQueued = 0
+            local moneyStart = os.clock()
+            local moneyPercents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
+            local moneyIdx = 1
             -- ⭐ Legend: pre-block สั้น (วางเท่าที่เงินพอเร็วๆ) เพราะ fill loop เติม Leorio→3 + อัพเกรดต่อให้
             --    (เดิมรอ 15 วิ = ตัวไม่อัพเลยช่วงนั้น). โหมดอื่น: คงเดิม 3 ตัว/15 วิ
-            local isLegend = tostring(_G.AO_PLACE_MODE) == "ao_legend"
-            local leoCap = isLegend and 5 or 15
-            -- วาง Leo ให้ครบ 3 (ตัวเงิน=รายได้) — เงินไม่พอก็รอสั้นๆ ให้ตัวที่วางแล้วหาเงิน แล้วลองใหม่ (ไม่ STOP)
-            while stillRunning() and leorioQueued < 3 and os.clock() - leoStart < leoCap do
-                local percent = leoPercents[leoIdx]
-                leoIdx = leoIdx % #leoPercents + 1
-                if queueOne(moneySlot, "Ground", percent, "Leorio ตัวเงิน " .. (leorioQueued + 1) .. "/3") then
-                    leorioQueued += 1
-                elseif isLegend and leorioQueued >= 1 then
+            local moneyCap = isLegend and 5 or (isGem and 20 or 15)
+            while stillRunning() and moneyQueued < initialMoneyTarget and os.clock() - moneyStart < moneyCap do
+                local percent = moneyPercents[moneyIdx]
+                moneyIdx = moneyIdx % #moneyPercents + 1
+                local placementType = initialMoneyName == "Leorio" and "Ground" or "Auto"
+                if queueOne(moneySlot, placementType, percent,
+                    initialMoneyName .. " ตัวเงิน " .. (moneyQueued + 1) .. "/" .. initialMoneyTarget) then
+                    moneyQueued += 1
+                elseif isLegend and moneyQueued >= 1 then
                     break   -- Legend: ได้ตัวแรกแล้วเงินหมด → ไปวางดาเมจ+อัพเกรดขนานเลย ค่อยเติม Leorio ทีหลัง
                 else
-                    task.wait(0.6)   -- เงินไม่พอ → รอเงินจาก Leo ที่วางไปแล้ว
+                    task.wait(0.6)
                 end
             end
-            dbg("[1] Leorio จองได้ " .. leorioQueued .. "/3 → ไปวางตัวดาเมจต่อ")
+            dbg("[1] " .. initialMoneyName .. " จองได้ " .. moneyQueued .. "/" .. initialMoneyTarget
+                .. " → ไปวางตัวดาเมจต่อ")
         else
-            setStatus("ไม่พบ Leorio — ข้ามตัวเงิน วางตัวดาเมจแทน")
+            setStatus("ไม่พบตัวเงิน — วางตัวดาเมจแทน")
         end
 
         local damageSlots = {}
         for slot = 1, 6 do
-            if slot ~= moneySlot and slotHasUnit(slot) then
+            if slot ~= moneySlot and slot ~= deferredBulmaSlot and slotHasUnit(slot) then
                 damageSlots[#damageSlots + 1] = slot
             end
         end
@@ -1225,6 +1259,168 @@ allButton.MouseButton1Click:Connect(function()
             return
         end
 
+        -- Gem ใช้ Unit Manager เป็นหลักฐานชื่อ/UUID/สถานะ MAX จริง
+        -- ชื่อหลังวางที่ตรวจจากเกม: Leorio -> "Leo", Bulma -> "Bluma"
+        local function gemUnitManager()
+            local ok, sf = pcall(function()
+                return player.PlayerGui.GameUI.ManagementFrame.UnitManagerFrame.Main.CanvasGroup.ScrollingFrame
+            end)
+            return ok and sf or nil
+        end
+
+        local function gemPlacedUnits()
+            local units = {}
+            local sf = gemUnitManager()
+            if not sf then return units end
+            for _, card in ipairs(sf:GetChildren()) do
+                if card:IsA("GuiObject") and #card.Name >= 30 and card.Name:find("%-") then
+                    local unitName = ""
+                    pcall(function()
+                        unitName = tostring(card.Main.TowerButton.ImageLabel.Info.NameLabel.Text)
+                    end)
+                    units[#units + 1] = { uuid = card.Name, name = unitName }
+                end
+            end
+            return units
+        end
+
+        local function gemTowerMaxed(uuid)
+            local sf = gemUnitManager()
+            local card = sf and sf:FindFirstChild(uuid)
+            if not card then return false end
+            local maxed = false
+            pcall(function()
+                for _, object in ipairs(card:GetDescendants()) do
+                    if object:IsA("TextLabel") and tostring(object.Text):upper() == "MAX" then
+                        maxed = true
+                        break
+                    end
+                end
+            end)
+            return maxed
+        end
+
+        local function gemUpgradeOnce(uuid)
+            if not placeRemote then return false end
+            local ok, result = pcall(function()
+                return placeRemote:InvokeServer("UpgradeTower", uuid)
+            end)
+            return ok and result == true
+        end
+
+        local function exactPlacedName(actual, expected)
+            return tostring(actual):lower() == tostring(expected):lower()
+        end
+
+        -- อัปตัวเงินชนิดเดียวที่ใช้เปิดเกมให้ครบ MAX ก่อนเข้าสู่ชุดวาง 5-10%
+        local function gemMaxPrimaryMoney()
+            if not isGem or not initialMoneyPlacedName or initialMoneyTarget <= 0 then return true end
+            local started = os.clock()
+            local refillPercents = {30, 36, 42, 33, 39, 45, 27, 48, 24}
+            local refillIndex = 1
+            while stillRunning() and os.clock() - started < 180 do
+                local matches, allMax = {}, true
+                for _, unit in ipairs(gemPlacedUnits()) do
+                    if exactPlacedName(unit.name, initialMoneyPlacedName) then
+                        matches[#matches + 1] = unit
+                        if not gemTowerMaxed(unit.uuid) then allMax = false end
+                    end
+                end
+
+                -- ต้นเกมอาจมีเงินไม่พอวางครบ: หลังมีตัวดาเมจช่วยหาเงินแล้วต้องเติมตัวเงินให้ครบก่อน
+                if #matches < initialMoneyTarget then
+                    local percent = refillPercents[refillIndex]
+                    refillIndex = refillIndex % #refillPercents + 1
+                    local placementType = initialMoneyName == "Leorio" and "Ground"
+                        or slotTypes[moneySlot] or "Auto"
+                    local ok = queueOne(
+                        moneySlot,
+                        placementType,
+                        percent,
+                        string.format("Gem เติม %s %d/%d", initialMoneyPlacedName, #matches + 1, initialMoneyTarget)
+                    )
+                    if ok then
+                        task.wait(0.2)
+                        continue
+                    end
+                end
+
+                if #matches >= initialMoneyTarget and allMax then
+                    dbg(string.format("[Gem Upgrade] %s MAX ครบ %d/%d",
+                        initialMoneyPlacedName, #matches, initialMoneyTarget))
+                    return true
+                end
+                local upgraded = false
+                for _, unit in ipairs(shuffledCopy(matches)) do
+                    if not stillRunning() then return false end
+                    if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
+                        upgraded = true
+                        setStatus(string.format("อัป %s ให้ MAX (%d/%d ตัว)",
+                            initialMoneyPlacedName, #matches, initialMoneyTarget))
+                        task.wait(0.12)
+                    end
+                end
+                task.wait(upgraded and 0.2 or 0.7)
+            end
+            dbg("[Gem Upgrade] หมดเวลารอ " .. tostring(initialMoneyPlacedName) .. " MAX")
+            return false
+        end
+
+        -- หลังวางครบ สุ่มอัปเกรดดาเมจทั้งหมดแทนการไล่ตามช่อง 1-6
+        -- Leo ถูก MAX ไปก่อนแล้วจึงไม่รวม; Bluma รวมในคิวเฉพาะกรณีที่มี Leo+Bluma พร้อมกัน
+        local function gemUpgradeDamageAndDeferredBulma()
+            if not isGem then return true end
+
+            local started = os.clock()
+            local upgradeCount = 0
+            local sawPlacedUnits = false
+            local missingSince = nil
+
+            while stillRunning() and os.clock() - started < 240 do
+                local units = gemPlacedUnits()
+                if #units > 0 then
+                    sawPlacedUnits = true
+                    missingSince = nil
+                elseif sawPlacedUnits then
+                    missingSince = missingSince or os.clock()
+                    if os.clock() - missingSince >= 3 then
+                        dbg("[Gem Upgrade] Unit Manager ว่างหลังเคยพบยูนิต — ด่านน่าจะจบแล้ว")
+                        return false
+                    end
+                end
+
+                local pool = {}
+                for _, unit in ipairs(units) do
+                    local isLeo = exactPlacedName(unit.name, "Leo")
+                    local isSingleBluma = exactPlacedName(unit.name, "Bluma") and not hasBothMoney
+                    if not isLeo and not isSingleBluma and not gemTowerMaxed(unit.uuid) then
+                        pool[#pool + 1] = unit
+                    end
+                end
+
+                if #units > 0 and #pool == 0 then
+                    dbg("[Gem Upgrade] ดาเมจ" .. (hasBothMoney and "+Bluma" or "") .. " MAX ครบทั้งหมด")
+                    return true
+                end
+
+                local upgradedThisPass = false
+                for _, unit in ipairs(shuffledCopy(pool)) do
+                    if not stillRunning() then return false end
+                    if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
+                        upgradedThisPass = true
+                        upgradeCount += 1
+                        setStatus(string.format("[Gem] สุ่มอัป %s | รวม %d ครั้ง", unit.name, upgradeCount))
+                        task.wait(0.12)
+                    end
+                end
+
+                task.wait(upgradedThisPass and 0.2 or 0.7)
+            end
+
+            dbg("[Gem Upgrade] หมดเวลาอัปดาเมจ | สำเร็จ " .. upgradeCount .. " ครั้ง")
+            return false
+        end
+
         -- รอมอนสั้นๆ 6 วิ เพื่อจับตำแหน่งนำหน้า (เดิม 30 วิ = หน่วงนานตั้งแต่ต้น)
         local monsterPercent
         local waitStarted = os.clock()
@@ -1243,6 +1439,78 @@ allButton.MouseButton1Click:Connect(function()
             dbg(string.format("[3] เจอมอนที่ %.1f%% → ดักหน้าที่ %.1f%%", monsterPercent, math.clamp(monsterPercent + 35, 20, 95)))
         end
 
+        if isGem then
+            -- Gem: สุ่มช่องแบบไม่ซ้ำในแต่ละรอบ วางดัก "หน้ามอน +20%" จำนวน 3-4 ตัว
+            -- หลังตัวแรกสำเร็จ จะค้นประเภทที่ขาด (Ground/Hill) ก่อน แล้วค่อยเติมจำนวน
+            local interceptPercent = math.clamp(monsterPercent + 20, 20, 95)
+            local interceptOffsets = {-2, 2, 0, -4, 4, -6, 6}
+            local offsetIndex = 1
+            local interceptQueued = 0
+            local hasGround, hasHill = false, false
+            local interceptStart = os.clock()
+
+            local function placeGemIntercept(slot, requestedType, label)
+                local offset = interceptOffsets[offsetIndex]
+                offsetIndex = offsetIndex % #interceptOffsets + 1
+                local ok, result = queueOne(
+                    slot,
+                    requestedType or slotTypes[slot] or "Auto",
+                    math.clamp(interceptPercent + offset, 5, 95),
+                    label
+                )
+                if ok then
+                    interceptQueued += 1
+                    hasGround = hasGround or slotTypes[slot] == "Ground"
+                    hasHill = hasHill or slotTypes[slot] == "Hill"
+                end
+                return ok, result
+            end
+
+            while stillRunning() and interceptQueued < 4 and os.clock() - interceptStart < 45 do
+                local bag = shuffledCopy(damageSlots)
+                local placedThisRound, moneyBlocked = false, false
+
+                -- ตัวแรกสุ่ม Auto เพื่อเรียนรู้ประเภทจริงจากผลวาง
+                if interceptQueued == 0 then
+                    for _, slot in ipairs(bag) do
+                        local ok, result = placeGemIntercept(slot, "Auto", "Gem ดักหน้ามอน +20% ตัวแรก")
+                        if ok then placedThisRound = true; break end
+                        if result == -1 then moneyBlocked = true end
+                    end
+                end
+
+                -- มีประเภทหนึ่งแล้ว: ลองวางเฉพาะประเภทที่ขาดจากคิวสุ่ม
+                if interceptQueued > 0 and not (hasGround and hasHill) then
+                    local missingType = hasGround and "Hill" or "Ground"
+                    for _, slot in ipairs(shuffledCopy(damageSlots)) do
+                        if not stillRunning() then break end
+                        local ok, result = placeGemIntercept(slot, missingType,
+                            "Gem หา " .. missingType .. " ดักหน้ามอน +20%")
+                        if ok then placedThisRound = true; break end
+                        if result == -1 then moneyBlocked = true end
+                    end
+                end
+
+                -- เติมให้ครบอย่างน้อย 3; ถ้ายังขาด Ground/Hill ให้ตัวที่ 4 เป็นโอกาสสุดท้าย
+                local wanted = (hasGround and hasHill) and 3 or 4
+                for _, slot in ipairs(shuffledCopy(damageSlots)) do
+                    if not stillRunning() or interceptQueued >= wanted then break end
+                    local ok, result = placeGemIntercept(slot, slotTypes[slot] or "Auto",
+                        string.format("Gem ดักหน้ามอน +20%% (%d/%d)", interceptQueued + 1, wanted))
+                    if ok then placedThisRound = true end
+                    if result == -1 then moneyBlocked = true end
+                end
+
+                if interceptQueued >= 3 and (hasGround and hasHill or interceptQueued >= 4) then break end
+                if not placedThisRound then
+                    setStatus(moneyBlocked and "[Gem] เงินไม่พอ — รอแล้วดักหน้ามอนต่อ"
+                        or "[Gem] ยังหาประเภท Ground/Hill ที่ขาด — สุ่มคิวใหม่")
+                    task.wait(moneyBlocked and 0.7 or 0.25)
+                end
+            end
+            dbg(string.format("[3-4 Gem] ดักหน้าได้ %d ตัว | Ground=%s Hill=%s | จุด %.1f%%",
+                interceptQueued, tostring(hasGround), tostring(hasHill), interceptPercent))
+        else
         local INTERCEPT_LEAD = 35   -- นำหน้ามอนกี่ % (เดิม 20 = ใกล้ไป) — ปรับตรงนี้
         local interceptPercent = math.clamp(monsterPercent + INTERCEPT_LEAD, 20, 95)
 
@@ -1360,6 +1628,11 @@ allButton.MouseButton1Click:Connect(function()
         end
 
         dbg("[4] เติม Ground ดักหน้า จองได้ " .. groundInterceptQueued .. "/2 → ไปวางต้นทางต่อ")
+        end
+
+        -- Gem: หลังมีตัวเคลียร์มอน 3-4 ตัวแล้ว จึงอัปตัวเงินหลักให้ MAX
+        -- มีทั้ง Leo+Bluma จะ MAX เฉพาะ Leo; Bluma ไปวาง/อัปพร้อมดาเมจภายหลัง
+        if isGem then gemMaxPrimaryMoney() end
         dbg("[5] เริ่มเคลียร์ต้นทาง 5-10% (วางที่เหลือจนเต็ม)")
 
         -- 4) วางตัวที่เหลือทั้งหมดช่วง 5-10% (เคลียร์ต้นทาง — ทุกโหมด)
@@ -1372,12 +1645,36 @@ allButton.MouseButton1Click:Connect(function()
         local earlyIndex = 1
         local emptyRounds = 0
         local fillStart = os.clock()
+        local fillSlots = {}
+        for _, slot in ipairs(damageSlots) do fillSlots[#fillSlots + 1] = slot end
+        if isGem and deferredBulmaSlot then
+            dbg("[5 Gem] เตรียมวาง Bulma Tower" .. deferredBulmaSlot .. " พร้อมช่วงตัวดาเมจ (สูงสุด 1 ตัว)")
+        end
 
         while stillRunning() and os.clock() - fillStart < 60 and emptyRounds < 3 do
             local placedThisRound = false
             local moneyBlockedThisRound = false
 
-            for _, slot in ipairs(damageSlots) do
+            -- ทั้ง Leo+Bluma: หลัง Leo MAX แล้วให้ Bluma ได้สิทธิ์ใช้เงินก่อน 1 ครั้งในช่วงวางดาเมจ
+            -- ป้องกันคิวสุ่มดาเมจใช้เงินหมดทุกครั้งจน Bluma ไม่เคยถูกวาง
+            if deferredBulmaSlot and slotPlaced[deferredBulmaSlot] < 1 then
+                local bulmaPercent = earlyPercents[earlyIndex]
+                earlyIndex = earlyIndex % #earlyPercents + 1
+                local ok, res = queueOne(
+                    deferredBulmaSlot,
+                    slotTypes[deferredBulmaSlot] or "Auto",
+                    bulmaPercent,
+                    "Bluma วางพร้อมช่วงตัวดาเมจ"
+                )
+                if ok then
+                    placedThisRound = true
+                elseif res == -1 then
+                    moneyBlockedThisRound = true
+                end
+            end
+
+            local roundSlots = isGem and shuffledCopy(fillSlots) or fillSlots
+            for _, slot in ipairs(roundSlots) do
                 if not stillRunning() then break end
                 local percent = earlyPercents[earlyIndex]
                 earlyIndex = earlyIndex % #earlyPercents + 1
@@ -1405,6 +1702,11 @@ allButton.MouseButton1Click:Connect(function()
         end
         dbg("[5] จบเคลียร์ต้นทาง | empty=" .. emptyRounds .. " | ใช้เวลา " .. math.floor(os.clock() - fillStart) .. " วิ")
 
+        if isGem then
+            dbg("[6 Gem] เริ่มสุ่มอัปดาเมจ" .. (hasBothMoney and "+Bluma" or "") .. " จน MAX")
+            gemUpgradeDamageAndDeferredBulma()
+        end
+
         smartRunning = false
         allButton.Text = "SMART AUTO COMPLETE"
         allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
@@ -1412,7 +1714,8 @@ allButton.MouseButton1Click:Connect(function()
         for slot = 1, 6 do total += slotPlaced[slot] end
         dbg(string.format("========== จบ วางรวม %d ตำแหน่ง | ต่อช่อง T1=%d T2=%d T3=%d T4=%d T5=%d T6=%d | บนสนาม=%d ==========",
             total, slotPlaced[1], slotPlaced[2], slotPlaced[3], slotPlaced[4], slotPlaced[5], slotPlaced[6], placementCount()))
-        status.Text = string.format("จองวางครบ | Leorio=%s | รวม %d ตำแหน่ง", moneySlot and ("Tower" .. moneySlot) or "ไม่มี", total)
+        status.Text = string.format("จองวางครบ | ตัวเงิน=%s | รวม %d ตำแหน่ง",
+            initialMoneyName and (initialMoneyName .. " Tower" .. moneySlot) or "ไม่มี", total)
         status.TextColor3 = Color3.fromRGB(124, 225, 151)
         placing = false
     end)

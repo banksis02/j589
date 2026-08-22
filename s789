@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.13"
+local SCRIPT_VERSION = "v11.14"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -4200,7 +4200,7 @@ if GAME_ID == "anime_origins" then
             pcall(_G.AO_GEM_W20_STOP)
         end
         if _G.AO_SET_BEST_SPEED then pcall(_G.AO_SET_BEST_SPEED) end
-        -- ส่งโหมดปัจจุบันเข้า module วางตัว (ao_gem → กระจุก 60-80%)
+        -- ส่งโหมดปัจจุบันเข้า module วางตัว (ao_gem ใช้ adaptive money/damage placement)
         _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
         if _G.AO_SMART_START and not aoInitialPlacementStarted then
             aoInitialPlacementStarted = true
