@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.47
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.48
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.47"
+local TEST_VERSION = "0.48"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1931,6 +1931,7 @@ allButton.MouseButton1Click:Connect(function()
                 local current = mansionTowerUpgradeLevel(selected.uuid)
                 local upgraded = mansionUpgradeOnce(selected.uuid)
                 if upgraded then
+                    damageUpgradeCount += 1
                     setStatus(string.format("[Mansion] อัปตัวแบก %s %d/10 → เป้าหมาย 8/10",
                         tostring(selected.towerName), tonumber(current) or 0))
                 end
@@ -1975,6 +1976,20 @@ allButton.MouseButton1Click:Connect(function()
                 return upgradeDamagePass(3) > 0
             end
 
+            -- อัปหลายขั้นติดกันก่อนกลับไปหาจุดวางใหม่ เพราะการลองจุดวางหนึ่งครั้ง
+            -- อาจบล็อก InvokeServer หลายวินาที โดยเฉพาะเมื่อสนามเริ่มเต็ม
+            local function continuousUpgradeBurst(maxCycles)
+                local completed = 0
+                while stillRunning() and not mansionEnded() and completed < maxCycles do
+                    if not continuousUpgradeStep() then break end
+                    completed += 1
+                    -- รอ Replica/UI เปลี่ยนขั้นก่อนอ่าน Upgrade x/y รอบถัดไป
+                    -- ป้องกัน Bluma หรือ Priority ถูกยิง Remote เกินเป้าหมาย
+                    task.wait(0.12)
+                end
+                return completed
+            end
+
             local continuousRounds = 0
             local damageSlotIndex = 1
             dbg("[Mansion 6] เริ่มลูปต่อเนื่อง: Bluma 4/6 → Aneko/Vegita 8/10 → สุ่มอัปตัวอื่น")
@@ -1982,13 +1997,14 @@ allButton.MouseButton1Click:Connect(function()
                 continuousRounds += 1
                 local didWork = false
                 local moneyBlocked = false
-                local upgradeFirst = continuousRounds % 2 == 1
 
-                -- สลับสิทธิ์ใช้เงินรอบละครั้ง ป้องกันการวางตัวกินเงินหมดจน Bluma/ดาเมจไม่ได้อัป
-                if upgradeFirst and continuousUpgradeStep() then didWork = true end
+                -- ให้งานอัปเกรดมาก่อนสูงสุด 5 ชุดต่อรอบ เมื่อยังอัปได้จะไม่เสียเวลา
+                -- ไปลองจุดวางซึ่งช้ากว่า ทำให้ Bluma/ตัวแบก/ดาเมจทำงานต่อเนื่อง
+                local upgradeCycles = continuousUpgradeBurst(5)
+                if upgradeCycles > 0 then didWork = true end
 
-                -- ลองวางเพียงหนึ่งช่องต่อรอบ เพื่อไม่ให้การวางเต็มสนามบล็อกงานอัปเกรด
-                if #damageSlots > 0 then
+                -- ค่อยวางเพิ่มเมื่อรอบนี้ไม่มีตัวที่อัปสำเร็จแล้ว
+                if upgradeCycles == 0 and #damageSlots > 0 then
                     local slot = nil
                     for _, prioritySlot in ipairs(priorityDamageSlots) do
                         if (slotPlaced[prioritySlot] or 0) < 1 then
@@ -2009,8 +2025,6 @@ allButton.MouseButton1Click:Connect(function()
                         moneyBlocked = true
                     end
                 end
-
-                if not upgradeFirst and continuousUpgradeStep() then didWork = true end
 
                 if didWork then
                     task.wait(0.08)
