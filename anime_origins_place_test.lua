@@ -1,11 +1,13 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.36
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.37
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.36"
+local TEST_VERSION = "0.37"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
+_G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
+local PLACE_MODULE_GEN = _G.AO_PLACE_MODULE_GEN
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -502,6 +504,123 @@ local function activateSpeedButton(button)
     end
 
     return pcall(function() button:Activate() end)
+end
+
+local function guiShown(object)
+    local node = object
+    while node do
+        if node:IsA("GuiObject") and not node.Visible then return false end
+        if node:IsA("ScreenGui") and not node.Enabled then return false end
+        node = node.Parent
+    end
+    return true
+end
+
+local function normalizedGuiText(object)
+    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+        return tostring(object.Text or ""):lower():gsub("%s+", " "):match("^%s*(.-)%s*$")
+    end
+    return ""
+end
+
+local function subtreeHasText(root, wanted)
+    wanted = tostring(wanted):lower()
+    if normalizedGuiText(root) == wanted and guiShown(root) then return true end
+    for _, object in ipairs(root:GetDescendants()) do
+        if normalizedGuiText(object) == wanted and guiShown(object) then return true end
+    end
+    return false
+end
+
+local function findTextButton(root, wanted)
+    wanted = tostring(wanted):lower()
+    for _, button in ipairs(root:GetDescendants()) do
+        if button:IsA("GuiButton") and guiShown(button)
+            and button.Active ~= false and button.AbsoluteSize.X > 10 and button.AbsoluteSize.Y > 10 then
+            if normalizedGuiText(button) == wanted or subtreeHasText(button, wanted) then
+                return button
+            end
+        end
+    end
+    return nil
+end
+
+-- กล่องก่อนเริ่มเวฟจากภาพจริง: มี Start Game + Ready และปุ่ม Confirm ใน container เดียวกัน
+local function findStartGameConfirmButton()
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return nil end
+
+    for _, title in ipairs(playerGui:GetDescendants()) do
+        if normalizedGuiText(title) == "start game" and guiShown(title) then
+            local container = title.Parent
+            for _ = 1, 8 do
+                if not container or container == playerGui then break end
+                if subtreeHasText(container, "ready") then
+                    local confirm = findTextButton(container, "confirm")
+                    if confirm then return confirm end
+                end
+                container = container.Parent
+            end
+        end
+    end
+    return nil
+end
+
+local function fireGuiConnections(signal)
+    local connectionFunction = getconnections
+        or (getgenv and type(getgenv) == "function" and getgenv().getconnections)
+    if type(connectionFunction) ~= "function" then return false end
+
+    local fired = false
+    local ok, connections = pcall(connectionFunction, signal)
+    if not ok then return false end
+    for _, connection in ipairs(connections) do
+        local didFire = false
+        if type(connection.Fire) == "function" then
+            didFire = pcall(function() connection:Fire() end)
+        elseif type(connection.Function) == "function" then
+            didFire = pcall(connection.Function)
+        end
+        fired = fired or didFire
+    end
+    return fired
+end
+
+local function clickStartGameConfirm()
+    local button = findStartGameConfirmButton()
+    if not button then return false, "not visible" end
+
+    -- จาก UI เกมปุ่มลักษณะนี้ผูก Activated เป็นหลัก
+    if fireGuiConnections(button.Activated) then
+        task.wait(0.3)
+        if not findStartGameConfirmButton() then return true, "Activated connection" end
+    end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(firesignal, button.Activated)
+        if ok then
+            task.wait(0.3)
+            if not findStartGameConfirmButton() then return true, "firesignal Activated" end
+        end
+    end
+
+    local activated = pcall(function() button:Activate() end)
+    if activated then
+        task.wait(0.3)
+        if not findStartGameConfirmButton() then return true, "GuiButton:Activate" end
+    end
+
+    -- สำรองสุดท้ายสำหรับ executor ที่เรียก connection ไม่ได้: คลิกกึ่งกลางจาก AbsolutePosition
+    local center = button.AbsolutePosition + button.AbsoluteSize / 2
+    local clicked = pcall(function()
+        VIM:SendMouseMoveEvent(center.X, center.Y, game)
+        task.wait(0.06)
+        VIM:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
+        task.wait(0.05)
+        VIM:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+    end)
+    task.wait(0.35)
+    return clicked and not findStartGameConfirmButton(), "mouse"
 end
 
 local function setBestGameSpeed()
@@ -1764,7 +1883,22 @@ _G.AO_SMART_STOP = function()
 end
 _G.AO_PLACEMENT_COUNT = placementCount
 _G.AO_SMART_RUNNING = function() return smartRunning end
+_G.AO_CONFIRM_START_GAME = clickStartGameConfirm
 _G.AO_CORE_READY = true
+
+-- เฝ้ากล่อง Start Game ตลอดทั้งรอบและหลัง Replay; กดซ้ำเฉพาะเมื่อกล่องเดิมยังค้าง
+task.spawn(function()
+    local lastAttempt = 0
+    while PLACE_MODULE_GEN == _G.AO_PLACE_MODULE_GEN do
+        if findStartGameConfirmButton() and os.clock() - lastAttempt >= 1 then
+            lastAttempt = os.clock()
+            local success, method = clickStartGameConfirm()
+            print(string.format("[AO PLACE v%s] Start Game Confirm = %s via %s",
+                TEST_VERSION, tostring(success), tostring(method)))
+        end
+        task.wait(0.25)
+    end
+end)
 
 task.spawn(function()
     local speedLevel, speedMessage = setBestGameSpeed()
