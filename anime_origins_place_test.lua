@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.49
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.51
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.49"
+local TEST_VERSION = "0.51"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -854,16 +854,37 @@ local function clickStartGameConfirm()
     return clicked and not findStartGameConfirmButton(), "mouse"
 end
 
+local bestSpeedLevel = nil
+local bestSpeedConfirmedAt = 0
+local speedSettingInProgress = false
+
 local function setBestGameSpeed()
+    if bestSpeedLevel and os.clock() - bestSpeedConfirmedAt < 30 then
+        return bestSpeedLevel, "Game Speed ขั้น " .. tostring(bestSpeedLevel) .. " (ยืนยันแล้ว)"
+    end
+
+    if speedSettingInProgress then
+        local waitStarted = os.clock()
+        while speedSettingInProgress and os.clock() - waitStarted < 2 do task.wait(0.05) end
+        if bestSpeedLevel and os.clock() - bestSpeedConfirmedAt < 30 then
+            return bestSpeedLevel, "Game Speed ขั้น " .. tostring(bestSpeedLevel) .. " (ยืนยันแล้ว)"
+        end
+    end
+
     local controls = getSpeedControls()
     if not controls.Two or not controls.Three or not controls.Circle then
         return nil, "ไม่พบปุ่ม Game Speed ครบ"
     end
 
+    speedSettingInProgress = true
+
     -- ลองขั้น 3 ก่อน แล้วอ่านตำแหน่ง Circle เพื่อยืนยันว่าเกมยอมรับจริง
     activateSpeedButton(controls.Three)
     task.wait(0.8)
     if selectedSpeedLevel(controls) == "Three" then
+        bestSpeedLevel = 3
+        bestSpeedConfirmedAt = os.clock()
+        speedSettingInProgress = false
         return 3, "Game Speed ขั้น 3"
     end
 
@@ -871,9 +892,13 @@ local function setBestGameSpeed()
     activateSpeedButton(controls.Two)
     task.wait(0.5)
     if selectedSpeedLevel(controls) == "Two" then
+        bestSpeedLevel = 2
+        bestSpeedConfirmedAt = os.clock()
+        speedSettingInProgress = false
         return 2, "Game Speed ขั้น 2"
     end
 
+    speedSettingInProgress = false
     return nil, "ตั้ง Game Speed ไม่สำเร็จ"
 end
 
@@ -906,11 +931,23 @@ local function readCurrentWave()
     return tonumber(text:match("(%d+)")), text
 end
 
+local function guiIsActuallyVisible(object)
+    local current = object
+    while current and current ~= player.PlayerGui do
+        if current:IsA("GuiObject") and current.Visible == false then return false end
+        if current:IsA("LayerCollector") and current.Enabled == false then return false end
+        current = current.Parent
+    end
+    return true
+end
+
 local function isActOverVisible()
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     local gameUI = playerGui and playerGui:FindFirstChild("GameUI")
     local actOver = gameUI and gameUI:FindFirstChild("ActOver")
-    return actOver ~= nil and actOver.Visible == true
+    -- ActOver.Visible ของเกมค้าง true หลัง Replay ได้ แต่ parent/ScreenGui ถูกซ่อนแล้ว
+    -- เช็กทั้ง ancestor ไม่งั้น Legend จะหยุด Smart Auto ก่อนวางและวน empty field ทุกเวฟ
+    return actOver ~= nil and guiIsActuallyVisible(actOver)
 end
 
 local function findRestartButton()
@@ -938,16 +975,6 @@ local function findRestartButton()
     return nil
 end
 
-local function guiIsActuallyVisible(object)
-    local current = object
-    while current and current ~= player.PlayerGui do
-        if current:IsA("GuiObject") and current.Visible == false then return false end
-        if current:IsA("LayerCollector") and current.Enabled == false then return false end
-        current = current.Parent
-    end
-    return true
-end
-
 -- reward จริงอยู่ใน MainUI — ต้องข้าม BottomUI/TowersToolbar (Glow ของยูนิตในช่อง
 -- เข้าเงื่อนไข "กลางจอ+ใหญ่+มีรูป" แล้วโดนคลิกวนไม่หยุด = สแปม/แลค)
 local function isInToolbar(object)
@@ -955,6 +982,19 @@ local function isInToolbar(object)
     while anc do
         local n = anc.Name
         if n == "BottomUI" or n == "TowersToolbar" or n == "Hotbar" then return true end
+        anc = anc.Parent
+    end
+    return false
+end
+
+local function isInNonRewardPanel(object)
+    local anc = object
+    while anc do
+        local name = tostring(anc.Name):lower()
+        -- MainUI.Summon.PopupFrame เป็นหน้าข้อมูล summon ปกติ ไม่ใช่รางวัล
+        if name == "summon" or name == "unitmanagerframe" or name == "settingsframe" then
+            return true
+        end
         anc = anc.Parent
     end
     return false
@@ -975,7 +1015,8 @@ local function findCenteredRewardItem()
     for _, object in ipairs(playerGui:GetDescendants()) do
         local isImage = object:IsA("ImageLabel") or object:IsA("ImageButton")
         local isViewport = object:IsA("ViewportFrame")
-        if (isImage or isViewport) and guiIsActuallyVisible(object) and not isInToolbar(object) then
+        if (isImage or isViewport) and guiIsActuallyVisible(object)
+            and not isInToolbar(object) and not isInNonRewardPanel(object) then
             local size = object.AbsoluteSize
             local center = object.AbsolutePosition + size / 2
             local areaRatio = (size.X * size.Y) / math.max(1, viewport.X * viewport.Y)
@@ -1412,8 +1453,10 @@ allButton.MouseButton1Click:Connect(function()
         -- ไม่ให้เกมกินเงินไปอัพดาเมจก่อนตัวเงินและชุดดักหน้ามอนพร้อม
         if isLegend or isGem or isMansion then
             local modeLabel = isLegend and "Legend" or (isMansion and "Mansion" or "Gem")
-            local autoUpgradeDisabled = false
-            if type(_G.AO_SET_TOGGLE) == "function" then
+            local autoUpgradeDisabled = _G.AO_AUTO_UPGRADE_CONFIRMED_OFF == true
+            if autoUpgradeDisabled then
+                dbg("[" .. modeLabel .. "] AutoUpgradeOnPlacement ยืนยัน OFF จากตัวควบคุมหลักแล้ว")
+            elseif type(_G.AO_SET_TOGGLE) == "function" then
                 for attempt = 1, 3 do
                     local called, result = pcall(_G.AO_SET_TOGGLE, "AutoUpgradeOnPlacement", false)
                     autoUpgradeDisabled = called and result == true
@@ -1422,6 +1465,7 @@ allButton.MouseButton1Click:Connect(function()
                     if autoUpgradeDisabled then break end
                     task.wait(0.5)
                 end
+                if autoUpgradeDisabled then _G.AO_AUTO_UPGRADE_CONFIRMED_OFF = true end
             else
                 dbg("[" .. modeLabel .. "] ไม่พบ AO_SET_TOGGLE ในด่าน")
             end
@@ -1492,7 +1536,9 @@ allButton.MouseButton1Click:Connect(function()
                 return n
             end
             local waitStart = os.clock()
-            local lastCount, maxCount, stableSince = -1, 0, os.clock()
+            -- อ่านครั้งแรกก่อนเช็ก stillRunning เพื่อไม่ให้ log เป็น -1 ทั้งที่ T1-T6 พร้อม
+            local firstCount = countUnitSlots()
+            local lastCount, maxCount, stableSince = firstCount, firstCount, os.clock()
             while stillRunning() and os.clock() - waitStart < 10 do
                 local c = countUnitSlots()
                 if c ~= lastCount then
@@ -1500,7 +1546,12 @@ allButton.MouseButton1Click:Connect(function()
                     stableSince = os.clock()
                 end
                 if c > maxCount then maxCount = c end
-                if c > 0 and c >= expectedHotbarSlots and os.clock() - stableSince >= 2 then
+                -- ทีมครบ 6 ช่องตามที่ระบบรองรับแล้ว เริ่มทันที ไม่เสียเวลารอซ้ำอีก 2 วินาที
+                -- ถ้าทีมมีน้อยกว่า 6 ช่อง ยังใช้ baseline/ความนิ่งเดิมเพื่อกันอ่าน hotbar ไม่ครบ
+                if c >= 6
+                    or (expectedHotbarSlots > 0 and c >= expectedHotbarSlots
+                        and os.clock() - stableSince >= 0.4)
+                    or (expectedHotbarSlots == 0 and c > 0 and os.clock() - stableSince >= 2) then
                     break
                 end
                 setStatus(string.format("รอ hotbar โหลดยูนิต... (%d/%d ช่อง)", c, expectedHotbarSlots))
@@ -2795,11 +2846,13 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    local speedLevel, speedMessage = setBestGameSpeed()
-    print("[AO PLACE v" .. TEST_VERSION .. "] " .. speedMessage)
-    if speedLevel then setStatus(speedMessage) end
-end)
+if not AO_HEADLESS then
+    task.spawn(function()
+        local speedLevel, speedMessage = setBestGameSpeed()
+        print("[AO PLACE v" .. TEST_VERSION .. "] " .. speedMessage)
+        if speedLevel then setStatus(speedMessage) end
+    end)
+end
 
 local lastEmptyFieldRecovery = os.clock()
 local roundRecoveryToken = 0
