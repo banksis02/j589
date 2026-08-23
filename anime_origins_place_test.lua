@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.52
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.53
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.52"
+local TEST_VERSION = "0.53"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -2220,18 +2220,36 @@ allButton.MouseButton1Click:Connect(function()
                 end)
                 return ok and sf or nil
             end
+            local upgradeInFlight = {}
             local function upgradeOnce(uuid)
                 if not placeRemote then return false end
                 local ok, res = pcall(function() return placeRemote:InvokeServer("UpgradeTower", uuid) end)
                 return ok and res == true
             end
+            local function towerUpgradeLevel(uuid)
+                local sf = umSF(); if not sf then return nil, nil end
+                local card = sf:FindFirstChild(uuid); if not card then return nil, nil end
+                for _, object in ipairs(card:GetDescendants()) do
+                    if object:IsA("TextLabel") or object:IsA("TextButton") then
+                        local current, maximum = tostring(object.Text):match("[Uu]pgrade%s*(%d+)%s*/%s*(%d+)")
+                        if current and maximum then return tonumber(current), tonumber(maximum) end
+                    end
+                end
+                return nil, nil
+            end
             local function towerMaxed(uuid)
                 local sf = umSF(); if not sf then return false end
                 local c = sf:FindFirstChild(uuid); if not c then return false end
+                local current, maximum = towerUpgradeLevel(uuid)
+                if current and maximum then return current >= maximum end
                 local maxed = false
                 pcall(function()
                     for _, d in ipairs(c:GetDescendants()) do
-                        if d:IsA("TextLabel") and tostring(d.Text):upper():find("MAX") then maxed = true; break end
+                        if d:IsA("TextLabel") and tostring(d.Text):upper() == "MAX"
+                            and guiIsActuallyVisible(d) then
+                            maxed = true
+                            break
+                        end
                     end
                 end)
                 return maxed
@@ -2244,36 +2262,66 @@ allButton.MouseButton1Click:Connect(function()
                         if c:IsA("GuiObject") and #c.Name >= 30 and c.Name:find("%-") then
                             local nm = ""
                             pcall(function() nm = tostring(c.Main.TowerButton.ImageLabel.Info.NameLabel.Text) end)
-                            -- ⭐ ชื่อตัวในสนามคือ "Leo" (ไม่ใช่ "Leorio" แบบ hotbar) → match "leo"
-                            if nm:lower():find("leo") then moneyU[#moneyU + 1] = c.Name
+                            local internal = tostring(c:GetAttribute("TowerName") or ""):lower()
+                            -- ใช้ชื่อภายใน Leorio ก่อน และ fallback ชื่อแสดงผล Leo แบบ exact
+                            -- ไม่ใช้ find("leo") เพื่อไม่ให้ชื่อยูนิตอื่นถูกจัดเป็นตัวเงินโดยบังเอิญ
+                            if internal == "leorio" or nm:lower():match("^%s*leo%s*$") then
+                                moneyU[#moneyU + 1] = c.Name
                             else damageU[#damageU + 1] = c.Name end
                         end
                     end
                 end
                 return moneyU, damageU
             end
-            -- อัพเกรด 1 รอบ: ตัวเงินให้ max ก่อน (รายได้) แล้วค่อยดาเมจ (เฉพาะเมื่อตัวเงิน max หมด)
+            -- InvokeServer ของเครื่องบอทใช้ 3-17 วิ/ครั้ง จึงต้องยิงเป็นชุดขนาน
+            -- พร้อมล็อก UUID ที่กำลังรอ เพื่อไม่ให้รอบถัดไปยิงซ้ำตัวเดิม
             local upStat = { money = 0, dmg = 0 }
+            local function launchUpgradeBatch(uuids, kind, maxCount)
+                local launched = 0
+                for _, uuid in ipairs(uuids) do
+                    if launched >= (maxCount or #uuids) then break end
+                    if not towerMaxed(uuid) and not upgradeInFlight[uuid] then
+                        upgradeInFlight[uuid] = true
+                        launched += 1
+                        task.spawn(function()
+                            local success = upgradeOnce(uuid)
+                            upgradeInFlight[uuid] = nil
+                            if success then
+                                if kind == "money" then upStat.money += 1 else upStat.dmg += 1 end
+                            end
+                        end)
+                    end
+                end
+                return launched
+            end
+
+            -- อัพเกรด 1 รอบ: ตัวเงินให้ max ก่อน (รายได้) แล้วค่อยดาเมจ
+            -- วาง Leo ได้เท่าใดก็อัปเท่านั้น ไม่บังคับว่าต้องครบ 3 ตัวก่อน
             local function upgradePass()
                 local moneyU, damageU = readPlaced()
+                -- Unit Manager อาจว่างชั่วคราวตอน UI กำลังรีเฟรช ห้ามตีความว่าอัปครบแล้ว
+                if #moneyU == 0 and #damageU == 0 then
+                    return moneyU, damageU, false, 0
+                end
                 local allMoneyMax = true
+                local pendingMoney = {}
                 for _, uuid in ipairs(moneyU) do
                     if not stillRunning() then return end
                     if not towerMaxed(uuid) then
                         allMoneyMax = false
-                        if upgradeOnce(uuid) then upStat.money += 1; task.wait(0.1) end
+                        pendingMoney[#pendingMoney + 1] = uuid
                     end
                 end
-                -- ดาเมจต่อเมื่อ "ตัวเงิน max ครบ" ตามสเปค
+                local launchedMoney = launchUpgradeBatch(pendingMoney, "money", 3)
+                local launchedDamage = 0
                 if allMoneyMax then
-                    for _, uuid in ipairs(damageU) do
-                        if not stillRunning() then return end
-                        if not towerMaxed(uuid) then
-                            if upgradeOnce(uuid) then upStat.dmg += 1; task.wait(0.1) end
-                        end
-                    end
+                    launchedDamage = launchUpgradeBatch(damageU, "damage", 8)
                 end
-                return moneyU, damageU, allMoneyMax
+                if launchedMoney > 0 or launchedDamage > 0 then
+                    dbg(string.format("[Legend Upgrade] ส่งขนาน เงิน=%d ดาเมจ=%d | Leo บนสนาม=%d",
+                        launchedMoney, launchedDamage, #moneyU))
+                end
+                return moneyU, damageU, allMoneyMax, launchedMoney + launchedDamage
             end
 
             dbg("[Legend] วางกระจุก 75-85% + เติม Leorio→3 + อัพเกรดขนาน (ตัวเงิน max ก่อน)")
@@ -2308,18 +2356,18 @@ allButton.MouseButton1Click:Connect(function()
             dbg(string.format("========== วาง Legend เสร็จ | Leorio=%d/3 | วางรวม %d | บนสนาม=%d ==========",
                 moneySlot and slotPlaced[moneySlot] or 0, total, placementCount()))
 
-            -- อัพเกรดต่อจนครบ max (หรือ stage จบ) — เงินมาเรื่อยๆ ระหว่างเวฟ, ทำต่อเนื่อง
-            local upT0 = os.clock()
-            while stillRunning() and os.clock() - upT0 < 240 do
-                local moneyU, damageU, allMoneyMax = upgradePass()
-                local allMax = allMoneyMax
+            -- อัพเกรดต่อเนื่องจนทุกตัว MAX หรือ stage จบ ไม่ตัดที่ 240 วินาที
+            while stillRunning() do
+                local moneyU, damageU, allMoneyMax, launched = upgradePass()
+                -- ต้องพบดาเมจจริงอย่างน้อย 1 ตัวก่อนจบลูป กัน Unit Manager โหลดมาเฉพาะ Leo
+                local allMax = allMoneyMax and damageU and #damageU > 0
                 if allMoneyMax and damageU then
                     for _, uuid in ipairs(damageU) do if not towerMaxed(uuid) then allMax = false; break end end
                 end
                 if allMax then break end
-                task.wait(0.4)
+                task.wait((launched or 0) > 0 and 0.15 or 0.4)
             end
-            dbg(("[Legend] อัพเกรดครบ/หมดเวลา (money=%d dmg=%d ครั้ง)"):format(upStat.money, upStat.dmg))
+            dbg(("[Legend] อัพเกรดครบ/ด่านจบ (money=%d dmg=%d ครั้ง)"):format(upStat.money, upStat.dmg))
 
             if myGeneration ~= smartGeneration then return end
             smartRunning = false
