@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.51
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.52
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.51"
+local TEST_VERSION = "0.52"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -991,8 +991,9 @@ local function isInNonRewardPanel(object)
     local anc = object
     while anc do
         local name = tostring(anc.Name):lower()
-        -- MainUI.Summon.PopupFrame เป็นหน้าข้อมูล summon ปกติ ไม่ใช่รางวัล
-        if name == "summon" or name == "unitmanagerframe" or name == "settingsframe" then
+        -- ของรางวัล Anime Origins ใช้ path MainUI.Summon.PopupFrame.ImageLabel จริง
+        -- จึงห้ามตัด ancestor ชื่อ Summon ออก ไม่งั้นรางวัลจะค้างและ Replay ไม่เดินต่อ
+        if name == "unitmanagerframe" or name == "settingsframe" then
             return true
         end
         anc = anc.Parent
