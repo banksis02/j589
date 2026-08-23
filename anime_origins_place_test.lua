@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.53
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.54
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.53"
+local TEST_VERSION = "0.54"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1172,6 +1172,11 @@ local SMART_MAX_PER_SLOT = 3
 local shuffleRng = Random.new()
 local resilientCandidateCursors = {}
 local expectedHotbarSlots = 0
+-- สถานะรอบต้องประกาศก่อน callback เริ่ม Smart Auto เพื่อให้รอบใหม่ล้างค่า Wave เก่าได้ทันที
+local lastEmptyFieldRecovery = os.clock()
+local roundRecoveryToken = 0
+local lastObservedWave = nil
+local wasActOverVisible = false
 
 local function resilientCandidateWindow(candidates, key, limit)
     if not usesResilientPlacement() or #candidates <= limit then
@@ -1415,6 +1420,13 @@ allButton.MouseButton1Click:Connect(function()
     smartRunning = true
     smartGeneration += 1
     local myGeneration = smartGeneration
+    if usesResilientPlacement() then
+        -- ยกเลิก recovery ที่ตั้งจากรอบเก่า และตั้ง baseline เป็น Wave ปัจจุบัน
+        -- กัน race: รอบเก่า Wave 7 -> รอบใหม่ Wave 0 แล้ว monitor มายกเลิก generation ใหม่
+        roundRecoveryToken += 1
+        lastObservedWave = readCurrentWave()
+        wasActOverVisible = isActOverVisible()
+    end
     smartPlanIndex = 1
     resilientCandidateCursors = {}
     for slot = 1, 6 do
@@ -1444,6 +1456,30 @@ allButton.MouseButton1Click:Connect(function()
         _G.AO_INVOKE_LOG = 0   -- รีเซ็ตทุกครั้งที่เริ่ม → รอบ 2+ ได้เห็นค่า result (table/-1/false) สดๆ
         dbg(string.format("========== START วางตัว | wave=%s | บนสนาม=%d | hotbar[%s] ==========",
             tostring(readCurrentWave()), placementCount(), hotbarSnap()))
+
+        -- Replay จะมีช่วง Wave 0 ซึ่ง Towers/เงิน/สนามยังรีเซ็ตไม่เสร็จ
+        -- ห้ามเริ่มวางในช่วงนี้ เพราะ monitor อาจเห็น transition ของรอบเก่าและยกเลิกงานใหม่
+        if isScriptedRound then
+            local waveWaitStarted = os.clock()
+            local currentWave = readCurrentWave()
+            while stillRunning() and (not currentWave or currentWave <= 0)
+                and os.clock() - waveWaitStarted < 20 do
+                setStatus("รอรอบใหม่เริ่ม Wave 1...")
+                task.wait(0.2)
+                currentWave = readCurrentWave()
+            end
+            if not stillRunning() then return end
+            if not currentWave or currentWave <= 0 then
+                smartRunning = false
+                placing = false
+                allButton.Text = "START SMART AUTO"
+                allButton.BackgroundColor3 = Color3.fromRGB(68, 151, 101)
+                dbg("ยังเป็น Wave 0 เกิน 20 วิ — หยุดรอ monitor เริ่มใหม่เมื่อ Wave 1")
+                return
+            end
+            lastObservedWave = currentWave
+            dbg("รอบพร้อมแล้ว Wave " .. tostring(currentWave) .. " → เริ่มวาง")
+        end
 
         local speedLevel, speedMessage = setBestGameSpeed()
         dbg("ตั้ง game speed: " .. tostring(speedMessage))
@@ -2167,20 +2203,19 @@ allButton.MouseButton1Click:Connect(function()
             local moneyStart = os.clock()
             local moneyPercents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
             local moneyIdx = 1
-            -- ⭐ Legend: pre-block สั้น (วางเท่าที่เงินพอเร็วๆ) เพราะ fill loop เติม Leorio→3 + อัพเกรดต่อให้
-            --    (เดิมรอ 15 วิ = ตัวไม่อัพเลยช่วงนั้น). โหมดอื่น: คงเดิม 3 ตัว/15 วิ
-            local moneyCap = isLegend and 5 or (isGem and 20 or 15)
+            -- Legend ต้องยืนยัน Leo 3 ตัวก่อนเหมือน Mansion; Server อาจปฏิเสธจุดชั่วคราว
+            -- จึงหมุน candidate ต่อ ไม่เลิกหลังวางสำเร็จเพียงตัวเดียว
+            local moneyCap = isLegend and 30 or (isGem and 20 or 15)
             while stillRunning() and moneyQueued < initialMoneyTarget and os.clock() - moneyStart < moneyCap do
                 local percent = moneyPercents[moneyIdx]
                 moneyIdx = moneyIdx % #moneyPercents + 1
                 local placementType = initialMoneyName == "Leorio" and "Ground" or "Auto"
-                if queueOne(moneySlot, placementType, percent,
-                    initialMoneyName .. " ตัวเงิน " .. (moneyQueued + 1) .. "/" .. initialMoneyTarget) then
+                local placedMoney = queueOne(moneySlot, placementType, percent,
+                    initialMoneyName .. " ตัวเงิน " .. (moneyQueued + 1) .. "/" .. initialMoneyTarget)
+                if placedMoney then
                     moneyQueued += 1
-                elseif isLegend and moneyQueued >= 1 then
-                    break   -- Legend: ได้ตัวแรกแล้วเงินหมด → ไปวางดาเมจ+อัพเกรดขนานเลย ค่อยเติม Leorio ทีหลัง
                 else
-                    task.wait(0.6)
+                    task.wait(isLegend and 0.25 or 0.6)
                 end
             end
             dbg("[1] " .. initialMoneyName .. " จองได้ " .. moneyQueued .. "/" .. initialMoneyTarget
@@ -2276,6 +2311,7 @@ allButton.MouseButton1Click:Connect(function()
             -- InvokeServer ของเครื่องบอทใช้ 3-17 วิ/ครั้ง จึงต้องยิงเป็นชุดขนาน
             -- พร้อมล็อก UUID ที่กำลังรอ เพื่อไม่ให้รอบถัดไปยิงซ้ำตัวเดิม
             local upStat = { money = 0, dmg = 0 }
+            local allowDamageUpgrade = false
             local function launchUpgradeBatch(uuids, kind, maxCount)
                 local launched = 0
                 for _, uuid in ipairs(uuids) do
@@ -2314,7 +2350,9 @@ allButton.MouseButton1Click:Connect(function()
                 end
                 local launchedMoney = launchUpgradeBatch(pendingMoney, "money", 3)
                 local launchedDamage = 0
-                if allMoneyMax then
+                -- ระหว่างช่วงวาง ต้องเห็น Leo ครบเป้าหมายก่อนจึงใช้เงินกับดาเมจ
+                -- หลังลองวางจนครบช่วงแล้ว allowDamageUpgrade จะเปิด fallback กรณีแผนที่เต็มจริง
+                if allMoneyMax and (allowDamageUpgrade or #moneyU >= initialMoneyTarget) then
                     launchedDamage = launchUpgradeBatch(damageU, "damage", 8)
                 end
                 if launchedMoney > 0 or launchedDamage > 0 then
@@ -2329,12 +2367,15 @@ allButton.MouseButton1Click:Connect(function()
             local leoFill = {30, 36, 42, 33, 45, 27}
             local lpIdx, leoFi, emptyRounds = 1, 1, 0
             local fillStart = os.clock()
-            while stillRunning() and os.clock() - fillStart < 90 and emptyRounds < 3 do
+            while stillRunning() and os.clock() - fillStart < 180 and emptyRounds < 10 do
                 local placedThisRound, moneyBlocked = false, false
-                -- เติมตัวเงิน Leorio จนครบ 3 ก่อน (ตัวเงิน=รายได้ ยิ่งครบยิ่งมีเงินอัพ/วาง)
-                if moneySlot and slotPlaced[moneySlot] < 3 then
+                local currentMoneyUnits = select(1, readPlaced())
+                local actualMoneyCount = #currentMoneyUnits
+                -- ใช้ Unit Manager ยืนยันจำนวนจริง ไม่ใช้เพียงจำนวน Remote ที่เคยตอบ table
+                if moneySlot and actualMoneyCount < initialMoneyTarget then
                     local pc = leoFill[leoFi]; leoFi = leoFi % #leoFill + 1
-                    local ok, res = queueOne(moneySlot, "Ground", pc, "Leorio เติม " .. (slotPlaced[moneySlot] + 1) .. "/3")
+                    local ok, res = queueOne(moneySlot, "Ground", pc,
+                        "Leorio เติม " .. (actualMoneyCount + 1) .. "/" .. initialMoneyTarget)
                     if ok then placedThisRound = true elseif res == -1 then moneyBlocked = true end
                 end
                 for _, slot in ipairs(damageSlots) do
@@ -2351,10 +2392,12 @@ allButton.MouseButton1Click:Connect(function()
                 elseif moneyBlocked then setStatus("[Legend] เงินไม่พอ — อัพเกรด+รอเงินแล้ววางต่อ"); task.wait(0.8)
                 else emptyRounds = emptyRounds + 1; task.wait(0.3) end
             end
+            allowDamageUpgrade = true
             local total = 0
             for slot = 1, 6 do total += slotPlaced[slot] end
-            dbg(string.format("========== วาง Legend เสร็จ | Leorio=%d/3 | วางรวม %d | บนสนาม=%d ==========",
-                moneySlot and slotPlaced[moneySlot] or 0, total, placementCount()))
+            local finalMoneyUnits = select(1, readPlaced())
+            dbg(string.format("========== วาง Legend เสร็จ | Leorioจริง=%d/%d | วางรวม %d | บนสนาม=%d ==========",
+                #finalMoneyUnits, initialMoneyTarget, total, placementCount()))
 
             -- อัพเกรดต่อเนื่องจนทุกตัว MAX หรือ stage จบ ไม่ตัดที่ 240 วินาที
             while stillRunning() do
@@ -2902,11 +2945,6 @@ if not AO_HEADLESS then
         if speedLevel then setStatus(speedMessage) end
     end)
 end
-
-local lastEmptyFieldRecovery = os.clock()
-local roundRecoveryToken = 0
-local lastObservedWave = nil
-local wasActOverVisible = false
 
 local function cancelOldSmartRound(reason)
     if not smartRunning then return end
