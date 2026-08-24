@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.54
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.55
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.54"
+local TEST_VERSION = "0.55"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -2451,10 +2451,17 @@ allButton.MouseButton1Click:Connect(function()
             local sf = gemUnitManager()
             local card = sf and sf:FindFirstChild(uuid)
             if not card then return false end
+            for _, object in ipairs(card:GetDescendants()) do
+                if object:IsA("TextLabel") or object:IsA("TextButton") then
+                    local current, maximum = tostring(object.Text):match("[Uu]pgrade%s*(%d+)%s*/%s*(%d+)")
+                    if current and maximum then return tonumber(current) >= tonumber(maximum) end
+                end
+            end
             local maxed = false
             pcall(function()
                 for _, object in ipairs(card:GetDescendants()) do
-                    if object:IsA("TextLabel") and tostring(object.Text):upper() == "MAX" then
+                    if object:IsA("TextLabel") and tostring(object.Text):upper() == "MAX"
+                        and guiIsActuallyVisible(object) then
                         maxed = true
                         break
                     end
@@ -2471,8 +2478,56 @@ allButton.MouseButton1Click:Connect(function()
             return ok and result == true
         end
 
+        local gemUpgradeInFlight = {}
+        local function gemLaunchUpgradeBatch(units, maxCount, onSuccess)
+            local launched = 0
+            for _, unit in ipairs(units) do
+                if launched >= (maxCount or #units) then break end
+                if not gemTowerMaxed(unit.uuid) and not gemUpgradeInFlight[unit.uuid] then
+                    gemUpgradeInFlight[unit.uuid] = true
+                    launched += 1
+                    task.spawn(function()
+                        local success = gemUpgradeOnce(unit.uuid)
+                        gemUpgradeInFlight[unit.uuid] = nil
+                        if success and onSuccess then onSuccess(unit) end
+                    end)
+                end
+            end
+            return launched
+        end
+
         local function exactPlacedName(actual, expected)
             return tostring(actual):lower() == tostring(expected):lower()
+        end
+
+        -- ยืนยันจำนวนตัวเงินจาก Unit Manager ก่อนเริ่มชุดดักมอน
+        -- คงลำดับ Gem เดิม: Leo 3 (หรือ Bluma 1) -> ดาเมจ 3-4 -> MAX ตัวเงิน
+        local function gemEnsurePrimaryMoneyPlaced()
+            if not isGem or not moneySlot or not initialMoneyPlacedName or initialMoneyTarget <= 0 then
+                return true
+            end
+            local started = os.clock()
+            local percents = {30, 33, 36, 39, 42, 45, 48, 27, 24}
+            local index = 1
+            while stillRunning() and os.clock() - started < 90 do
+                local count = 0
+                for _, unit in ipairs(gemPlacedUnits()) do
+                    if exactPlacedName(unit.name, initialMoneyPlacedName) then count += 1 end
+                end
+                if count >= initialMoneyTarget then
+                    dbg(string.format("[Gem Money] ยืนยัน %s ครบจริง %d/%d",
+                        initialMoneyPlacedName, count, initialMoneyTarget))
+                    return true
+                end
+                local percent = percents[index]
+                index = index % #percents + 1
+                local placementType = initialMoneyName == "Leorio" and "Ground" or "Auto"
+                local ok = queueOne(moneySlot, placementType, percent,
+                    string.format("Gem ยืนยันตัวเงิน %s %d/%d", initialMoneyPlacedName, count + 1, initialMoneyTarget))
+                task.wait(ok and 0.15 or 0.35)
+            end
+            dbg("[Gem Money] ยังวางตัวเงินไม่ครบหลัง retry — ให้โลจิคดาเมจเดินต่อเพื่อไม่ให้แพ้")
+            return false
         end
 
         -- อัปตัวเงินชนิดเดียวที่ใช้เปิดเกมให้ครบ MAX ก่อนเข้าสู่ชุดวาง 5-10%
@@ -2513,17 +2568,14 @@ allButton.MouseButton1Click:Connect(function()
                         initialMoneyPlacedName, #matches, initialMoneyTarget))
                     return true
                 end
-                local upgraded = false
-                for _, unit in ipairs(shuffledCopy(matches)) do
-                    if not stillRunning() then return false end
-                    if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
-                        upgraded = true
+                local matchCount = #matches
+                local launched = gemLaunchUpgradeBatch(shuffledCopy(matches), initialMoneyTarget, function()
+                    if stillRunning() then
                         setStatus(string.format("อัป %s ให้ MAX (%d/%d ตัว)",
-                            initialMoneyPlacedName, #matches, initialMoneyTarget))
-                        task.wait(0.12)
+                            initialMoneyPlacedName, matchCount, initialMoneyTarget))
                     end
-                end
-                task.wait(upgraded and 0.2 or 0.7)
+                end)
+                task.wait(launched > 0 and 0.15 or 0.5)
             end
             dbg("[Gem Upgrade] หมดเวลารอ " .. tostring(initialMoneyPlacedName) .. " MAX")
             return false
@@ -2543,28 +2595,22 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
 
-            local attempts, upgraded = 0, 0
-            for _, unit in ipairs(shuffledCopy(pool)) do
-                if not stillRunning() or attempts >= (maxAttempts or #pool) then break end
-                attempts += 1
-                if not gemTowerMaxed(unit.uuid) and gemUpgradeOnce(unit.uuid) then
-                    upgraded += 1
+            local launched = gemLaunchUpgradeBatch(shuffledCopy(pool), maxAttempts or #pool, function(unit)
+                if stillRunning() then
                     gemDamageUpgradeCount += 1
                     setStatus(string.format("[Gem] สุ่มอัป %s | รวม %d ครั้ง", unit.name, gemDamageUpgradeCount))
-                    task.wait(0.04)
                 end
-            end
-            return #units, #pool, upgraded
+            end)
+            return #units, #pool, launched
         end
 
         local function gemUpgradeDamageAndDeferredBulma()
             if not isGem then return true end
 
-            local started = os.clock()
             local sawPlacedUnits = false
             local missingSince = nil
 
-            while stillRunning() and os.clock() - started < 240 do
+            while stillRunning() do
                 -- รอบท้ายยิงได้สูงสุด 24 ยูนิต/รอบ และลด delay เพื่อใช้เงินที่ค้างอยู่ให้ทันเวฟ
                 local unitCount, pendingCount, upgradedThisPass = gemUpgradeDamagePass(24)
                 if unitCount > 0 then
@@ -2572,9 +2618,9 @@ allButton.MouseButton1Click:Connect(function()
                     missingSince = nil
                 elseif sawPlacedUnits then
                     missingSince = missingSince or os.clock()
-                    if os.clock() - missingSince >= 3 then
-                        dbg("[Gem Upgrade] Unit Manager ว่างหลังเคยพบยูนิต — ด่านน่าจะจบแล้ว")
-                        return false
+                    if os.clock() - missingSince >= 10 then
+                        dbg("[Gem Upgrade] Unit Manager ว่างชั่วคราว — รอข้อมูลกลับมา")
+                        missingSince = os.clock()
                     end
                 end
 
@@ -2586,9 +2632,11 @@ allButton.MouseButton1Click:Connect(function()
                 task.wait(upgradedThisPass > 0 and 0.08 or 0.35)
             end
 
-            dbg("[Gem Upgrade] หมดเวลาอัปดาเมจ | สำเร็จ " .. gemDamageUpgradeCount .. " ครั้ง")
+            dbg("[Gem Upgrade] ด่านจบ | สำเร็จ " .. gemDamageUpgradeCount .. " ครั้ง")
             return false
         end
+
+        if isGem then gemEnsurePrimaryMoneyPlaced() end
 
         -- รอมอนสั้นๆ 6 วิ เพื่อจับตำแหน่งนำหน้า (เดิม 30 วิ = หน่วงนานตั้งแต่ต้น)
         local monsterPercent
@@ -2635,7 +2683,8 @@ allButton.MouseButton1Click:Connect(function()
                 return ok, result
             end
 
-            while stillRunning() and interceptQueued < 4 and os.clock() - interceptStart < 45 do
+            -- คงโลจิค 3-4 ตัวและตำแหน่งเดิม แต่ให้เวลา Remote ช้า/จุดชั่วคราวมากขึ้น
+            while stillRunning() and interceptQueued < 4 and os.clock() - interceptStart < 120 do
                 local bag = shuffledCopy(damageSlots)
                 local placedThisRound, moneyBlocked = false, false
 
@@ -2808,7 +2857,7 @@ allButton.MouseButton1Click:Connect(function()
         --    เคยลอง gem กระจุก 60-80% แต่งานช้าลงรอบละ 1-2 นาที → กลับมา 5-10% เหมือนเดิม
         -- วางต่อเนื่องจนเต็มจริง — ไม่เลิกหลัง 2-3 ตัว
         -- ถ้ารอบไหนวางไม่เพิ่ม (เงินยังไม่พอ) หน่วง 1.5 วิ ให้เงินสะสม แล้วลองใหม่
-        -- เลิกเมื่อ: วางไม่เพิ่มติดกัน 5 รอบ (สนามเต็มจริง) หรือครบ 90 วิ (กันค้าง)
+        -- ยืนยันสนามเต็มจากหลายรอบ เพื่อไม่เลิกเพราะ Server/จุดวางปฏิเสธชั่วคราวเพียง 3 รอบ
         local earlyPercents = {5, 6, 7, 8, 9, 10, 5.5, 6.5, 7.5, 8.5, 9.5}
         local restLabel = "เคลียร์ต้นทางที่เหลือ"
         local earlyIndex = 1
@@ -2820,13 +2869,19 @@ allButton.MouseButton1Click:Connect(function()
             dbg("[5 Gem] เตรียมวาง Bulma Tower" .. deferredBulmaSlot .. " พร้อมช่วงตัวดาเมจ (สูงสุด 1 ตัว)")
         end
 
-        while stillRunning() and os.clock() - fillStart < 60 and emptyRounds < 3 do
+        while stillRunning() and os.clock() - fillStart < 240 and emptyRounds < 10 do
             local placedThisRound = false
             local moneyBlockedThisRound = false
 
             -- ทั้ง Leo+Bluma: หลัง Leo MAX แล้วให้ Bluma ได้สิทธิ์ใช้เงินก่อน 1 ครั้งในช่วงวางดาเมจ
             -- ป้องกันคิวสุ่มดาเมจใช้เงินหมดทุกครั้งจน Bluma ไม่เคยถูกวาง
-            if deferredBulmaSlot and slotPlaced[deferredBulmaSlot] < 1 then
+            local actualBlumaCount = 0
+            if deferredBulmaSlot then
+                for _, unit in ipairs(gemPlacedUnits()) do
+                    if exactPlacedName(unit.name, "Bluma") then actualBlumaCount += 1 end
+                end
+            end
+            if deferredBulmaSlot and actualBlumaCount < 1 then
                 local bulmaPercent = earlyPercents[earlyIndex]
                 earlyIndex = earlyIndex % #earlyPercents + 1
                 local ok, res = queueOne(
@@ -2856,13 +2911,13 @@ allButton.MouseButton1Click:Connect(function()
                 end
             end
 
-            -- ไม่รอให้ fill loop จบ 60 วิ: หลังตัวเงินหลัก MAX แล้วให้อัปดาเมจแทรกทุกรอบ
+            -- ไม่รอให้ fill loop จบ: หลังตัวเงินหลัก MAX แล้วให้อัปดาเมจแทรกทุกรอบ
             -- สูงสุด 12 ยูนิตต่อรอบเพื่อไม่ให้การอัปกินเวลาจนหยุดวางตัวใหม่
             if isGem then
-                local _, pending, upgraded = gemUpgradeDamagePass(12)
-                if upgraded > 0 then
-                    dbg(string.format("[5 Gem] อัปแทรกระหว่างวาง %d ครั้ง | ยังรออัปก่อนรอบนี้ %d ตัว",
-                        upgraded, pending))
+                local _, pending, launched = gemUpgradeDamagePass(12)
+                if launched > 0 then
+                    dbg(string.format("[5 Gem] ส่งอัปขนานระหว่างวาง %d ตัว | ยังรออัปก่อนรอบนี้ %d ตัว",
+                        launched, pending))
                 end
             end
 
