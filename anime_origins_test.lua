@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS TEST UI/HEADLESS v2.1
+-- ANIME ORIGINS TEST UI/HEADLESS v2.2
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.1"
+local AO_TEST_VERSION = "2.2"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -311,10 +311,11 @@ local function findNearestEmptyStoryDoor(root)
     local mainFolder = workspace:FindFirstChild("MainFolder")
     local lobby = mainFolder and mainFolder:FindFirstChild("Lobby")
     local selectors = lobby and lobby:FindFirstChild("MapSelectors")
-    local story = selectors and selectors:FindFirstChild("Story")
+    -- Legend อาจมีชุด Pod แยกจาก Story; ถ้าเกมใช้ Pod ร่วมกันให้ fallback กลับ Story
+    local story = selectors and (selectors:FindFirstChild(selectedMode) or selectors:FindFirstChild("Story"))
 
     if not story then
-        return nil, "ไม่พบ MapSelectors.Story"
+        return nil, "ไม่พบ MapSelectors." .. tostring(selectedMode) .. "/Story"
     end
 
     local nearestDoor
@@ -650,7 +651,7 @@ local function performEntry()
     local ok, err = pcall(function()
         remote:FireServer(
             "StartSelection",
-            "Story",
+            selectedMode,
             selectedMap.Value,
             selectedAct.Value,
             "Hard"

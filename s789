@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.35"
+local SCRIPT_VERSION = "v11.36"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -4232,8 +4232,53 @@ if GAME_ID == "anime_origins" then
         return ok and success
     end
 
+    local function aoReadActualLegendAct()
+        local candidates = {}
+        pcall(function()
+            candidates[#candidates + 1] = player.PlayerGui.GameUI.ManagementFrame.SideButtons.ActInfo.Act.Text
+        end)
+        pcall(function()
+            candidates[#candidates + 1] = player.PlayerGui.GameUI.ManagementFrame.StageInfoFrame.Main
+                .CanvasGroup.ImageFrame.DarkFrame.ImageLabel.Act.Text
+        end)
+        for _, text in ipairs(candidates) do
+            local act = tonumber(tostring(text):match("(%d+)"))
+            if act and act >= 1 and act <= 3 then return act, tostring(text) end
+        end
+        return nil, table.concat(candidates, " | ")
+    end
+
     local function aoStartGame()
         _G.AO_HEADLESS = true
+        -- ชื่องานบนเว็บมาจาก backend จึงบอก Act เป้าหมายได้แม้เกมเข้าผิด Act
+        -- ต้องอ่าน Act จาก UI ในด่านจริงและยืนยันก่อนเริ่มวาง/ฟาร์ม
+        if aoCurrentJob and aoCurrentJob.mode == "ao_legend" then
+            local expectedAct = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+            local actualAct, actualText
+            for _ = 1, 20 do
+                actualAct, actualText = aoReadActualLegendAct()
+                if actualAct then break end
+                task.wait(0.5)
+            end
+            if not actualAct then
+                warn(string.format("[AO %s] ยังอ่าน Legend Act จริงจากด่านไม่ได้ — ยังไม่เริ่มวางตัว | UI=%s",
+                    SCRIPT_VERSION, tostring(actualText)))
+                return false
+            end
+            if actualAct ~= expectedAct then
+                warn(string.format("[AO %s] Legend Act ไม่ตรง: งานต้องการ Act %d แต่เกมเข้า Act %d — กลับ Lobby เลือกใหม่",
+                    SCRIPT_VERSION, expectedAct, actualAct))
+                aoFarming = false
+                aoEnteredKey = ""
+                aoLastLobbyAttempt = 0
+                pcall(function()
+                    game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
+                end)
+                return false
+            end
+            print(string.format("[AO %s] Legend Act ยืนยันตรงกัน: Act %d | UI=%s",
+                SCRIPT_VERSION, actualAct, tostring(actualText)))
+        end
         -- Teleport เข้าเกมจะสร้าง environment ใหม่: โหลดตัวควบคุม Settings ซ้ำในด่าน
         -- และต้องยืนยันปิด AutoUpgradeOnPlacement ก่อนโหลด/เริ่มโมดูลวางตัว
         _G.AO_PLACE_MODE = aoCurrentJob and aoCurrentJob.mode or nil
