@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.36"
+local SCRIPT_VERSION = "v11.37"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3818,6 +3818,11 @@ if GAME_ID == "anime_origins" then
     local aoMansionExhausted = false
     local aoMansionStateLoaded = false
     local aoMansionJobId = ""
+    local aoObservedLegendAct = nil
+    local aoLegendSwitchPending = false
+    local aoLegendSwitchFrom = 0
+    local aoLegendSwitchTo = 0
+    local aoLastHeartbeatWarning = 0
 
     local function aoMansionLossLimit()
         local completion = aoCurrentJob and aoCurrentJob.completion
@@ -4032,7 +4037,11 @@ if GAME_ID == "anime_origins" then
                 KatakuraTown = "Katakura Town",
             }
             local stage = names[tostring(aoCurrentJob.stage)] or tostring(aoCurrentJob.stage or "Legend")
-            local act = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+            -- ในช่วงเปลี่ยน Act ให้แสดงด่านที่เกมกำลังเล่นจริง ไม่เอา Act เป้าหมายจาก backend
+            -- ไปติดกับรางวัลของรอบเก่า (เช่น SND-1 แต่ป้ายขึ้น Act 2)
+            local requestedAct = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+            local act = game.PlaceId == AO_GAME_PLACE_ID and aoObservedLegendAct or requestedAct
+            act = math.clamp(tonumber(act) or requestedAct, 1, 3)
             local cycleLabel = aoCurrentJob.legendActMode == "cycle" and " (วน 1-2-3 · 4ชม./Act)" or ""
             return stage .. " - Legend Act " .. tostring(act) .. cycleLabel
         end
@@ -4075,8 +4084,8 @@ if GAME_ID == "anime_origins" then
             or (isStageMode and aoStagePending)
         )
         if aoCurrentJob and aoCurrentJob.id then
-            pcall(function()
-                HttpService:RequestAsync({
+            local progressOK, progressResponse = pcall(function()
+                return HttpService:RequestAsync({
                     Url = AUTOMATION_URL .. "/api/public/runtime-jobs/" .. tostring(aoCurrentJob.id) .. "/progress",
                     Method = "POST",
                     Headers = { ["Content-Type"] = "application/json" },
@@ -4099,6 +4108,13 @@ if GAME_ID == "anime_origins" then
                     }),
                 })
             end)
+            if not progressOK or type(progressResponse) ~= "table" or not progressResponse.Success then
+                if os.clock() - aoLastHeartbeatWarning >= 60 then
+                    aoLastHeartbeatWarning = os.clock()
+                    warn("[AO " .. SCRIPT_VERSION .. "] ส่งสถานะกำลังฟาร์มไม่สำเร็จ: "
+                        .. tostring(progressOK and progressResponse and progressResponse.StatusCode or progressResponse))
+                end
+            end
         end
         local overloadPayload = {
             username = player.Name,
@@ -4170,6 +4186,13 @@ if GAME_ID == "anime_origins" then
                 Body = HttpService:JSONEncode(overloadPayload),
             })
         end)
+        if not sentOK or type(response) ~= "table" or not response.Success then
+            if os.clock() - aoLastHeartbeatWarning >= 60 then
+                aoLastHeartbeatWarning = os.clock()
+                warn("[AO " .. SCRIPT_VERSION .. "] ส่งข้อมูลหน้าเช็คงานไม่สำเร็จ: "
+                    .. tostring(sentOK and response and response.StatusCode or response))
+            end
+        end
         if sentOK and type(response) == "table" and response.Success and completedRun then
             if isStageMode then
                 aoStagePending = false
@@ -4243,9 +4266,28 @@ if GAME_ID == "anime_origins" then
         end)
         for _, text in ipairs(candidates) do
             local act = tonumber(tostring(text):match("(%d+)"))
-            if act and act >= 1 and act <= 3 then return act, tostring(text) end
+            if act and act >= 1 and act <= 3 then
+                aoObservedLegendAct = act
+                return act, tostring(text)
+            end
         end
         return nil, table.concat(candidates, " | ")
+    end
+
+    local function aoRequestLegendSwitch(expectedAct, actualAct, reason)
+        expectedAct = math.clamp(tonumber(expectedAct) or 1, 1, 3)
+        actualAct = math.clamp(tonumber(actualAct) or aoObservedLegendAct or expectedAct, 1, 3)
+        if not aoLegendSwitchPending or aoLegendSwitchTo ~= expectedAct then
+            print(string.format(
+                "[AO %s] Legend รอเปลี่ยน Act %d -> %d | จบรอบนี้แล้วกด Lobby (%s)",
+                SCRIPT_VERSION, actualAct, expectedAct, tostring(reason or "cycle")
+            ))
+        end
+        aoLegendSwitchPending = true
+        aoLegendSwitchFrom = actualAct
+        aoLegendSwitchTo = expectedAct
+        -- ต้องคง farming=true เพื่อให้เว็บยังขึ้นกำลังฟาร์มและ watcher อ่านหน้ารางวัลรอบนี้
+        aoFarming = true
     end
 
     local function aoStartGame()
@@ -4266,18 +4308,14 @@ if GAME_ID == "anime_origins" then
                 return false
             end
             if actualAct ~= expectedAct then
-                warn(string.format("[AO %s] Legend Act ไม่ตรง: งานต้องการ Act %d แต่เกมเข้า Act %d — กลับ Lobby เลือกใหม่",
+                warn(string.format("[AO %s] Legend Act ไม่ตรง: งานต้องการ Act %d แต่เกมเข้า Act %d",
                     SCRIPT_VERSION, expectedAct, actualAct))
-                aoFarming = false
-                aoEnteredKey = ""
-                aoLastLobbyAttempt = 0
-                pcall(function()
-                    game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
-                end)
-                return false
+                -- Executor บล็อก TeleportService ด้วย Verify Teleports จึงรอจบรอบแล้วกด Lobby ของเกม
+                aoRequestLegendSwitch(expectedAct, actualAct, "ตรวจพบตอนเริ่มสคริปต์")
+            else
+                print(string.format("[AO %s] Legend Act ยืนยันตรงกัน: Act %d | UI=%s",
+                    SCRIPT_VERSION, actualAct, tostring(actualText)))
             end
-            print(string.format("[AO %s] Legend Act ยืนยันตรงกัน: Act %d | UI=%s",
-                SCRIPT_VERSION, actualAct, tostring(actualText)))
         end
         -- Teleport เข้าเกมจะสร้าง environment ใหม่: โหลดตัวควบคุม Settings ซ้ำในด่าน
         -- และต้องยืนยันปิด AutoUpgradeOnPlacement ก่อนโหลด/เริ่มโมดูลวางตัว
@@ -4404,16 +4442,18 @@ if GAME_ID == "anime_origins" then
                                 SCRIPT_VERSION,
                                 math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
                             ))
+                            local actualAct = select(1, aoReadActualLegendAct()) or aoObservedLegendAct
+                            aoRequestLegendSwitch(aoCurrentJob.difficulty, actualAct, "ครบ 4 ชั่วโมง")
                         else
                             print("[AO " .. SCRIPT_VERSION .. "] งานเปลี่ยน: " .. aoEnteredKey
                                 .. " -> " .. key .. " → กลับล็อบบี้")
+                            aoStop()
+                            aoEnteredKey = ""
+                            aoLastLobbyAttempt = 0
+                            pcall(function()
+                                game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
+                            end)
                         end
-                        aoStop()
-                        aoEnteredKey = ""
-                        aoLastLobbyAttempt = 0
-                        pcall(function()
-                            game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
-                        end)
                     else
                         pcall(aoStartGame)
                         if aoFarming and key ~= "::" and key ~= "nil:nil:nil" then aoEnteredKey = key end
@@ -4446,7 +4486,11 @@ if GAME_ID == "anime_origins" then
     task.spawn(function()
         task.wait(3)
         while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
-            pcall(aoHeartbeat)
+            local heartbeatOK, heartbeatError = pcall(aoHeartbeat)
+            if not heartbeatOK and os.clock() - aoLastHeartbeatWarning >= 60 then
+                aoLastHeartbeatWarning = os.clock()
+                warn("[AO " .. SCRIPT_VERSION .. "] heartbeat error: " .. tostring(heartbeatError))
+            end
             task.wait(30)
         end
     end)
@@ -4506,7 +4550,32 @@ if GAME_ID == "anime_origins" then
         local ao = aoVictoryFrame()
         if not ao then return false end
         local btn
-        pcall(function() btn = ao.Main.ContentFrame.Main.BottomButtons.Inner:FindFirstChild(buttonName) end)
+        local inner
+        pcall(function()
+            inner = ao.Main.ContentFrame.Main.BottomButtons.Inner
+            btn = inner:FindFirstChild(buttonName)
+        end)
+        -- ชื่อ Instance อาจไม่ใช่ Lobby แต่ข้อความบนปุ่มเป็น Lobby/Return to Lobby
+        if not btn and inner then
+            local target = tostring(buttonName):lower():gsub("%s+", "")
+            for _, candidate in ipairs(inner:GetDescendants()) do
+                if candidate:IsA("GuiButton") and candidate.Visible then
+                    local texts = { candidate.Name }
+                    if candidate:IsA("TextButton") then texts[#texts + 1] = candidate.Text end
+                    for _, label in ipairs(candidate:GetDescendants()) do
+                        if label:IsA("TextLabel") and label.Visible then texts[#texts + 1] = label.Text end
+                    end
+                    for _, text in ipairs(texts) do
+                        local normalized = tostring(text):lower():gsub("%s+", "")
+                        if normalized == target or (target == "lobby" and normalized:find("lobby", 1, true)) then
+                            btn = candidate
+                            break
+                        end
+                    end
+                end
+                if btn then break end
+            end
+        end
         if not btn then return false end
         local gb = btn:IsA("GuiButton") and btn or btn:FindFirstChildWhichIsA("GuiButton", true)
         if not gb then return false end
@@ -4569,6 +4638,19 @@ if GAME_ID == "anime_origins" then
                 task.wait(0.5)   -- รอ reward/stat populate
                 local result, rewardText, realTime = aoReadVictory()
                 local isMansion = aoCurrentJob.mode == "ao_mansion"
+                local isLegend = aoCurrentJob.mode == "ao_legend"
+                if isLegend then
+                    -- ดึงงานล่าสุดทันทีที่จบรอบ ไม่รอ poll 10 วิ เพื่อกัน Replay Act เก่าหลังครบ 4 ชั่วโมง
+                    local fetchedOK, latestJob = pcall(aoFetchJob)
+                    if fetchedOK and type(latestJob) == "table" and latestJob.status == "active" then
+                        aoCurrentJob = latestJob
+                    end
+                    local actualAct = select(1, aoReadActualLegendAct()) or aoObservedLegendAct
+                    local expectedAct = math.clamp(tonumber(aoCurrentJob.difficulty) or 1, 1, 3)
+                    if actualAct and actualAct ~= expectedAct then
+                        aoRequestLegendSwitch(expectedAct, actualAct, "ตรวจงานล่าสุดหลังจบรอบ")
+                    end
+                end
                 aoStageRuns += 1
                 aoStageRewardText = rewardText or ""
                 aoStagePlayTime = realTime or ""
@@ -4617,6 +4699,24 @@ if GAME_ID == "anime_origins" then
                             warn(string.format("[AO %s] Mansion กด %s ไม่สำเร็จภายใน 15 วินาที",
                                 SCRIPT_VERSION, nextButton))
                         end
+                    end
+                elseif isLegend and aoLegendSwitchPending then
+                    local closed = false
+                    for attempt = 1, 20 do
+                        local endScreen = aoVictoryFrame()
+                        if not endScreen or endScreen.Visible ~= true then
+                            closed = true
+                            break
+                        end
+                        aoClickEndButton("Lobby")
+                        task.wait(1)
+                    end
+                    if closed then
+                        print(string.format("[AO %s] ออกจาก Act %d ไป Lobby แล้ว — เตรียมเข้า Act %d",
+                            SCRIPT_VERSION, aoLegendSwitchFrom, aoLegendSwitchTo))
+                    else
+                        warn(string.format("[AO %s] กด Lobby เพื่อเปลี่ยน Act %d -> %d ไม่สำเร็จภายใน 20 วินาที",
+                            SCRIPT_VERSION, aoLegendSwitchFrom, aoLegendSwitchTo))
                     end
                 elseif aoClickReplay() then
                     print("[AO " .. SCRIPT_VERSION .. "] กด Replay เล่นด่านต่อ")
