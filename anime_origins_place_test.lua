@@ -1,9 +1,9 @@
 -- ============================================================
--- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.55
+-- ANIME ORIGINS PATH + AUTO PLACE TEST/HEADLESS v0.56
 -- Standalone in-game test - not part of s789
 -- ============================================================
 
-local TEST_VERSION = "0.55"
+local TEST_VERSION = "0.56"
 local GAME_PLACE_ID = 116173040971120
 local AO_HEADLESS = _G.AO_HEADLESS == true
 _G.AO_PLACE_MODULE_GEN = (_G.AO_PLACE_MODULE_GEN or 0) + 1
@@ -1679,7 +1679,8 @@ allButton.MouseButton1Click:Connect(function()
                 local card = scrolling and scrolling:FindFirstChild(uuid)
                 if not card then return false end
                 for _, object in ipairs(card:GetDescendants()) do
-                    if object:IsA("TextLabel") and tostring(object.Text):upper() == "MAX" then
+                    if (object:IsA("TextLabel") or object:IsA("TextButton"))
+                        and tostring(object.Text):upper():match("^%s*MAX%s*$") then
                         return true
                     end
                 end
@@ -1692,7 +1693,11 @@ allButton.MouseButton1Click:Connect(function()
                 if not card then return nil, nil end
                 for _, object in ipairs(card:GetDescendants()) do
                     if object:IsA("TextLabel") or object:IsA("TextButton") then
-                        local current, maximum = tostring(object.Text):match("[Uu]pgrade%s*(%d+)%s*/%s*(%d+)")
+                        local text = tostring(object.Text):gsub("<.->", " "):gsub("%s+", " ")
+                        local current, maximum
+                        if text:lower():find("upgrade", 1, true) then
+                            current, maximum = text:match("(%d+)%s*/%s*(%d+)")
+                        end
                         if current and maximum then
                             return tonumber(current), tonumber(maximum)
                         end
@@ -1701,12 +1706,26 @@ allButton.MouseButton1Click:Connect(function()
                 return nil, nil
             end
 
+            local mansionUpgradeRejectCount = 0
             local function mansionUpgradeOnce(uuid)
                 if not placeRemote then return false end
                 local ok, result = pcall(function()
                     return placeRemote:InvokeServer("UpgradeTower", uuid)
                 end)
-                return ok and result == true
+                local upgraded = ok and result == true
+                if not upgraded then
+                    mansionUpgradeRejectCount += 1
+                    if mansionUpgradeRejectCount <= 5 or mansionUpgradeRejectCount % 20 == 0 then
+                        dbg(string.format(
+                            "[Mansion Upgrade] Remote ปฏิเสธ #%d | uuid=%s | ok=%s | result=%s",
+                            mansionUpgradeRejectCount,
+                            tostring(uuid):sub(1, 8),
+                            tostring(ok),
+                            tostring(result)
+                        ))
+                    end
+                end
+                return upgraded
             end
 
             local function mansionUpgradeBatch(units, maxCount)
@@ -1728,12 +1747,34 @@ allButton.MouseButton1Click:Connect(function()
                 return successes
             end
 
-            local function exactName(actual, expected)
-                return tostring(actual):lower() == tostring(expected):lower()
+            local function normalizedUnitName(value)
+                return tostring(value or ""):lower():gsub("[^%w]", "")
             end
 
             local function internalName(unit, expected)
-                return exactName(unit and unit.towerName, expected)
+                local actual = normalizedUnitName(unit and unit.towerName)
+                local wanted = normalizedUnitName(expected)
+                if actual == wanted then return true end
+
+                -- ลูกค้าอาจใช้ร่างย่อย/evolved ของตัวเงินและตัวแบก ชื่อภายในจึงมีคำต่อท้าย
+                -- เช่น Bulma_DataAnalyst แต่ยังต้องถูกจัดเป็น Bulma ไม่ใช่ตัวดาเมจ
+                if wanted == "leorio" and actual:sub(1, 6) == "leorio" then return true end
+                if wanted == "bulma" and actual:sub(1, 5) == "bulma" then return true end
+                if wanted == "akenoevolved" and actual:find("akeno", 1, true) == 1 then return true end
+                if (wanted == "vegetaevolved" or wanted == "vegetassjevolved")
+                    and actual:find("vegeta", 1, true) == 1 then
+                    return true
+                end
+
+                -- fallback เฉพาะชื่อแสดงผลของตัวเงินที่ยืนยันจาก UI จริง
+                local display = normalizedUnitName(unit and unit.name)
+                if wanted == "leorio" and display:find("leo", 1, true) == 1 then return true end
+                if wanted == "bulma" and (
+                    display:find("bulma", 1, true) == 1
+                    or display:find("bluma", 1, true) == 1
+                    or display:find("buma", 1, true) == 1
+                ) then return true end
+                return false
             end
 
             -- ชื่อภายในที่ยืนยันจาก Dump จริง ไม่อิงชื่อแสดงผลและไม่อิงเลขช่อง
@@ -1744,7 +1785,10 @@ allButton.MouseButton1Click:Connect(function()
                 ["vegetassj_evolved"] = true,
             }
             local function isPriorityDamage(unit)
+                local name = normalizedUnitName(unit and unit.towerName)
                 return PRIORITY_INTERNAL_NAMES[tostring(unit and unit.towerName or ""):lower()] == true
+                    or name:find("akeno", 1, true) == 1
+                    or name:find("vegeta", 1, true) == 1
             end
 
             local leoSlot = findSlotByUnitName("Leorio")
@@ -1977,6 +2021,10 @@ allButton.MouseButton1Click:Connect(function()
             local remainingDamage = 0
             local bulmaUpgradeCount = 0
             local damageUpgradeCount = 0
+            local bulmaUpgradeBlockedCycles = 0
+            local priorityUpgradeBlockedCycles = 0
+            local warnedBulmaFallback = false
+            local warnedPriorityFallback = false
 
             local function namedReachedStage(towerName, target, targetStage)
                 if target <= 0 then return true end
@@ -2040,10 +2088,10 @@ allButton.MouseButton1Click:Connect(function()
                     end
                 end
                 if not selected then
-                    -- ถ้ามีตัวแบกในทีมแต่ Unit Manager ยังไม่เห็นตัวที่วาง ห้ามข้ามไปสุ่มอัปตัวอื่น
-                    -- ลูปวางด้านนอกจะพยายามวางต่อ แล้วรอบถัดไปจึงกลับมาตรวจชื่อภายในใหม่
+                    -- ตัวแบกที่ยังวางไม่สำเร็จห้ามล็อกการอัปยูนิตดาเมจที่อยู่บนสนามแล้ว
+                    -- ลูปวางด้านนอกยังพยายามเติม Aneko/Vegita ต่อในรอบถัดไป
                     if (akenoSlot and not foundAkeno) or (vegetaSlot and not foundVegeta) then
-                        return false, true
+                        return false, false
                     end
                     return false, false
                 end
@@ -2083,17 +2131,41 @@ allButton.MouseButton1Click:Connect(function()
                 local bulmaReady = namedReachedStage("Bulma", bulmaSlot and 1 or 0, 4)
                 if not bulmaReady then
                     if upgradeOneNamed("Bulma", 4) then
+                        bulmaUpgradeBlockedCycles = 0
                         bulmaUpgradeCount += 1
                         setStatus(string.format("[Mansion] วางต่อเนื่อง + อัป Bluma ถึง 4/6 | %d ครั้ง",
                             bulmaUpgradeCount))
                         return true
                     end
-                    return false
+
+                    -- ชื่อร่าง/Replica/UI อาจยังโหลดไม่ครบ หรือ Remote ปฏิเสธชั่วคราว
+                    -- ให้ Bulma ได้สิทธิ์ก่อน 3 รอบ แต่ห้ามค้างจนดาเมจทั้งสนามไม่ถูกอัปเลย
+                    bulmaUpgradeBlockedCycles += 1
+                    if bulmaUpgradeBlockedCycles <= 3 then return false end
+                    if not warnedBulmaFallback then
+                        warnedBulmaFallback = true
+                        warn("[AO Mansion Upgrade] Bulma ยังอัป 4/6 ไม่สำเร็จ — เปิดทางให้อัปดาเมจพร้อมกัน")
+                    end
+                else
+                    bulmaUpgradeBlockedCycles = 0
                 end
 
                 local priorityUpgraded, priorityPending = upgradePriorityDamageStep()
-                if priorityPending then return priorityUpgraded end
-                return upgradeDamagePass(3) > 0
+                if priorityUpgraded then
+                    priorityUpgradeBlockedCycles = 0
+                    return true
+                end
+                if priorityPending then
+                    priorityUpgradeBlockedCycles += 1
+                    if priorityUpgradeBlockedCycles <= 3 then return false end
+                    if not warnedPriorityFallback then
+                        warnedPriorityFallback = true
+                        warn("[AO Mansion Upgrade] ตัวแบกยังอัปไม่ได้ — อัปดาเมจตัวอื่นระหว่างรอ")
+                    end
+                else
+                    priorityUpgradeBlockedCycles = 0
+                end
+                return upgradeDamagePass(8) > 0
             end
 
             -- อัปหลายขั้นติดกันก่อนกลับไปหาจุดวางใหม่ เพราะการลองจุดวางหนึ่งครั้ง
