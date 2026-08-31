@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.39"
+local SCRIPT_VERSION = "v11.40"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13503,6 +13503,151 @@ EL("พร้อม — auto-เคลมล็อบบี้ ON | เทส: _
 
 end)
 if not okEvt then warn("[EVT FATAL] "..tostring(evtErr)) end
+
+-- ===================== [ae_event_mode] =====================
+-- ============================================================
+-- 🌊 AE EVENT MODE — เล่นด่านอีเว้น (Tidal Siege / Summer Event) เก็บรางวัล วนไปเรื่อยๆ
+--   นำทาง (จาก recon): Events → <EventName> → Event Gamemode → Event Mode → Select Stage → Start
+--     (fallback: Enter Matchmaking) — เป็น Infinite/wave survival → เล่นจนแพ้ แล้วเข้าใหม่
+--   วางตัวใช้ _G.AE_VILLAIN_PLACE (Hard Mode เหมือน Challenge/Raid) | ออกใช้ _G.AE_BACK_TO_LOBBY
+--   ใช้: _G.AE_EVENT_RUN() | _G.AE_EVENT_STOP() | ตั้งชื่ออีเว้น _G.AE_EVENT_NAME="Summer Event"
+-- ============================================================
+local okEvtM = pcall(function()
+local Players=game:GetService("Players"); local SG=game:GetService("StarterGui")
+local GuiService=game:GetService("GuiService"); local VIM=game:GetService("VirtualInputManager")
+local player=Players.LocalPlayer
+local MYGEN=_G.AE_SCRIPT_GEN
+local function L(s) s=tostring(s); print("[EVENT] "..s) end
+local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
+
+local function fireConns(b)
+    local n=0
+    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
+    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
+    return n
+end
+local function vimClick(b) pcall(function()
+    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
+local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+local function findBtn(needle, exact)
+    needle=tostring(needle); local found
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,b in ipairs(g:GetDescendants()) do
+                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then
+                    local ts={}
+                    if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
+                    for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
+                    for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then found=b; break end end
+                end
+                if found then break end
+            end
+        end
+        if found then break end
+    end
+    return found
+end
+local function clickText(needle, exact, timeout)
+    local t0=tick()
+    repeat local b=findBtn(needle,exact); if b then clickBtn(b); L("  ✅ กด '"..needle.."'"); return true end; task.wait(0.4)
+    until tick()-t0>(timeout or 5)
+    L("  ❌ ไม่เจอ '"..needle.."'"); return false
+end
+-- กดเงียบๆ (ไม่ log) — ใช้เช็ค Start Game/Start ในลูปเล่น
+local function quietClick(needle) local b=findBtn(needle,false); if b then clickBtn(b); return true end return false end
+local function inGame()
+    if _G.AE_IN_GAME then local ok,r=pcall(_G.AE_IN_GAME); if ok and r then return true end end
+    local has=false; pcall(function() if player.PlayerGui.GameUI.HUD.Upper.WaveInformations then has=true end end); return has
+end
+local function matchResult()
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and l.Visible then
+                    local t=tostring(l.Text)
+                    if t=="Victory" then return "win" end
+                    if t=="Defeat" then return "lose" end
+                end
+            end
+        end
+    end
+end
+local function curWave()
+    local ww=0; pcall(function() ww=tonumber(tostring(player.PlayerGui.GameUI.HUD.Upper.WaveInformations.Container.Wave.Text):match("%d+")) or 0 end)
+    return ww
+end
+
+-- นำทางเข้า Event Mode (คืน true ถ้ากดครบเส้นทาง)
+local function enterEventMode()
+    local evName = _G.AE_EVENT_NAME or "Summer Event"
+    L("🌊 เข้า Event Mode ("..evName..")")
+    clickText("Events", false, 5); task.wait(1.2)
+    clickText(evName, false, 5); task.wait(1.2)            -- เลือกอีเว้น (Summer Event = Tidal Siege)
+    if not clickText("Event Gamemode", false, 6) then L("  ⚠️ ไม่เจอ Event Gamemode"); return false end
+    task.wait(1.5)
+    if not clickText("Event Mode", false, 6) then L("  ⚠️ ไม่เจอ Event Mode"); return false end   -- Mode Selection
+    task.wait(1.5)
+    -- หน้าด่าน Coral Kingdom → Select Stage (solo) → เดี๋ยวลูปหลักจะกด Start/Start Game/Enter Matchmaking ต่อ
+    if not clickText("Select Stage", false, 4) then clickText("Enter Matchmaking", false, 4) end
+    task.wait(1.2)
+    return true
+end
+
+local running=false
+_G.AE_EVENT_STOP=function() running=false; if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end; L("⏹ หยุด Event Mode") end
+_G.AE_EVENT_RUN=function()
+    if running then L("กำลังทำงานอยู่"); return true end
+    running=true
+    task.spawn(function()
+        L("🌊🌊 เริ่มโหมด Event Mode")
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        while running and MYGEN==_G.AE_SCRIPT_GEN do
+            -- 1) เข้าด่าน (ถ้ายังไม่อยู่ในด่าน)
+            if not inGame() then
+                if not enterEventMode() then L("  ⚠️ นำทางไม่ครบ → รอ 5 วิ ลองใหม่"); task.wait(5) end
+            end
+            -- 2) รอเข้าด่าน — ระหว่างรอ กด Start / Start Game / (fallback) Enter Matchmaking
+            local t0=tick(); local triedMM=false
+            while running and not inGame() and tick()-t0<50 do
+                quietClick("Start Game")          -- โหวตเริ่มเวฟ
+                quietClick("Start")               -- ปุ่ม Start (Private Party)
+                if tick()-t0>22 and not triedMM then triedMM=true; L("  🔁 ยังไม่เข้า → ลอง Enter Matchmaking"); quietClick("Enter Matchmaking") end
+                L(("  ⏳ รอเข้าด่าน %ds"):format(math.floor(tick()-t0))); task.wait(3)
+            end
+            if not inGame() then L("  ⚠️ ยังไม่เข้าด่าน → กลับล็อบบี้ ลองใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; task.wait(3)
+            else
+                -- 3) อยู่ในด่าน → วางตัว + เฝ้าจนแพ้/ออก (Infinite → เล่นจนแพ้ แล้วเข้าใหม่ = เก็บรางวัลลึกสุด)
+                L("  ✅ อยู่ในด่าน → วางตัว (Villain place)")
+                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("  ❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
+                task.wait(3)
+                local tick2=0
+                while running and MYGEN==_G.AE_SCRIPT_GEN do
+                    quietClick("Start Game")       -- เผื่อเวฟยังไม่เริ่ม (กันค้าง)
+                    local r=matchResult()
+                    if r=="lose" then L("  💀 แพ้ → ออก (เก็บรางวัลแล้ว)"); notify("🌊 Event","💀 แพ้ → เข้าใหม่",5); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+                    if r=="win" then L("  🏆 ชนะ → ออก"); notify("🌊 Event","✅ ชนะ",5); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+                    if not inGame() and tick()-t0>30 then L("  ⚠️ ออกจากด่านแล้ว → จบรอบ"); break end
+                    tick2=tick2+1
+                    if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
+                    L(("  เล่นอยู่... wave %d"):format(curWave()))
+                    task.wait(3)
+                end
+                if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+                -- 4) กลับล็อบบี้ → เคลมรางวัลอีเว้น (โมดูล ae_event_quest) → วนเข้าใหม่
+                task.wait(2)
+                if _G.AE_EVENT_CLAIM_ALL then pcall(_G.AE_EVENT_CLAIM_ALL) end
+                task.wait(1)
+            end
+        end
+        running=false
+    end)
+    return true
+end
+L("พร้อม — _G.AE_EVENT_RUN() | อีเว้น: "..tostring(_G.AE_EVENT_NAME or "Summer Event"))
+end)
+if not okEvtM then warn("[EVENT FATAL] โมดูล Event Mode โหลดพลาด") end
 
 -- ===================== [ae_guess_unit] =====================
 -- ============================================================
