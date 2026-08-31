@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.40"
+local SCRIPT_VERSION = "v11.41"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13520,34 +13520,44 @@ local MYGEN=_G.AE_SCRIPT_GEN
 local function L(s) s=tostring(s); print("[EVENT] "..s) end
 local function notify(t,x,d) pcall(function() SG:SetCore("SendNotification",{Title=t,Text=x,Duration=d or 5}) end) end
 
-local function fireConns(b)
-    local n=0
-    pcall(function() for _,c in ipairs(getconnections(b.MouseButton1Click)) do c:Fire(); n=n+1 end end)
-    if n==0 then pcall(function() for _,c in ipairs(getconnections(b.Activated)) do c:Fire(); n=n+1 end end) end
-    return n
+-- ⭐ v11.41: event menu ต้อง "เลื่อนเมาส์จริง (hover) + คลิก" (VIM) ไม่งั้น content ไม่โหลด (ขึ้นดำ) — เหมือน Villain
+local function reallyVisible(o)
+    local n=o
+    while n and n:IsA("GuiObject") do if not n.Visible then return false end; n=n.Parent end
+    if n and n:IsA("ScreenGui") and not n.Enabled then return false end
+    local cam=workspace.CurrentCamera
+    if cam then local p,s,vp=o.AbsolutePosition,o.AbsoluteSize,cam.ViewportSize
+        if s.X<5 or s.Y<5 then return false end
+        if p.X+s.X<0 or p.Y+s.Y<0 or p.X>vp.X or p.Y>vp.Y then return false end
+    end
+    return true
 end
 local function vimClick(b) pcall(function()
-    local inset=GuiService:GetGuiInset(); local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2; local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
-    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.06); VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
-local function clickBtn(b) if fireConns(b)==0 then vimClick(b) end end
-local function vis(b) return b.Visible and b.AbsoluteSize.X>3 and b.AbsoluteSize.Y>3 end
+    local inset=GuiService:GetGuiInset()
+    local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2
+    local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
+    VIM:SendMouseMoveEvent(cx,cy,game); task.wait(0.7)             -- hover ก่อน = โหลด content อีเว้น
+    VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.12)
+    VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end) end
+local function clickBtn(b) vimClick(b) end   -- ใช้เมาส์จริงเสมอ (event content ต้องการ hover)
+-- หา element (ปุ่ม/label) ที่ตรง needle — คืน "อันเล็กสุด" (การ์ด/ข้อความจริง ไม่ใช่ container ใหญ่ที่กดพลาด)
 local function findBtn(needle, exact)
-    needle=tostring(needle); local found
+    local want=tostring(needle):lower(); local best,bestArea
     for _,g in ipairs(player.PlayerGui:GetChildren()) do
         if g:IsA("ScreenGui") and g.Enabled then
-            for _,b in ipairs(g:GetDescendants()) do
-                if (b:IsA("TextButton") or b:IsA("ImageButton")) and vis(b) then
-                    local ts={}
-                    if b:IsA("TextButton") and b.Text~="" then ts[#ts+1]=b.Text end
-                    for _,l in ipairs(b:GetDescendants()) do if l:IsA("TextLabel") and l.Visible and l.Text~="" then ts[#ts+1]=l.Text end end
-                    for _,t in ipairs(ts) do if (exact and t==needle) or (not exact and t:find(needle,1,true)) then found=b; break end end
+            for _,el in ipairs(g:GetDescendants()) do
+                if (el:IsA("TextButton") or el:IsA("ImageButton") or el:IsA("TextLabel")) and reallyVisible(el) then
+                    local t=tostring(el.Text or ""):gsub("<[^>]->",""):lower()
+                    local hit = exact and (t==want) or (not exact and t~="" and t:find(want,1,true))
+                    if hit then
+                        local a=el.AbsoluteSize.X*el.AbsoluteSize.Y
+                        if not bestArea or a<bestArea then best,bestArea=el,a end
+                    end
                 end
-                if found then break end
             end
         end
-        if found then break end
     end
-    return found
+    return best
 end
 local function clickText(needle, exact, timeout)
     local t0=tick()
@@ -13583,11 +13593,12 @@ end
 local function enterEventMode()
     local evName = _G.AE_EVENT_NAME or "Summer Event"
     L("🌊 เข้า Event Mode ("..evName..")")
-    clickText("Events", false, 5); task.wait(1.2)
-    clickText(evName, false, 5); task.wait(1.2)            -- เลือกอีเว้น (Summer Event = Tidal Siege)
-    if not clickText("Event Gamemode", false, 6) then L("  ⚠️ ไม่เจอ Event Gamemode"); return false end
-    task.wait(1.5)
-    if not clickText("Event Mode", false, 6) then L("  ⚠️ ไม่เจอ Event Mode"); return false end   -- Mode Selection
+    clickText("Events", false, 6); task.wait(1.5)
+    clickText(evName, false, 6); task.wait(1.5)            -- เลือกอีเว้น (Summer Event = Tidal Siege)
+    -- ⭐ รอ content โหลด (ปุ่ม Event Gamemode โผล่หลัง content โหลด — เกม require ช้า ~15 วิ)
+    if not clickText("Event Gamemode", false, 15) then L("  ⚠️ content ไม่โหลด (ไม่เจอ Event Gamemode)"); return false end
+    task.wait(2)
+    if not clickText("Event Mode", false, 8) then L("  ⚠️ ไม่เจอ Event Mode"); return false end   -- Mode Selection
     task.wait(1.5)
     -- หน้าด่าน Coral Kingdom → Select Stage (solo) → เดี๋ยวลูปหลักจะกด Start/Start Game/Enter Matchmaking ต่อ
     if not clickText("Select Stage", false, 4) then clickText("Enter Matchmaking", false, 4) end
