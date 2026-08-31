@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.53"
+local SCRIPT_VERSION = "v11.54"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13725,60 +13725,32 @@ pcall(function() if readfile then local s=readfile("ae_fish_spot.txt"); if s and
 local PONDCF; pcall(function() local p={}; for n in FISH_SPOT:gmatch("[-0-9.eE+]+") do p[#p+1]=tonumber(n) end
     if #p>=12 then PONDCF=CFrame.new(p[1],p[2],p[3],p[4],p[5],p[6],p[7],p[8],p[9],p[10],p[11],p[12]) elseif #p>=3 then PONDCF=CFrame.new(p[1],p[2],p[3]) end end)
 local function teleportPond() local ch=player.Character; local hrp=ch and ch:FindFirstChild("HumanoidRootPart"); if hrp and PONDCF then pcall(function() hrp.CFrame=PONDCF end) end end
--- ⭐ v11.53: ตกปลาต้อง "รอปลากินเบ็ด" ก่อน (flow จริงจาก ae_fish_seq)
---   CAST_REEL → state "Waiting" → (~11-12วิ) → "Reeling" (ปลากิน) → RESULT true → "Success" + รางวัล
---   บั๊กเดิม: รอ 1.4วิตายตัวแล้วยิง result ตอนยัง "Waiting" → พลาดหมด ไม่ได้ของ
+-- ⭐ v11.54: กลับไปสูตรเก่าที่เวิร์ค (ae_fish_remote) — ยิง RESULT true ตอน "Waiting" (ก่อนมินิเกมเริ่ม)
+--   = auto-win ข้ามมินิเกม ได้ปลาเลย | (v11.53 พลาด: ไปรอ "Reeling" = มินิเกมเริ่มแล้ว ต้องเล่นจริง)
+--   rod 3, power 1.0, cast (2545,2415,2565) — ค่าที่พิสูจน์แล้วว่า auto-win ได้
 local fishOn=false
-local fishStage="Idle"
-local stageConn
-local function watchStage()
-    if stageConn or not updateNode then return end
-    pcall(function()
-        stageConn=updateNode.OnClientEvent:Connect(function(...)
-            local a=table.pack(...)
-            -- ("FISHING_VISUAL_STAGE_CHANGED", 1, <player>, "<Stage>", ...)
-            if a[1]=="FISHING_VISUAL_STAGE_CHANGED" and a[3]==player and type(a[4])=="string" then
-                fishStage=a[4]
-            end
-        end)
-    end)
-end
 local function startFishing()
     if fishOn then return end
     fishOn=true
-    watchStage()
     task.spawn(function()
         if not updateNode then L("  🎣 ❌ ไม่เจอ _updateNode → ตกปลาไม่ได้"); fishOn=false; return end
-        L("  🎣 เริ่มตกปลา (รอปลากินเบ็ด 'Reeling' ก่อนดึง)")
-        fireNode("FISH_EQUIP_RequestNODE", _G.AE_FISH_ROD or 1); task.wait(0.6)   -- rod 1 = NormalRod (ที่ใช้จริง)
-        local caught,miss=0,0
+        L("  🎣 เริ่มตกปลา (cast → result true ระหว่าง Waiting = auto-win)")
+        fireNode("FISH_EQUIP_RequestNODE", _G.AE_FISH_ROD or 3); task.wait(0.8)
+        local caught=0
         while fishOn and running and MYGEN==_G.AE_SCRIPT_GEN do
             if not inGame() then break end
             teleportPond(); task.wait(0.2)
-            fishStage="Casting"
-            fireNode("FISH_CAST_REEL", _G.AE_FISH_CASTPOS or Vector3.new(2551,2415,2566), _G.AE_FISH_POWER or 0.14)
-            -- รอจนปลากินเบ็ด (state "Reeling") — จริง ~11-12วิ | timeout 25วิ
-            local waited=0
-            while fishOn and inGame() and fishStage~="Reeling" and waited<25 do
-                task.wait(0.3); waited=waited+0.3
-                if fishStage=="Idle" and waited>3 then break end    -- ยังไม่ cast/หลุด → cast ใหม่
-            end
-            if fishStage=="Reeling" then
-                fireNode("FISHING_RESULT", true)                    -- ปลากินแล้ว → ดึงสำเร็จ (auto win)
-                caught=caught+1
-                if caught%3==0 then L(("  🎣 ตกได้ %d ตัว"):format(caught)) end
-                local w2=0; while fishOn and fishStage=="Reeling" and w2<5 do task.wait(0.3); w2=w2+0.3 end   -- รอผลจบ
-                if caught%3==0 and _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end   -- ตัวที่ตกได้เข้า hotbar → วางเพิ่ม (เงียบ)
-            else
-                miss=miss+1
-                if miss%3==0 then L(("  🎣 ยังไม่กินเบ็ด (%dครั้ง) — cast ใหม่"):format(miss)) end
-            end
-            task.wait(0.5)
+            fireNode("FISH_CAST_REEL", _G.AE_FISH_CASTPOS or Vector3.new(2545,2415,2565), _G.AE_FISH_POWER or 1.0)
+            task.wait(1.6)                          -- ยิง result ตอนยัง "Waiting" (ก่อนมินิเกม) = auto-win
+            fireNode("FISHING_RESULT", true)
+            caught=caught+1
+            if caught%3==0 then L(("  🎣 ตกได้ %d ตัว"):format(caught)); if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end end
+            task.wait(1.8)                          -- รับรางวัล + กันยิงถี่
         end
         L("  🎣 หยุดตกปลา (ตกได้ "..caught..")")
     end)
 end
-local function stopFishing() fishOn=false; if stageConn then pcall(function() stageConn:Disconnect() end); stageConn=nil end end
+local function stopFishing() fishOn=false end
 
 _G.AE_EVENT_STOP=function() running=false; stopFishing(); if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
     _G.AE_PLACE_Y=nil; _G.AE_PLACE_NEAR_MOBS=nil; _G.AE_PLACE_FRAC_MIN=nil; _G.AE_PLACE_FRAC_MAX=nil  -- ⭐ v11.51: กันรั่วไปโหมดอื่น
