@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.55"
+local SCRIPT_VERSION = "v11.56"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13741,27 +13741,27 @@ local function startFishing()
         L("  🎣 เริ่มตกปลา (cast → result true ระหว่าง Waiting = auto-win)")
         fireNode("FISH_EQUIP_RequestNODE", _G.AE_FISH_ROD or 3); task.wait(0.8)
         local caught=0
-        local EVERY=tonumber(_G.AE_FISH_PLACE_EVERY) or 6   -- ตกกี่ตัวแล้ววาง+ทิ้งรอบนึง
+        -- ⭐ v11.56: ตัวที่ตกได้ = "ทิ้งทุกตัว" (ตัวละครซ้ำ maxed วางไม่ได้ → เต็ม 6 ช่อง → ตกต่อไม่ได้)
+        --   ไม่วางตัวที่ตกได้แล้ว (ทีมจริงวางตั้งแต่ต้นด่านแล้ว) — เคลียร์ช่องกันเต็ม
+        local EVERY=tonumber(_G.AE_FISH_TRASH_EVERY) or 2   -- ตกกี่ตัวแล้วเคลียร์ช่อง
         while fishOn and running and MYGEN==_G.AE_SCRIPT_GEN do
-            if not inGame() then break end
+            -- ⭐ v11.56: เช็ค "อยู่ในด่าน" จาก Enemies (inGame() GUI คืน false ในอีเว้น → เดิม break ทันทีไม่ตกเลย)
+            local en=workspace:FindFirstChild("Enemies")
+            local inStage = (en and #en:GetChildren()>0) or inGame()
+            if not inStage then task.wait(1.5)
+            else
             teleportPond(); task.wait(0.15)
             fireNode("FISH_CAST_REEL", _G.AE_FISH_CASTPOS or Vector3.new(2545,2415,2565), _G.AE_FISH_POWER or 1.0)
             task.wait(1.5)                          -- ยิง result ตอนยัง "Waiting" (ก่อนมินิเกม) = auto-win
             fireNode("FISHING_RESULT", true)
             caught=caught+1
             task.wait(1.2)                          -- รับรางวัล + กันยิงถี่
-            -- ⭐ ทุก N ตัว → วางตัวละครที่ตกได้ลงสนาม แล้วทิ้งของที่เหลือ (ตัวละคร=วาง, ของ=ทิ้ง)
-            if caught % EVERY == 0 then
-                L(("  🎣 ตกได้ %d ตัว → วางตัว + ทิ้งของ"):format(caught))
-                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end
-                task.wait(1.5)
-                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end   -- วางซ้ำให้ครบ
-                task.wait(1)
-                if _G.AE_FISH_TRASH ~= false then
-                    for slot=1,6 do trashSlot(slot); task.wait(0.15) end     -- ตัววางไปแล้ว → เหลือแต่ของ → ทิ้ง
-                    task.wait(0.5)
-                end
+            -- ⭐ ทิ้งทุกตัวที่ตกได้ (ตัวละคร+ของ) ทุก N ตัว → กันช่องเต็ม ตกต่อได้เรื่อยๆ
+            if _G.AE_FISH_TRASH ~= false and caught % EVERY == 0 then
+                for slot=1,6 do trashSlot(slot); task.wait(0.12) end
+                if caught % 6 == 0 then L(("  🎣 ตกได้ %d ตัว (ทิ้งของที่ตก)"):format(caught)) end
             end
+            end   -- ปิด else (inStage)
         end
         L("  🎣 หยุดตกปลา (ตกได้ "..caught..")")
     end)
