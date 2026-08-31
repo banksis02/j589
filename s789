@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.47"
+local SCRIPT_VERSION = "v11.48"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7048,16 +7048,20 @@ local inset   = game:GetService("GuiService"):GetGuiInset()
 
 -- ---------- replica (วางตัวผ่าน GamePlayerData) ----------
 local registry
-pcall(function()
-    local RC = require(RS.Shared.ReplicaClient)
-    for _, up in pairs(debug.getupvalues(RC.FromId)) do
-        if type(up) == "table" then
-            for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
-            if registry then break end
+-- ⭐ v11.48: แยกเป็นฟังก์ชัน + re-capture เมื่อหาไม่เจอ (registry ค้างหลังเปลี่ยนด่าน เช่นแมพอีเว้น)
+local function captureRegistry()
+    pcall(function()
+        local RC = require(RS.Shared.ReplicaClient)
+        for _, up in pairs(debug.getupvalues(RC.FromId)) do
+            if type(up) == "table" then
+                for kk in pairs(up) do if type(kk) == "number" then registry = up; break end end
+                if registry then break end
+            end
         end
-    end
-end)
-local function getReplica(token)
+    end)
+end
+captureRegistry()
+local function findReplica(token)
     if not registry then return nil end
     local cand
     for _, rep in pairs(registry) do
@@ -7068,6 +7072,11 @@ local function getReplica(token)
         end
     end
     return cand
+end
+local function getReplica(token)
+    local r = findReplica(token)
+    if not r then captureRegistry(); r = findReplica(token) end   -- ⭐ re-capture on miss
+    return r
 end
 
 -- ---------- คลิกปุ่มแบบทน (connection + VIM คลิกพิกัดจริง) ----------
@@ -7548,29 +7557,35 @@ end
 
 -- อ่านช่องตัวละครในด่าน (hotbar ที่วางได้) — เรียงตัวเงินก่อน
 local function gameHotbarSlots()
-    if not registry then return {} end
-    local best
-    for _, rep in pairs(registry) do
-        local ok, t = pcall(function() return rep.Token end)
-        if ok and t == "HotbarData" then
-            local okd, d = pcall(function() return rep.Data end)
-            if okd and type(d) == "table" and type(d.Slots) == "table" then
-                if d.PlacementAllowed == true then best = d; break end
-                if not best or (tonumber(d.MaxSlots) or 0) > (tonumber(best.MaxSlots) or 0) then best = d end
+    -- ⭐ v11.48: re-capture registry เมื่อหาช่องไม่เจอ (registry ค้างในแมพอีเว้น — HotbarData id ใหม่)
+    local function scan()
+        if not registry then return {} end
+        local best
+        for _, rep in pairs(registry) do
+            local ok, t = pcall(function() return rep.Token end)
+            if ok and t == "HotbarData" then
+                local okd, d = pcall(function() return rep.Data end)
+                if okd and type(d) == "table" and type(d.Slots) == "table" then
+                    if d.PlacementAllowed == true then best = d; break end
+                    if not best or (tonumber(d.MaxSlots) or 0) > (tonumber(best.MaxSlots) or 0) then best = d end
+                end
             end
         end
-    end
-    local out = {}
-    if best then
-        for k, v in pairs(best.Slots) do
-            local n = tonumber(k)
-            if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
-                local asset = slotAsset(v.ID)
-                out[#out+1] = { slot = n, cost = tonumber(v.PlacementCost) or 0,
-                                asset = asset, money = isMoneyUnit(asset) }
+        local out = {}
+        if best then
+            for k, v in pairs(best.Slots) do
+                local n = tonumber(k)
+                if n and type(v) == "table" and tostring(v.AssetType) == "Unit" then
+                    local asset = slotAsset(v.ID)
+                    out[#out+1] = { slot = n, cost = tonumber(v.PlacementCost) or 0,
+                                    asset = asset, money = isMoneyUnit(asset) }
+                end
             end
         end
+        return out
     end
+    local out = scan()
+    if #out == 0 then captureRegistry(); out = scan() end
     -- ⭐ ตัวเงินก่อน (money=true มาก่อน) แล้วค่อยเรียงตาม slot
     table.sort(out, function(a, b)
         if a.money ~= b.money then return a.money end
