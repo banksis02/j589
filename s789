@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.50"
+local SCRIPT_VERSION = "v11.51"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7629,9 +7629,12 @@ local function placeAt(path, slot, d)
         idxs = { bi }
     end
     table.sort(idxs, function(a, b) return math.abs((path.cum[a] or 0)-d) < math.abs((path.cum[b] or 0)-d) end)
-    -- perp = ข้างถนน (tile อยู่ที่ 4-6 เป็นหลัก, ไกลสุด ~14) | along = ขยับตามถนนนิดหน่อย
-    local PERP  = { 5,-5, 4,-4, 6,-6, 7,-7, 3,-3, 8,-8, 9,-9, 10,-10, 11,-11, 12,-12, 13,-13, 14,-14 }
+    -- perp = ข้างถนน (tile อยู่ที่ 4-6 เป็นหลัก, ไกลสุด ~16) | along = ขยับตามถนนนิดหน่อย
+    local PERP  = { 5,-5, 4,-4, 6,-6, 7,-7, 3,-3, 8,-8, 9,-9, 10,-10, 11,-11, 12,-12, 13,-13, 14,-14, 15,-15, 16,-16 }
     local ALONG = { 0, 2,-2, 4,-4 }
+    -- ⭐ v11.51: Y สำคัญมาก! อีเว้นวางที่ผิวน้ำ Y=2424.5 (path waypoint Y=2425.5 → reject หมด)
+    --   พิสูจน์แล้ว (ae_place_live: 6/6 ติดใน 9 ครั้งที่ Y=2424.5) — villain default ใช้ wp.Y เหมือนเดิม
+    local forceY = tonumber(_G.AE_PLACE_Y)
     local tries, MAXTRIES = 0, 130
     for _, i in ipairs(idxs) do
         local wp  = path.pts[i]
@@ -7640,14 +7643,15 @@ local function placeAt(path, slot, d)
         local dir = (nxt - prv); if dir.Magnitude > 0 then dir = dir.Unit else dir = Vector3.new(0,0,1) end
         local perp = Vector3.new(-dir.Z, 0, dir.X)
         local along= Vector3.new(dir.X, 0, dir.Z)
+        local py = forceY or wp.Y
         for _, ao in ipairs(ALONG) do
             for _, po in ipairs(PERP) do
                 tries = tries + 1
                 if tries > MAXTRIES then return false end
                 local p = wp + perp*po + along*ao
                 if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.05) end
-                pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, wp.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-                task.wait(0.22)
+                pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, py, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
+                task.wait(0.2)
                 if myUnitCount() > before then return true end
             end
         end
@@ -13746,7 +13750,9 @@ local function startFishing()
 end
 local function stopFishing() fishOn=false end
 
-_G.AE_EVENT_STOP=function() running=false; stopFishing(); if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end; L("⏹ หยุด Event Mode") end
+_G.AE_EVENT_STOP=function() running=false; stopFishing(); if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+    _G.AE_PLACE_Y=nil; _G.AE_PLACE_NEAR_MOBS=nil; _G.AE_PLACE_FRAC_MIN=nil; _G.AE_PLACE_FRAC_MAX=nil  -- ⭐ v11.51: กันรั่วไปโหมดอื่น
+    L("⏹ หยุด Event Mode") end
 _G.AE_EVENT_RUN=function()
     if running then L("กำลังทำงานอยู่"); return true end
     running=true
@@ -13773,6 +13779,7 @@ _G.AE_EVENT_RUN=function()
                 -- ⭐ v11.43: วางตัวให้หมดก่อน (ใช้พาธอีเว้น 2 เลน + offset ข้างถนน) แล้วค่อยไปตกปลา
                 _G.AE_PLACE_FRAC_MIN=_G.AE_PLACE_FRAC_MIN or 0.40; _G.AE_PLACE_FRAC_MAX=_G.AE_PLACE_FRAC_MAX or 0.50
                 _G.AE_PLACE_NEAR_MOBS=true   -- ⭐ v11.46: วางตรงระยะที่มอนเดิน (tile อยู่ข้างกองมอน)
+                _G.AE_PLACE_Y=2424.5         -- ⭐ v11.51: อีเว้นวางที่ผิวน้ำ Y=2424.5 (พิสูจน์ ae_place_live 6/6) — path Y=2425.5 reject หมด
                 if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("  ❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
                 task.wait(8)          -- รอวางตัวรอบแรกให้ลง
                 -- ⭐ วางเสร็จแล้ว → เริ่มตกปลา auto (teleport บ่อ → cast → result → วางตัวที่ตกได้)
