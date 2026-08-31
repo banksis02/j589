@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.51"
+local SCRIPT_VERSION = "v11.52"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13777,8 +13777,8 @@ _G.AE_EVENT_RUN=function()
                 -- 3) อยู่ในด่าน → วางตัว + เฝ้าจนแพ้/ออก (Infinite → เล่นจนแพ้ แล้วเข้าใหม่ = เก็บรางวัลลึกสุด)
                 L("  ✅ อยู่ในด่าน → วางตัว (Villain place ข้างถนน 40-50%) ให้หมดก่อน")
                 -- ⭐ v11.43: วางตัวให้หมดก่อน (ใช้พาธอีเว้น 2 เลน + offset ข้างถนน) แล้วค่อยไปตกปลา
-                _G.AE_PLACE_FRAC_MIN=_G.AE_PLACE_FRAC_MIN or 0.40; _G.AE_PLACE_FRAC_MAX=_G.AE_PLACE_FRAC_MAX or 0.50
-                _G.AE_PLACE_NEAR_MOBS=true   -- ⭐ v11.46: วางตรงระยะที่มอนเดิน (tile อยู่ข้างกองมอน)
+                _G.AE_PLACE_FRAC_MIN=0.40; _G.AE_PLACE_FRAC_MAX=0.50   -- ⭐ วางกลางเลน 40-50% (มอนเดินผ่าน เคลียร์ได้)
+                _G.AE_PLACE_NEAR_MOBS=false  -- ⭐ v11.52: ห้ามเล็งกองมอน (ต้นเวฟมอนอยู่จุดเกิด → วางหน้าบ้าน เคลียร์ไม่ได้) ใช้ 40-50% คงที่
                 _G.AE_PLACE_Y=2424.5         -- ⭐ v11.51: อีเว้นวางที่ผิวน้ำ Y=2424.5 (พิสูจน์ ae_place_live 6/6) — path Y=2425.5 reject หมด
                 if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("  ❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
                 task.wait(8)          -- รอวางตัวรอบแรกให้ลง
