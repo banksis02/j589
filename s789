@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.56"
+local SCRIPT_VERSION = "v11.57"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13812,10 +13812,15 @@ _G.AE_EVENT_RUN=function()
                         notify("🌊 Event", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
                         stopFishing(); task.wait(2)
                         local replayed=false
-                        for _,txt in ipairs({"Replay","Play Again","Restart","Try Again","Retry"}) do
-                            if clickText(txt, false, 2) then replayed=true; L("  🔁 กด '"..txt.."' → เล่นด่านเดิมต่อ"); break end
+                        -- ⭐ v11.57: ปุ่มเล่นซ้ำในอีเว้น = "Repeat Stage" (เปิดผ่าน "Game Results") ไม่ใช่ Replay
+                        for attempt=1,3 do
+                            for _,txt in ipairs({"Repeat Stage","Play Again","Replay","Restart","Try Again","Retry"}) do
+                                if clickText(txt, false, 2) then replayed=true; L("  🔁 กด '"..txt.."' → เล่นด่านเดิมต่อ"); break end
+                            end
+                            if replayed then break end
+                            quietClick("Game Results"); task.wait(1.5)   -- ยังไม่เจอ → เปิดหน้าผลด่านก่อน
                         end
-                        if not replayed then L("  ↩️ ไม่เจอปุ่ม Replay → กลับล็อบบี้เข้าใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end end
+                        if not replayed then L("  ↩️ ไม่เจอปุ่ม Repeat Stage → กลับล็อบบี้เข้าใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end end
                         task.wait(3)   -- ถ้า replayed = อยู่ในด่านใหม่ → ลูปนอกเช็ค inGame → วางตัวใหม่
                         break
                     end
