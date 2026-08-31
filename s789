@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.49"
+local SCRIPT_VERSION = "v11.50"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7594,27 +7594,62 @@ local function gameHotbarSlots()
     return out
 end
 
+-- นับ unit ที่วางได้ (workspace.Units + GameUnit replica เผื่ออีเว้นเก็บคนละที่)
+local function myUnitCount()
+    local u = workspace:FindFirstChild("Units")
+    local c = u and #u:GetChildren() or 0
+    if registry then
+        for _, rep in pairs(registry) do
+            local ok, tok = pcall(function() return rep.Token end)
+            if ok and tok == "GameUnit" then c = c + 1 end
+        end
+    end
+    return c
+end
+
 -- วางตัว 1 ช่องที่จุด d (ลองเยื้องข้างจนติด)
+-- ⭐ v11.50: ไล่ waypoint จริงรอบจุด d (พาธโค้ง — คำนวณ offset จาก base จุดเดียวเพี้ยน)
+--   ข้อมูลจริง (ae_place_geom): tile ที่วางได้อยู่ perp 4-13 (ส่วนใหญ่ 4-6), along -5..+5 จาก waypoint
+--   → กวาด perp เล็กทั้งสองข้าง + along นิดหน่อย ที่ waypoint ใกล้ d ก่อน จนเกมรับ (unit เพิ่ม)
 local function placeAt(path, slot, d)
     local rep = getReplica("GamePlayerData")
     if not rep then return false end
     local hb = getReplica("HotbarData")
-    -- ⭐ v11.49: grid 2 มิติรอบจุด d (ข้างถนน × ตามถนน) — tile ข้างถนนเยื้องได้ทั้ง 2 แกน
-    --   ลองจากใกล้จุดมอนออกไป จนวางติด (เกมเช็คให้เอง) — ครอบคลุมพื้นข้างถนน ~±28 studs
-    local base = posAt(path, d)
-    local dir  = dirAt(path, d)
-    local perp = Vector3.new(-dir.Z, 0, dir.X)   -- ตั้งฉากถนน (ข้างถนน)
-    local along= Vector3.new(dir.X, 0, dir.Z)    -- ตามแนวถนน
-    local PERP  = { 8,-8, 12,-12, 16,-16, 20,-20, 24,-24, 28,-28, 5,-5 }
-    local ALONG = { 0, 8,-8, 16,-16, 24,-24 }
-    for _, ao in ipairs(ALONG) do
-        for _, po in ipairs(PERP) do
-            local p = base + perp*po + along*ao
-            local before = unitCount()
-            if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.06) end
-            pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-            task.wait(0.28)
-            if unitCount() > before then return true end
+    local before = myUnitCount()
+    -- เก็บ index ของ waypoint ที่อยู่ในหน้าต่าง ±70 studs รอบ d แล้วเรียง "ใกล้ d ก่อน"
+    local WINDOW = 70
+    local idxs = {}
+    for i = 1, #path.pts do
+        local c = path.cum[i] or 0
+        if math.abs(c - d) <= WINDOW then idxs[#idxs+1] = i end
+    end
+    if #idxs == 0 then
+        local bi, bd = 1, math.huge
+        for i = 1, #path.pts do local c = path.cum[i] or 0; if math.abs(c-d) < bd then bd = math.abs(c-d); bi = i end end
+        idxs = { bi }
+    end
+    table.sort(idxs, function(a, b) return math.abs((path.cum[a] or 0)-d) < math.abs((path.cum[b] or 0)-d) end)
+    -- perp = ข้างถนน (tile อยู่ที่ 4-6 เป็นหลัก, ไกลสุด ~14) | along = ขยับตามถนนนิดหน่อย
+    local PERP  = { 5,-5, 4,-4, 6,-6, 7,-7, 3,-3, 8,-8, 9,-9, 10,-10, 11,-11, 12,-12, 13,-13, 14,-14 }
+    local ALONG = { 0, 2,-2, 4,-4 }
+    local tries, MAXTRIES = 0, 130
+    for _, i in ipairs(idxs) do
+        local wp  = path.pts[i]
+        local nxt = path.pts[math.min(i+1, #path.pts)]
+        local prv = path.pts[math.max(i-1, 1)]
+        local dir = (nxt - prv); if dir.Magnitude > 0 then dir = dir.Unit else dir = Vector3.new(0,0,1) end
+        local perp = Vector3.new(-dir.Z, 0, dir.X)
+        local along= Vector3.new(dir.X, 0, dir.Z)
+        for _, ao in ipairs(ALONG) do
+            for _, po in ipairs(PERP) do
+                tries = tries + 1
+                if tries > MAXTRIES then return false end
+                local p = wp + perp*po + along*ao
+                if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.05) end
+                pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, wp.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
+                task.wait(0.22)
+                if myUnitCount() > before then return true end
+            end
         end
     end
     return false
