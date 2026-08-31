@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.41"
+local SCRIPT_VERSION = "v11.42"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13546,7 +13546,7 @@ local function findBtn(needle, exact)
     for _,g in ipairs(player.PlayerGui:GetChildren()) do
         if g:IsA("ScreenGui") and g.Enabled then
             for _,el in ipairs(g:GetDescendants()) do
-                if (el:IsA("TextButton") or el:IsA("ImageButton") or el:IsA("TextLabel")) and reallyVisible(el) then
+                if (el:IsA("TextButton") or el:IsA("TextLabel")) and reallyVisible(el) then   -- ⭐ v11.42: ImageButton ไม่มี .Text (crash) → อ่านจาก TextButton/TextLabel เท่านั้น
                     local t=tostring(el.Text or ""):gsub("<[^>]->",""):lower()
                     local hit = exact and (t==want) or (not exact and t~="" and t:find(want,1,true))
                     if hit then
