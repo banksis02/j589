@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.44"
+local SCRIPT_VERSION = "v11.45"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7559,20 +7559,45 @@ local function gameHotbarSlots()
 end
 
 -- วางตัว 1 ช่องที่จุด d (ลองเยื้องข้างจนติด)
+-- ⭐ v11.45: เช็คพิกัดเป็น "พื้น" (ไม่ใช่น้ำ) — raycast ลง โดน WaterParts = น้ำ (ไม่วาง)
+--   แมพที่ไม่มี WaterParts (villain ปกติ) → คืน true เสมอ (ไม่กรอง = พฤติกรรมเดิม)
+local function isGroundAt(pos)
+    local map = workspace:FindFirstChild("Map")
+    local water = map and map:FindFirstChild("WaterParts")
+    if not water then return true end
+    local ok, g = pcall(function()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { player.Character }
+        local res = workspace:Raycast(pos + Vector3.new(0, 25, 0), Vector3.new(0, -70, 0), params)
+        if not res then return false end                       -- ไม่โดนอะไร = อากาศ/น้ำลึก
+        if res.Instance:IsDescendantOf(water) then return false end   -- โดนน้ำ
+        return true                                            -- โดนพื้น
+    end)
+    return ok and g
+end
+
 local function placeAt(path, slot, d)
     local rep = getReplica("GamePlayerData")
     if not rep then return false end
     local hb = getReplica("HotbarData")
-    local base = posAt(path, d)
-    local dir = dirAt(path, d)
-    local perp = Vector3.new(-dir.Z, 0, dir.X)
-    for _, off in ipairs(SIDE_OFFSETS) do
-        local p = base + perp * off
-        local before = unitCount()
-        if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.1) end
-        pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-        task.wait(0.7)
-        if unitCount() > before then return true end
+    -- ⭐ v11.45: สแกนหลายจุดตามพาธ (เผื่อจุดนี้เป็นน้ำ → เลื่อนหาจุดข้างถนนที่เป็นพื้น) + เยื้องข้างถนน
+    --   วางเฉพาะพิกัดที่ raycast บอกว่าเป็นพื้น (กันวางลงน้ำในแมพอีเว้น) — คืนทันทีที่วางติด
+    for _, dOff in ipairs({ 0, 0.05, -0.05, 0.10, -0.10, 0.16, -0.16, 0.22, -0.22 }) do
+        local dd = math.clamp(d + path.total * dOff, 0, path.total)
+        local base = posAt(path, dd)
+        local dir  = dirAt(path, dd)
+        local perp = Vector3.new(-dir.Z, 0, dir.X)
+        for _, off in ipairs(SIDE_OFFSETS) do
+            local p = base + perp * off
+            if isGroundAt(p) then
+                local before = unitCount()
+                if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.08) end
+                pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
+                task.wait(0.5)
+                if unitCount() > before then return true end
+            end
+        end
     end
     return false
 end
@@ -13696,8 +13721,19 @@ _G.AE_EVENT_RUN=function()
                 while running and MYGEN==_G.AE_SCRIPT_GEN do
                     quietClick("Start Game")       -- เผื่อเวฟยังไม่เริ่ม (กันค้าง)
                     local r=matchResult()
-                    if r=="lose" then L("  💀 แพ้ → ออก (เก็บรางวัลแล้ว)"); notify("🌊 Event","💀 แพ้ → เข้าใหม่",5); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
-                    if r=="win" then L("  🏆 ชนะ → ออก"); notify("🌊 Event","✅ ชนะ",5); task.wait(2); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; break end
+                    if r=="lose" or r=="win" then
+                        -- ⭐ v11.45: จบด่าน → ลอง "Replay/Play Again" (เล่นด่านเดิมต่อ ไม่กลับล็อบบี้นำทางใหม่)
+                        L(("  %s → ลอง Replay (เล่นด่านเดิมต่อ)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
+                        notify("🌊 Event", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
+                        stopFishing(); task.wait(2)
+                        local replayed=false
+                        for _,txt in ipairs({"Replay","Play Again","Restart","Try Again","Retry"}) do
+                            if clickText(txt, false, 2) then replayed=true; L("  🔁 กด '"..txt.."' → เล่นด่านเดิมต่อ"); break end
+                        end
+                        if not replayed then L("  ↩️ ไม่เจอปุ่ม Replay → กลับล็อบบี้เข้าใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end end
+                        task.wait(3)   -- ถ้า replayed = อยู่ในด่านใหม่ → ลูปนอกเช็ค inGame → วางตัวใหม่
+                        break
+                    end
                     if not inGame() and tick()-t0>30 then L("  ⚠️ ออกจากด่านแล้ว → จบรอบ"); break end
                     tick2=tick2+1
                     if tick2%4==0 and _G.AE_VILLAIN_PLACE then L("  🔁 วางซ้ำ"); pcall(_G.AE_VILLAIN_PLACE) end
