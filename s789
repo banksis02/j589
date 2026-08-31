@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.45"
+local SCRIPT_VERSION = "v11.46"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7500,6 +7500,27 @@ local function findActiveLane(lanes)
     return nil
 end
 
+-- ⭐ v11.46: ตำแหน่งกลางกองมอน + ระยะบนเลนที่ใกล้กองมอนสุด
+--   (แมพอีเว้น tile ที่วางได้อยู่ "ข้างจุดที่มอนเดิน" → วางตรงระยะมอน ไม่ใช่ frac ตายตัว)
+local function mobCenter()
+    local en = workspace:FindFirstChild("Enemies")
+    if not en then return nil end
+    local sum, n = Vector3.new(0,0,0), 0
+    for _, m in ipairs(en:GetChildren()) do
+        local ok, p = pcall(function() return m:GetPivot().Position end)
+        if ok then sum = sum + p; n = n + 1 end
+    end
+    return n > 0 and (sum / n) or nil
+end
+local function distOnLaneNearest(lane, pos)
+    local best, bestD = 0, math.huge
+    for i, wp in ipairs(lane.pts) do
+        local d = (Vector3.new(wp.X,0,wp.Z) - Vector3.new(pos.X,0,pos.Z)).Magnitude
+        if d < bestD then bestD = d; best = (lane.cum and lane.cum[i]) or 0 end
+    end
+    return best
+end
+
 -- ⭐ ตัวเงิน — มีแค่ 2 ตัวนี้เท่านั้น (Ichiraku, Ramen Guy) — วางก่อน + อัพก่อน
 local MONEY_ASSETS = { "ichiraku", "ramen" }
 -- ⭐ ตัวซัพ (บัฟ/ดีบัฟ DPS 0) — วางได้ แต่ห้ามอัพ (เปลืองเงิน)
@@ -7745,9 +7766,15 @@ _G.AE_VILLAIN_PLACE = function()
                         -- ⭐ v11.43: ปรับ % ได้ผ่าน _G (อีเว้นใช้ 40-50% | villain default 55-65%)
                         local fmin=tonumber(_G.AE_PLACE_FRAC_MIN) or 0.55; local fmax=tonumber(_G.AE_PLACE_FRAC_MAX) or 0.65
                         local frac = fmin + math.random() * math.max(0, fmax-fmin)
-                        if placeAt(lane, s.slot, lane.total * frac) then
-                            print(("[Villain] ✅ วาง%s ช่อง %d → เลน '%s' ~%.0f%% (¥%d)")
-                                :format(s.money and "💰เงิน" or "⚔️ตัว", s.slot, lane.name, frac*100, s.cost))
+                        local dTarget = lane.total * frac
+                        -- ⭐ v11.46: อีเว้น → วางตรงระยะที่มอนอยู่ (tile วางได้อยู่ข้างกองมอน) ไม่ใช่ frac
+                        if _G.AE_PLACE_NEAR_MOBS then
+                            local mc = mobCenter()
+                            if mc then dTarget = distOnLaneNearest(lane, mc) end
+                        end
+                        if placeAt(lane, s.slot, dTarget) then
+                            print(("[Villain] ✅ วาง%s ช่อง %d → เลน '%s' d=%.0f (¥%d)")
+                                :format(s.money and "💰เงิน" or "⚔️ตัว", s.slot, lane.name, dTarget, s.cost))
                             yen = yen - s.cost
                             didPlace = true
                             task.wait(0.3)
@@ -13713,6 +13740,7 @@ _G.AE_EVENT_RUN=function()
                 L("  ✅ อยู่ในด่าน → วางตัว (Villain place ข้างถนน 40-50%) ให้หมดก่อน")
                 -- ⭐ v11.43: วางตัวให้หมดก่อน (ใช้พาธอีเว้น 2 เลน + offset ข้างถนน) แล้วค่อยไปตกปลา
                 _G.AE_PLACE_FRAC_MIN=_G.AE_PLACE_FRAC_MIN or 0.40; _G.AE_PLACE_FRAC_MAX=_G.AE_PLACE_FRAC_MAX or 0.50
+                _G.AE_PLACE_NEAR_MOBS=true   -- ⭐ v11.46: วางตรงระยะที่มอนเดิน (tile อยู่ข้างกองมอน)
                 if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("  ❌ ไม่เจอ _G.AE_VILLAIN_PLACE") end
                 task.wait(8)          -- รอวางตัวรอบแรกให้ลง
                 -- ⭐ วางเสร็จแล้ว → เริ่มตกปลา auto (teleport บ่อ → cast → result → วางตัวที่ตกได้)
