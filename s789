@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.48"
+local SCRIPT_VERSION = "v11.49"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7599,18 +7599,21 @@ local function placeAt(path, slot, d)
     local rep = getReplica("GamePlayerData")
     if not rep then return false end
     local hb = getReplica("HotbarData")
-    -- วางข้างถนนตามพาธ (d = ระยะที่มอนอยู่) — ลอง offset ข้างถนน + สแกนพาธเล็กน้อย จนวางติด (เกมเช็คให้เอง)
-    for _, dOff in ipairs({ 0, 0.05, -0.05, 0.10, -0.10, 0.15, -0.15 }) do
-        local dd = math.clamp(d + path.total * dOff, 0, path.total)
-        local base = posAt(path, dd)
-        local dir  = dirAt(path, dd)
-        local perp = Vector3.new(-dir.Z, 0, dir.X)
-        for _, off in ipairs(SIDE_OFFSETS) do
-            local p = base + perp * off
+    -- ⭐ v11.49: grid 2 มิติรอบจุด d (ข้างถนน × ตามถนน) — tile ข้างถนนเยื้องได้ทั้ง 2 แกน
+    --   ลองจากใกล้จุดมอนออกไป จนวางติด (เกมเช็คให้เอง) — ครอบคลุมพื้นข้างถนน ~±28 studs
+    local base = posAt(path, d)
+    local dir  = dirAt(path, d)
+    local perp = Vector3.new(-dir.Z, 0, dir.X)   -- ตั้งฉากถนน (ข้างถนน)
+    local along= Vector3.new(dir.X, 0, dir.Z)    -- ตามแนวถนน
+    local PERP  = { 8,-8, 12,-12, 16,-16, 20,-20, 24,-24, 28,-28, 5,-5 }
+    local ALONG = { 0, 8,-8, 16,-16, 24,-24 }
+    for _, ao in ipairs(ALONG) do
+        for _, po in ipairs(PERP) do
+            local p = base + perp*po + along*ao
             local before = unitCount()
-            if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.08) end
+            if hb then pcall(function() hb:FireServer("SelectSlot", slot) end); task.wait(0.06) end
             pcall(function() rep:FireServer("PlaceGameUnit", slot, CFrame.new(p.X, p.Y, p.Z, 1,0,0, 0,1,0, 0,0,1)) end)
-            task.wait(0.35)
+            task.wait(0.28)
             if unitCount() > before then return true end
         end
     end
