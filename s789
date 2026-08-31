@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.57"
+local SCRIPT_VERSION = "v11.58"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3299,6 +3299,17 @@ if GAME_ID == "anime_expeditions" then
             return
         end
 
+        -- ⭐ v11.58: โหมด Event (Tidal Siege / Summer Event) → เข้าด่าน Infinite + ตกปลาออโต้
+        if farmMode == "event" then
+            if _G.AE_EVENT_RUN then
+                print(("[AE Farm] 🌊 Event (%s) — ตกปลาออโต้"):format(tostring(_G.AE_EVENT_NAME or "Summer Event")))
+                pcall(_G.AE_EVENT_RUN)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Event (_G.AE_EVENT_RUN)")
+            end
+            return
+        end
+
         -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
         if farmMode == "quest" then
             farmingActive = false
@@ -3511,6 +3522,9 @@ if GAME_ID == "anime_expeditions" then
         end
         if farmMode == "quest" and _G.AE_QUEST_RUN_STOP then
             pcall(_G.AE_QUEST_RUN_STOP)
+        end
+        if farmMode == "event" and _G.AE_EVENT_STOP then   -- ⭐ v11.58
+            pcall(_G.AE_EVENT_STOP)
         end
     end
 
@@ -3739,6 +3753,11 @@ if GAME_ID == "anime_expeditions" then
                             return
                         end
                         if changed then print(("[AE Remote] 🏰 Tower: %s"):format(tostring(_G.AE_TOWER_TYPE))) end
+                    end
+                    -- ⭐ v11.58: งาน Event (Tidal Siege / Summer Event) — ตกปลาออโต้ในด่าน Infinite
+                    if wantMode == "event" then
+                        _G.AE_EVENT_NAME = job.eventName or "Summer Event"
+                        if changed then print("[AE Remote] 🌊 Event: "..tostring(_G.AE_EVENT_NAME).." — "..tostring(job.stage or "Infinite").." (ตกปลาออโต้)") end
                     end
                     -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
                     if wantMode == "quest" then
