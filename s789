@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.59"
+local SCRIPT_VERSION = "v11.60"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13835,6 +13835,17 @@ _G.AE_EVENT_RUN=function()
                 while running and MYGEN==_G.AE_SCRIPT_GEN do
                     quietClick("Start Game")       -- เผื่อเวฟยังไม่เริ่ม (กันค้าง)
                     local r=matchResult()
+                    -- ⭐ v11.60: จบเกมตอนตกปลา → panel จบเกมพับเอง (matchResult หา Defeat/Victory ไม่เจอ)
+                    --   เจอปุ่ม "Game Results" = จบด่านแล้ว → หยุดตกปลา + กดเปิด panel ก่อน แล้วอ่านผล/Repeat
+                    if not r then
+                        local gr = findBtn("Game Results", false)
+                        if gr then
+                            stopFishing()
+                            L("  📋 เจอปุ่ม Game Results (จอจบเกมพับอยู่) → กดเปิด")
+                            clickBtn(gr); task.wait(1.5)
+                            r = matchResult() or "lose"     -- อ่าน Defeat/Victory ที่เพิ่งเปิด หรือถือว่าจบ
+                        end
+                    end
                     if r=="lose" or r=="win" then
                         -- ⭐ v11.45: จบด่าน → ลอง "Replay/Play Again" (เล่นด่านเดิมต่อ ไม่กลับล็อบบี้นำทางใหม่)
                         L(("  %s → ลอง Replay (เล่นด่านเดิมต่อ)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
