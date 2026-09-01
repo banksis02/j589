@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.63"
+local SCRIPT_VERSION = "v11.64"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13919,6 +13919,16 @@ local function enterPortalMode()
     return true
 end
 
+-- ⭐ v11.64: "อยู่ในด่าน?" เช็คจาก Map.Paths (ล็อบบี้ไม่มี) — inGame() GUI คืน false ในด่าน portal
+local function inPortalStage()
+    local mp = workspace:FindFirstChild("Map")
+    local paths = mp and mp:FindFirstChild("Paths")
+    if paths and #paths:GetChildren() > 0 then return true end
+    local en = workspace:FindFirstChild("Enemies")
+    if en and #en:GetChildren() > 0 then return true end
+    return inGame()
+end
+
 local portalRunning=false
 _G.AE_PORTAL_STOP=function() portalRunning=false; running=false; stopFishing(); if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
     _G.AE_PLACE_Y=nil; _G.AE_PLACE_Y_BOTH=nil; _G.AE_PLACE_NEAR_MOBS=nil; _G.AE_PLACE_FRAC_MIN=nil; _G.AE_PLACE_FRAC_MAX=nil
@@ -13929,20 +13939,24 @@ _G.AE_PORTAL_RUN=function()
     task.spawn(function()
         L("🌀🌀 เริ่มโหมด Portal Mode")
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        local failStreak=0
         while running and portalRunning and MYGEN==_G.AE_SCRIPT_GEN do
-            -- 1) ไม่อยู่ในด่าน → เปิด portal ใหม่
-            if not inGame() then
-                if not enterPortalMode() then
-                    L("  🛑 เปิด portal ไม่ได้ (portal หมด?) → หยุด Portal Mode")
-                    break
+            -- 1) อยู่ล็อบบี้ (ไม่มี Map.Paths) → เปิด portal ใหม่ | ถ้าอยู่ในด่านแล้ว ข้ามไปวางตัวเลย
+            if not inPortalStage() then
+                if enterPortalMode() then failStreak=0
+                else
+                    failStreak=failStreak+1
+                    L(("  ⚠️ เปิด portal ไม่ได้ (%d/3)"):format(failStreak))
+                    if failStreak>=3 then L("  🛑 เปิด portal ไม่ได้ 3 ครั้งติด (portal หมด?) → หยุด"); break end
+                    task.wait(3)
                 end
                 local t0=tick()
-                while running and not inGame() and tick()-t0<45 do
+                while running and not inPortalStage() and tick()-t0<45 do
                     quietClick("Start"); quietClick("Start Game")
                     L(("  ⏳ รอเข้าด่าน portal %ds"):format(math.floor(tick()-t0))); task.wait(3)
                 end
             end
-            if not inGame() then L("  ⚠️ ยังไม่เข้าด่าน portal → ลองใหม่"); task.wait(3)
+            if not inPortalStage() then L("  ⚠️ ยังไม่เข้าด่าน portal → ลองใหม่"); task.wait(3)
             else
                 -- 2) วางทีม + ตกปลา (เหมือน Event Mode)
                 L("  ✅ อยู่ในด่าน portal → วางตัว + ตกปลา")
@@ -13974,10 +13988,10 @@ _G.AE_PORTAL_RUN=function()
                         task.wait(1.5)
                         clickText("Start", false, 8)                             -- party → Start
                         local t1=tick()
-                        while running and not inGame() and tick()-t1<45 do quietClick("Start"); task.wait(3) end
-                        break                                                    -- ออก inner → outer เห็น inGame → วางตัวใหม่
+                        while running and not inPortalStage() and tick()-t1<45 do quietClick("Start"); task.wait(3) end
+                        break                                                    -- ออก inner → outer เห็นอยู่ในด่าน → วางตัวใหม่
                     end
-                    if not inGame() and tick()-t0>30 then L("  ⚠️ ออกจาก portal แล้ว → จบรอบ"); break end
+                    if not inPortalStage() and tick()-t0>30 then L("  ⚠️ ออกจาก portal แล้ว → จบรอบ"); break end
                     tick2=tick2+1
                     if tick2%8==0 and _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end
                     if tick2%5==0 then L("  🎣 เล่นอยู่ (portal: ตกปลา + เฝ้าด่าน)") end
