@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.58"
+local SCRIPT_VERSION = "v11.59"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -958,13 +958,23 @@ if GAME_ID == "anime_expeditions" then
                 level = tonumber(pd.Data.Level) or 0
                 local bpData = pd.Data.BattlepassData
                 if type(bpData) == "table" then
-                    -- ⭐ BP หลัก = Season1 โดยเฉพาะ (กันไปอ่าน VillainInvasion ที่เลขน้อยกว่า)
-                    if type(bpData.Season1) == "table" and bpData.Season1.Level then
-                        bp = tonumber(bpData.Season1.Level) or 0
+                    -- ⭐ v11.59: BP หลัก = "SeasonN" ที่เลขสูงสุด = ซีซั่นปัจจุบัน (รีซีซั่น → Season2/3/4 อ่านถูกเอง)
+                    --   ไม่ hardcode Season1 (เก่าจบแล้ว Lv.50) และไม่เอา max ทั้งหมด (จะได้ซีซั่นเก่า/VillainInvasion)
+                    local bestKey, bestNum
+                    for k in pairs(bpData) do
+                        local n = tostring(k):match("^Season(%d+)$")
+                        if n then n = tonumber(n)
+                            if not bestNum or n > bestNum then bestNum = n; bestKey = k end
+                        end
+                    end
+                    if bestKey and type(bpData[bestKey]) == "table" and bpData[bestKey].Level then
+                        bp = tonumber(bpData[bestKey].Level) or 0
                     else
-                        -- กันชื่อ season เปลี่ยน: เอา Level สูงสุด (season หลักเลเวลสูงกว่า event เสมอ)
-                        for _, d in pairs(bpData) do
-                            if type(d) == "table" and tonumber(d.Level) and tonumber(d.Level) > bp then
+                        -- fallback: ไม่เจอ "SeasonN" → เอา Level สูงสุด (ยกเว้น VillainInvasion/event)
+                        for k, d in pairs(bpData) do
+                            local lk = tostring(k):lower()
+                            local skip = lk:find("villain") or lk:find("event") or lk:find("fishing")
+                            if not skip and type(d) == "table" and tonumber(d.Level) and tonumber(d.Level) > bp then
                                 bp = tonumber(d.Level)
                             end
                         end
