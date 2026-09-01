@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.61"
+local SCRIPT_VERSION = "v11.62"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13885,7 +13885,103 @@ _G.AE_EVENT_RUN=function()
     end)
     return true
 end
-L("พร้อม — _G.AE_EVENT_RUN() | อีเว้น: "..tostring(_G.AE_EVENT_NAME or "Summer Event"))
+
+-- ============================================================
+-- 🌀 PORTAL MODE — activate portal (อันแรก) → Start → วางตัว+ตกปลา → จบ → เปิด portal ใหม่
+--   flow (recon ae_portal_recon): Events→<Event>→Event Gamemode→Mode Selection→"Portal Mode"
+--     →แท็บ Portals→[portal อันแรก pre-select]→"Activate Portal"→"Portal activated!"→party→"Start"
+--   ในด่านใช้ logic เดียวกับ Event Mode (Summer = แมพน้ำ Coral เดียวกัน: วางทีม 40-50% + ตกปลา)
+--   portal = ไอเทมใช้ครั้งเดียว → จบแล้วเปิดอันใหม่ (ไม่ Repeat) | portal หมด → หยุด (ผู้ใช้จะแจ้ง handle ทีหลัง)
+-- ============================================================
+local function enterPortalMode()
+    local evName = _G.AE_EVENT_NAME or "Summer Event"
+    L("🌀 เข้า Portal Mode ("..evName..")")
+    clickText("Events", false, 6); task.wait(1.5)
+    clickText(evName, false, 6); task.wait(1.5)
+    if not clickText("Event Gamemode", false, 15) then L("  ⚠️ content ไม่โหลด (ไม่เจอ Event Gamemode)"); return false end
+    task.wait(2)
+    if not clickText("Portal Mode", false, 8) then L("  ⚠️ ไม่เจอ Portal Mode"); return false end   -- Mode Selection → Portal Mode
+    task.wait(1.5)
+    clickText("Portals", false, 4); task.wait(1)     -- แท็บ Portals (เผื่อยังไม่เปิด)
+    -- portal อันแรกถูก pre-select อยู่แล้ว → กด Activate Portal ได้เลย
+    if not clickText("Activate Portal", false, 6) then
+        L("  🛑 ไม่เจอ 'Activate Portal' — น่าจะ portal หมด")
+        return false
+    end
+    L("  ✅ Activate Portal → รอ party")
+    task.wait(2)                                     -- "Portal activated!" → party
+    if not clickText("Start", false, 10) then L("  ⚠️ ไม่เจอปุ่ม Start (party)"); return false end
+    task.wait(1.5)
+    return true
+end
+
+local portalRunning=false
+_G.AE_PORTAL_STOP=function() portalRunning=false; running=false; stopFishing(); if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+    _G.AE_PLACE_Y=nil; _G.AE_PLACE_NEAR_MOBS=nil; _G.AE_PLACE_FRAC_MIN=nil; _G.AE_PLACE_FRAC_MAX=nil
+    L("⏹ หยุด Portal Mode") end
+_G.AE_PORTAL_RUN=function()
+    if running then L("กำลังทำงานอยู่"); return true end
+    running=true; portalRunning=true
+    task.spawn(function()
+        L("🌀🌀 เริ่มโหมด Portal Mode")
+        if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        while running and portalRunning and MYGEN==_G.AE_SCRIPT_GEN do
+            -- 1) ไม่อยู่ในด่าน → เปิด portal ใหม่
+            if not inGame() then
+                if not enterPortalMode() then
+                    L("  🛑 เปิด portal ไม่ได้ (portal หมด?) → หยุด Portal Mode")
+                    break
+                end
+                local t0=tick()
+                while running and not inGame() and tick()-t0<45 do
+                    quietClick("Start"); quietClick("Start Game")
+                    L(("  ⏳ รอเข้าด่าน portal %ds"):format(math.floor(tick()-t0))); task.wait(3)
+                end
+            end
+            if not inGame() then L("  ⚠️ ยังไม่เข้าด่าน portal → ลองใหม่"); task.wait(3)
+            else
+                -- 2) วางทีม + ตกปลา (เหมือน Event Mode)
+                L("  ✅ อยู่ในด่าน portal → วางตัว + ตกปลา")
+                _G.AE_PLACE_FRAC_MIN=0.40; _G.AE_PLACE_FRAC_MAX=0.50
+                _G.AE_PLACE_NEAR_MOBS=false; _G.AE_PLACE_Y=2424.5
+                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) else L("  ❌ ไม่เจอ AE_VILLAIN_PLACE") end
+                task.wait(8)
+                startFishing()
+                local t0,tick2=tick(),0
+                while running and portalRunning and MYGEN==_G.AE_SCRIPT_GEN do
+                    quietClick("Start Game")
+                    local r=matchResult()
+                    if not r then local gr=findBtn("Game Results",false); if gr then stopFishing(); L("  📋 เปิดหน้าจบเกม portal"); clickBtn(gr); task.wait(1.5); r=matchResult() or "lose" end end
+                    if r=="lose" or r=="win" then
+                        L(("  %s → portal จบ → กลับไปเปิด portal ใหม่"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
+                        notify("🌀 Portal", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
+                        stopFishing(); task.wait(2)
+                        for _,txt in ipairs({"Continue","Back","Leave","Claim"}) do quietClick(txt) end   -- portal ครั้งเดียว → ปิดหน้าผล กลับล็อบบี้
+                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                        task.wait(3)
+                        break
+                    end
+                    if not inGame() and tick()-t0>30 then L("  ⚠️ ออกจาก portal แล้ว → จบรอบ"); break end
+                    tick2=tick2+1
+                    if tick2%8==0 and _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end
+                    if tick2%5==0 then L("  🎣 เล่นอยู่ (portal: ตกปลา + เฝ้าด่าน)") end
+                    task.wait(3)
+                end
+                stopFishing()
+                if _G.AE_VILLAIN_PLACE_STOP then pcall(_G.AE_VILLAIN_PLACE_STOP) end
+                task.wait(2)
+                if _G.AE_EVENT_CLAIM_ALL then pcall(_G.AE_EVENT_CLAIM_ALL) end
+                task.wait(1)
+            end
+        end
+        running=false; portalRunning=false
+        _G.AE_PLACE_Y=nil; _G.AE_PLACE_NEAR_MOBS=nil; _G.AE_PLACE_FRAC_MIN=nil; _G.AE_PLACE_FRAC_MAX=nil
+        L("🏁 จบ Portal Mode")
+    end)
+    return true
+end
+
+L("พร้อม — _G.AE_EVENT_RUN() / _G.AE_PORTAL_RUN() | อีเว้น: "..tostring(_G.AE_EVENT_NAME or "Summer Event"))
 end)
 if not okEvtM then warn("[EVENT FATAL] โมดูล Event Mode โหลดพลาด") end
 
