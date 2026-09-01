@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.67"
+local SCRIPT_VERSION = "v11.68"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13913,6 +13913,30 @@ local function clickBuyIfPrompt()
     return false
 end
 
+-- ⭐ v11.68: ปิดหน้าต่างที่มี title X (เช่น "Portal Selection" ว่าง) — ปุ่ม X ไม่มี text → หาจากมุมขวาบนสุด
+local function closeWindow(titleNeedle)
+    for _,g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            local has=false
+            for _,l in ipairs(g:GetDescendants()) do
+                if l:IsA("TextLabel") and tostring(l.Text):lower():find(tostring(titleNeedle):lower(),1,true) then has=true; break end
+            end
+            if has then
+                local best,bestScore
+                for _,b in ipairs(g:GetDescendants()) do
+                    if (b:IsA("ImageButton") or b:IsA("TextButton")) and b.Visible
+                       and b.AbsoluteSize.X>10 and b.AbsoluteSize.X<70 and b.AbsoluteSize.Y<70 then
+                        local sc = b.AbsolutePosition.X - b.AbsolutePosition.Y   -- ขวาสุด+บนสุด = ปุ่มปิด X
+                        if not bestScore or sc>bestScore then bestScore=sc; best=b end
+                    end
+                end
+                if best then clickBtn(best); L("  ✖️ ปิดหน้าต่าง '"..tostring(titleNeedle).."'"); task.wait(1); return true end
+            end
+        end
+    end
+    return false
+end
+
 local function enterPortalMode()
     local evName = _G.AE_EVENT_NAME or "Summer Event"
     L("🌀 เข้า Portal Mode ("..evName..")")
@@ -14020,7 +14044,9 @@ _G.AE_PORTAL_RUN=function()
                         -- Portal Selection → มี portal? กด Select | ⭐ v11.67: ว่าง (portal หมด) → กลับล็อบบี้ (enterPortalMode จะ Buy เอง)
                         clickText("Select", true, 4); clickBuyIfPrompt(); task.wait(2)
                         if findBtn("Portal Selection", false) then                -- ยังอยู่หน้า Portal Selection = ว่าง
-                            L("  📭 Portal Selection ว่าง (portal หมด) → กลับล็อบบี้ (ซื้อรอบใหม่)")
+                            L("  📭 Portal Selection ว่าง (portal หมด) → ปิดหน้าต่าง + กลับล็อบบี้ (ซื้อรอบใหม่)")
+                            closeWindow("Portal Selection"); task.wait(1)         -- ⭐ v11.68: กด X ปิดก่อน (ไม่งั้น modal บัง AE_BACK_TO_LOBBY)
+                            if findBtn("Portal Selection", false) then closeWindow("Portal Selection"); task.wait(1) end
                             if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; task.wait(3); break
                         end
                         L("  ✅ เลือก portal ใหม่ → Start"); task.wait(1.5)
