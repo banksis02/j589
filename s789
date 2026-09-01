@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.73"
+local SCRIPT_VERSION = "v11.74"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13850,6 +13850,7 @@ _G.AE_EVENT_RUN=function()
     task.spawn(function()
         L("🌊🌊 เริ่มโหมด Event Mode")
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า (skip/vote/auto-upgrade)"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
+        local replayCount = 0   -- ⭐ v11.74: นับกด Repeat Stage ติดกัน — เกิน 5 (ด่านไม่รีสตาร์ท) → กลับล็อบบี้
         while running and MYGEN==_G.AE_SCRIPT_GEN do
             -- 1) เข้าด่าน (ถ้ายังไม่อยู่ในด่าน)
             if not inGame() then
@@ -13892,9 +13893,17 @@ _G.AE_EVENT_RUN=function()
                     end
                     if r=="lose" or r=="win" then
                         -- ⭐ v11.45: จบด่าน → ลอง "Replay/Play Again" (เล่นด่านเดิมต่อ ไม่กลับล็อบบี้นำทางใหม่)
-                        L(("  %s → ลอง Replay (เล่นด่านเดิมต่อ)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
+                        replayCount = replayCount + 1
+                        L(("  %s → ลอง Repeat Stage (ครั้งที่ %d)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้", replayCount))
                         notify("🌊 Event", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
                         stopFishing(); task.wait(2)
+                        -- ⭐ v11.74: กด Repeat ติดกันเกิน 5 ครั้ง = ด่านไม่รีสตาร์ท (ค้าง) → เลิก Repeat กลับล็อบบี้เข้าใหม่
+                        if replayCount > 5 then
+                            L("  🛑 กด Repeat Stage เกิน 5 ครั้งแล้วด่านไม่รีสตาร์ท → กลับล็อบบี้เข้าใหม่")
+                            replayCount = 0
+                            if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                            task.wait(3); break
+                        end
                         local replayed=false
                         -- ⭐ v11.57: ปุ่มเล่นซ้ำในอีเว้น = "Repeat Stage" (เปิดผ่าน "Game Results") ไม่ใช่ Replay
                         for attempt=1,3 do
@@ -13904,12 +13913,13 @@ _G.AE_EVENT_RUN=function()
                             if replayed then break end
                             quietClick("Game Results"); task.wait(1.5)   -- ยังไม่เจอ → เปิดหน้าผลด่านก่อน
                         end
-                        if not replayed then L("  ↩️ ไม่เจอปุ่ม Repeat Stage → กลับล็อบบี้เข้าใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end end
+                        if not replayed then L("  ↩️ ไม่เจอปุ่ม Repeat Stage → กลับล็อบบี้เข้าใหม่"); replayCount=0; if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end end
                         task.wait(3)   -- ถ้า replayed = อยู่ในด่านใหม่ → ลูปนอกเช็ค inGame → วางตัวใหม่
                         break
                     end
                     if not inGame() and tick()-t0>30 then L("  ⚠️ ออกจากด่านแล้ว → จบรอบ"); break end
                     tick2=tick2+1
+                    if tick2 == 3 then replayCount = 0 end   -- ⭐ v11.74: เล่นได้ ~10วิ = ด่านรีสตาร์ทสำเร็จ → รีเซ็ตตัวนับ Repeat
                     if tick2%8==0 and _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) end   -- วางซ้ำเงียบๆ ทุก ~24วิ (เผื่อตัวตาย/ตกเพิ่ม)
                     if tick2%5==0 then L("  🎣 เล่นอยู่ (ตกปลา + เฝ้าด่าน)") end
                     task.wait(3)
