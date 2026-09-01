@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.65"
+local SCRIPT_VERSION = "v11.66"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13971,25 +13971,40 @@ _G.AE_PORTAL_RUN=function()
                 local t0,tick2=tick(),0
                 while running and portalRunning and MYGEN==_G.AE_SCRIPT_GEN do
                     quietClick("Start Game")
-                    local r=matchResult()
-                    if not r then local gr=findBtn("Game Results",false); if gr then stopFishing(); L("  📋 เปิดหน้าจบเกม portal"); clickBtn(gr); task.wait(1.5); r=matchResult() or "lose" end end
-                    if r=="lose" or r=="win" then
-                        -- ⭐ v11.63: จบด่าน → ทางลัด "Select Portal" → Portal Selection → "Select" → Start (ไม่ต้องกลับล็อบบี้)
-                        L(("  %s → portal จบ → เปิด portal ใหม่ (Select Portal)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
-                        notify("🌀 Portal", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
-                        stopFishing(); task.wait(2)
-                        -- ⭐ v11.64: หน้าผลเปิดอยู่แล้ว (เปิดผ่าน Game Results ตอนเช็ค r) → กด Select Portal
-                        --   ห้ามกด Game Results ซ้ำ (มันปิด panel → Select Portal หาย) — retry หลายรอบแทน
+                    -- ⭐ v11.66: จบด่าน portal → หน้าเลือก portal 3 อัน (Prompt "Auto-selecting") โผล่ "ก่อน" Victory
+                    --   ต้องจัดการหน้านี้ก่อน ไม่งั้นหา Select Portal ไม่เจอ (ยังไม่ถึง Victory)
+                    local picking=false
+                    do local pr=player.PlayerGui:FindFirstChild("Prompt")
+                        if pr and pr.Enabled then for _,l in ipairs(pr:GetDescendants()) do
+                            if l:IsA("TextLabel") and tostring(l.Text):lower():find("auto%-selecting") then picking=true; break end end end
+                    end
+                    local r = (not picking) and matchResult() or nil
+                    if not r and not picking then local gr=findBtn("Game Results",false); if gr then stopFishing(); L("  📋 เปิดหน้าจบเกม portal"); clickBtn(gr); task.wait(1.5); r=matchResult() or "lose" end end
+                    if picking or r=="lose" or r=="win" then
+                        L(("  %s → portal จบ → จัดการหน้าเลือก portal → Select Portal"):format(r=="win" and "🏆 ชนะ" or r=="lose" and "💀 แพ้" or "🎁 เลือก portal"))
+                        notify("🌀 Portal", "จบด่าน → เปิด portal ใหม่", 5)
+                        stopFishing(); task.wait(1)
+                        -- 1) หน้าเลือก portal 3 อัน (Prompt) → กดการ์ดซ้ายสุด / รอ auto-select (สูงสุด 12วิ)
+                        local pw=tick()
+                        while running and tick()-pw<12 do
+                            local pr=player.PlayerGui:FindFirstChild("Prompt"); local lbl,cards=nil,{}
+                            if pr and pr.Enabled then for _,l in ipairs(pr:GetDescendants()) do
+                                if l:IsA("TextLabel") and tostring(l.Text):lower():find("auto%-selecting") then lbl=l end
+                                if l:IsA("TextButton") and l.Visible then
+                                    for _,d in ipairs(l:GetDescendants()) do if d:IsA("TextLabel") and tostring(d.Text):lower():find("portal") then cards[#cards+1]=l; break end end
+                                end end end
+                            if not lbl then break end                            -- picker หายแล้ว (auto-select เสร็จ)
+                            if #cards>0 then table.sort(cards,function(a,b) return a.AbsolutePosition.X<b.AbsolutePosition.X end); clickBtn(cards[1]); L("  🎯 เลือก portal reward (ซ้ายสุด)") end
+                            task.wait(1.5)
+                        end
+                        task.wait(1.5)
+                        -- 2) Victory → Select Portal → Portal Selection → Select → Start
                         local picked=false
-                        for a=1,5 do if clickText("Select Portal", false, 2) then picked=true; break end; task.wait(1) end
+                        for a=1,6 do if clickText("Select Portal", false, 2) then picked=true; break end; task.wait(1) end
                         if not picked then L("  🛑 ไม่เจอ 'Select Portal' → หยุด Portal Mode"); portalRunning=false; break end
                         task.wait(1.5)
-                        if not clickText("Select", true, 5) then                 -- Portal Selection → portal อันแรก pre-select → Select
-                            L("  🛑 ไม่เจอปุ่ม Select (portal หมด?) → หยุด Portal Mode")
-                            portalRunning=false; break
-                        end
-                        L("  ✅ เลือก portal ใหม่ → Start")
-                        task.wait(1.5)
+                        if not clickText("Select", true, 5) then L("  🛑 ไม่เจอปุ่ม Select (portal หมด?) → หยุด"); portalRunning=false; break end
+                        L("  ✅ เลือก portal ใหม่ → Start"); task.wait(1.5)
                         clickText("Start", false, 8)                             -- party → Start
                         local t1=tick()
                         while running and not inPortalStage() and tick()-t1<45 do quietClick("Start"); task.wait(3) end
