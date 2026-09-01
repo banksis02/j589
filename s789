@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.64"
+local SCRIPT_VERSION = "v11.65"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13672,7 +13672,9 @@ local function findBtn(needle, exact)
         if g:IsA("ScreenGui") and g.Enabled then
             for _,el in ipairs(g:GetDescendants()) do
                 if (el:IsA("TextButton") or el:IsA("TextLabel")) and reallyVisible(el) then   -- ⭐ v11.42: ImageButton ไม่มี .Text (crash) → อ่านจาก TextButton/TextLabel เท่านั้น
-                    local t=tostring(el.Text or ""):gsub("<[^>]->",""):lower()
+                    -- ⭐ v11.64: normalize ช่องว่าง (newline/เว้นวรรคซ้อน) + trim → "Select\nPortal" match "select portal" ได้
+                    local t=tostring(el.Text or ""):gsub("<[^>]->",""):gsub("%s+"," "):lower()
+                    t=(t:gsub("^ ",""):gsub(" $",""))
                     local hit = exact and (t==want) or (not exact and t~="" and t:find(want,1,true))
                     if hit then
                         local a=el.AbsoluteSize.X*el.AbsoluteSize.Y
@@ -13976,9 +13978,11 @@ _G.AE_PORTAL_RUN=function()
                         L(("  %s → portal จบ → เปิด portal ใหม่ (Select Portal)"):format(r=="win" and "🏆 ชนะ" or "💀 แพ้"))
                         notify("🌀 Portal", r=="win" and "✅ ชนะ" or "💀 แพ้", 5)
                         stopFishing(); task.wait(2)
-                        if not clickText("Select Portal", false, 3) then
-                            quietClick("Game Results"); task.wait(1.5); clickText("Select Portal", false, 3)   -- เผื่อจอผลพับ
-                        end
+                        -- ⭐ v11.64: หน้าผลเปิดอยู่แล้ว (เปิดผ่าน Game Results ตอนเช็ค r) → กด Select Portal
+                        --   ห้ามกด Game Results ซ้ำ (มันปิด panel → Select Portal หาย) — retry หลายรอบแทน
+                        local picked=false
+                        for a=1,5 do if clickText("Select Portal", false, 2) then picked=true; break end; task.wait(1) end
+                        if not picked then L("  🛑 ไม่เจอ 'Select Portal' → หยุด Portal Mode"); portalRunning=false; break end
                         task.wait(1.5)
                         if not clickText("Select", true, 5) then                 -- Portal Selection → portal อันแรก pre-select → Select
                             L("  🛑 ไม่เจอปุ่ม Select (portal หมด?) → หยุด Portal Mode")
