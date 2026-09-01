@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.71"
+local SCRIPT_VERSION = "v11.72"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -7665,7 +7665,7 @@ local function placeAt(path, slot, d)
     --   พิสูจน์แล้ว (ae_place_live: 6/6 ติดใน 9 ครั้งที่ Y=2424.5) — villain default ใช้ wp.Y เหมือนเดิม
     local forceY = tonumber(_G.AE_PLACE_Y)
     local tryBoth = (_G.AE_PLACE_Y_BOTH == true)   -- ⭐ v11.63: Portal แมพต่างกันต่อ Tier → ลอง Y ทั้ง 2 (coral 2424.5 + wp.Y แมพปกติ)
-    local tries, MAXTRIES = 0, 160
+    local tries, MAXTRIES = 0, (tryBoth and 96 or 72)   -- ⭐ v11.72: ลดจาก 160 (เจอ tile ~9 ครั้ง, ที่เกิน = ยิงเปล่าตอนเต็ม → spam/แลค)
     for _, i in ipairs(idxs) do
         local wp  = path.pts[i]
         local nxt = path.pts[math.min(i+1, #path.pts)]
@@ -7808,6 +7808,7 @@ _G.AE_VILLAIN_PLACE = function()
         end
 
         -- ⭐ วางทุกช่อง "เกาะกันแน่น" ที่ 55-65% ของเลนเดียว (ด่านยาก รวมพลัง)
+        local lastCount, fullRounds = myUnitCount(), 0   -- ⭐ v11.72: หยุดเมื่อสนามเต็ม → กัน spam "Max placement"
         for round = 1, 40 do
             if not pileOn then break end
             -- อัปเดตเลนที่ถูกทุก 5 รอบ (เผื่อรอบแรกเดาผิด)
@@ -7860,6 +7861,14 @@ _G.AE_VILLAIN_PLACE = function()
                     end
                     task.wait(2)
                 end
+            end
+            -- ⭐ v11.72: unit ไม่เพิ่ม 2 รอบ (มีตัวแล้ว) = สนามเต็ม/วางครบ | วางไม่ได้เลย 6 รอบ = วางไม่ได้ → หยุด กัน spam
+            local nowCnt = myUnitCount()
+            if nowCnt <= lastCount then fullRounds = fullRounds + 1 else fullRounds = 0 end
+            lastCount = nowCnt
+            if (nowCnt > 0 and fullRounds >= 2) or fullRounds >= 6 then
+                print(("[Villain] 🧱 สนามเต็ม/วางครบ (%d ตัว) → หยุดวาง (กัน spam)"):format(nowCnt))
+                break
             end
         end
         print("[Villain] 🏁 จบการวาง")
