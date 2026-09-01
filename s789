@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.72"
+local SCRIPT_VERSION = "v11.73"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3320,6 +3320,17 @@ if GAME_ID == "anime_expeditions" then
             return
         end
 
+        -- ⭐ v11.73: โหมด Portal (Summer Portal) → activate portal → วางตัว+ตกปลา → เลือก portal ใหม่วนไป
+        if farmMode == "portal" then
+            if _G.AE_PORTAL_RUN then
+                print(("[AE Farm] 🌀 Portal (%s) — เล่น portal วนไป"):format(tostring(_G.AE_EVENT_NAME or "Summer Event")))
+                pcall(_G.AE_PORTAL_RUN)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Portal (_G.AE_PORTAL_RUN)")
+            end
+            return
+        end
+
         -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
         if farmMode == "quest" then
             farmingActive = false
@@ -3535,6 +3546,9 @@ if GAME_ID == "anime_expeditions" then
         end
         if farmMode == "event" and _G.AE_EVENT_STOP then   -- ⭐ v11.58
             pcall(_G.AE_EVENT_STOP)
+        end
+        if farmMode == "portal" and _G.AE_PORTAL_STOP then   -- ⭐ v11.73
+            pcall(_G.AE_PORTAL_STOP)
         end
     end
 
@@ -3768,6 +3782,11 @@ if GAME_ID == "anime_expeditions" then
                     if wantMode == "event" then
                         _G.AE_EVENT_NAME = job.eventName or "Summer Event"
                         if changed then print("[AE Remote] 🌊 Event: "..tostring(_G.AE_EVENT_NAME).." — "..tostring(job.stage or "Infinite").." (ตกปลาออโต้)") end
+                    end
+                    -- ⭐ v11.73: งาน Portal (Summer Portal) — เล่น portal วนไป
+                    if wantMode == "portal" then
+                        _G.AE_EVENT_NAME = job.eventName or "Summer Event"
+                        if changed then print("[AE Remote] 🌀 Portal: "..tostring(_G.AE_EVENT_NAME).." (เล่น portal วนไป)") end
                     end
                     -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
                     if wantMode == "quest" then
