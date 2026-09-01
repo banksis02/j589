@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.66"
+local SCRIPT_VERSION = "v11.67"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13899,6 +13899,20 @@ end
 --   ในด่านใช้ logic เดียวกับ Event Mode (Summer = แมพน้ำ Coral เดียวกัน: วางทีม 40-50% + ตกปลา)
 --   portal = ไอเทมใช้ครั้งเดียว → จบแล้วเปิดอันใหม่ (ไม่ Repeat) | portal หมด → หยุด (ผู้ใช้จะแจ้ง handle ทีหลัง)
 -- ============================================================
+-- ⭐ v11.67: popup "Buy Amount" (Prompt: "Buying 1x Summer Portal") — portal หมด → เกมให้ซื้อ → กดซื้อเลย
+local function clickBuyIfPrompt()
+    local pr = player.PlayerGui:FindFirstChild("Prompt")
+    if not (pr and pr.Enabled) then return false end
+    local isBuy=false
+    for _,l in ipairs(pr:GetDescendants()) do
+        if l:IsA("TextLabel") then local t=tostring(l.Text):gsub("<[^>]->",""):lower()
+            if t:find("buying") and t:find("portal") then isBuy=true; break end end
+    end
+    if not isBuy then return false end
+    if clickText("Buy 1x", false, 2) or clickText("Buy", false, 2) then L("  💰 ไม่มี portal → ซื้อ (Buy 1x)"); task.wait(1.5); return true end
+    return false
+end
+
 local function enterPortalMode()
     local evName = _G.AE_EVENT_NAME or "Summer Event"
     L("🌀 เข้า Portal Mode ("..evName..")")
@@ -13908,14 +13922,14 @@ local function enterPortalMode()
     task.wait(2)
     if not clickText("Portal Mode", false, 8) then L("  ⚠️ ไม่เจอ Portal Mode"); return false end   -- Mode Selection → Portal Mode
     task.wait(1.5)
+    clickBuyIfPrompt()                               -- เผื่อไม่มี portal → popup ซื้อ → ซื้อเลย
     clickText("Portals", false, 4); task.wait(1)     -- แท็บ Portals (เผื่อยังไม่เปิด)
-    -- portal อันแรกถูก pre-select อยู่แล้ว → กด Activate Portal ได้เลย
     if not clickText("Activate Portal", false, 6) then
-        L("  🛑 ไม่เจอ 'Activate Portal' — น่าจะ portal หมด")
-        return false
+        if not clickBuyIfPrompt() then L("  🛑 ไม่เจอ 'Activate Portal'/'Buy'"); return false end
+        task.wait(1); clickText("Activate Portal", false, 4)
     end
     L("  ✅ Activate Portal → รอ party")
-    task.wait(2)                                     -- "Portal activated!" → party
+    task.wait(2); clickBuyIfPrompt()                 -- "Portal activated!" / เผื่อถามซื้อ → party
     if not clickText("Start", false, 10) then L("  ⚠️ ไม่เจอปุ่ม Start (party)"); return false end
     task.wait(1.5)
     return true
@@ -14001,13 +14015,18 @@ _G.AE_PORTAL_RUN=function()
                         -- 2) Victory → Select Portal → Portal Selection → Select → Start
                         local picked=false
                         for a=1,6 do if clickText("Select Portal", false, 2) then picked=true; break end; task.wait(1) end
-                        if not picked then L("  🛑 ไม่เจอ 'Select Portal' → หยุด Portal Mode"); portalRunning=false; break end
+                        if not picked then L("  ↩️ ไม่เจอ 'Select Portal' → กลับล็อบบี้เข้าใหม่"); if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; task.wait(3); break end
                         task.wait(1.5)
-                        if not clickText("Select", true, 5) then L("  🛑 ไม่เจอปุ่ม Select (portal หมด?) → หยุด"); portalRunning=false; break end
+                        -- Portal Selection → มี portal? กด Select | ⭐ v11.67: ว่าง (portal หมด) → กลับล็อบบี้ (enterPortalMode จะ Buy เอง)
+                        clickText("Select", true, 4); clickBuyIfPrompt(); task.wait(2)
+                        if findBtn("Portal Selection", false) then                -- ยังอยู่หน้า Portal Selection = ว่าง
+                            L("  📭 Portal Selection ว่าง (portal หมด) → กลับล็อบบี้ (ซื้อรอบใหม่)")
+                            if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end; task.wait(3); break
+                        end
                         L("  ✅ เลือก portal ใหม่ → Start"); task.wait(1.5)
-                        clickText("Start", false, 8)                             -- party → Start
+                        clickText("Start", false, 8); clickBuyIfPrompt()          -- party → Start
                         local t1=tick()
-                        while running and not inPortalStage() and tick()-t1<45 do quietClick("Start"); task.wait(3) end
+                        while running and not inPortalStage() and tick()-t1<40 do quietClick("Start"); clickBuyIfPrompt(); task.wait(3) end
                         break                                                    -- ออก inner → outer เห็นอยู่ในด่าน → วางตัวใหม่
                     end
                     if not inPortalStage() and tick()-t0>30 then L("  ⚠️ ออกจาก portal แล้ว → จบรอบ"); break end
