@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.75"
+local SCRIPT_VERSION = "v11.76"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -13691,16 +13691,10 @@ local function parkMouse() pcall(function()
     VIM:SendMouseMoveEvent(math.floor(vp.X/2), 70, game)
 end) end
 local function vimClick(b) pcall(function()
+    -- ⭐ v11.76: revert v11.75 (แก้ inset แบบเหมารวมทำปุ่มอื่นเพี้ยน) — กลับเป็นสูตรเดิมที่เวิร์ค
     local inset=GuiService:GetGuiInset()
-    -- ⭐ v11.75: คลิกเพี้ยน "สูงไป" บางจอ — GetGuiInset คืน 0 ทั้งที่มี topbar → บวก inset ไม่พอ
-    --   ScreenGui ปกติ (IgnoreGuiInset=false): AbsolutePosition อิง inset → บวก inset.Y (ถ้า 0 = เพี้ยน → ใช้ 36)
-    --   ScreenGui IgnoreGuiInset=true: AbsolutePosition = pixel จริงแล้ว → ไม่บวก (กันคลิกต่ำไป)
-    local sg=b:FindFirstAncestorWhichIsA("ScreenGui")
-    local addY
-    if sg and sg.IgnoreGuiInset then addY=0
-    else addY=(inset.Y and inset.Y>1) and inset.Y or 36 end
     local cx=b.AbsolutePosition.X+b.AbsoluteSize.X/2
-    local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+addY
+    local cy=b.AbsolutePosition.Y+b.AbsoluteSize.Y/2+inset.Y
     VIM:SendMouseMoveEvent(cx,cy,game); task.wait(0.7)             -- hover ก่อน = โหลด content อีเว้น
     VIM:SendMouseButtonEvent(cx,cy,0,true,game,0); task.wait(0.12)
     VIM:SendMouseButtonEvent(cx,cy,0,false,game,0) end)
