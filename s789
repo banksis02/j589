@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.76"
+local SCRIPT_VERSION = "v11.77"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -14063,12 +14063,15 @@ _G.AE_PORTAL_RUN=function()
                             if l:IsA("TextLabel") and tostring(l.Text):lower():find("auto%-selecting") then picking=true; break end end end
                     end
                     local r = (not picking) and matchResult() or nil
-                    -- ⭐ v11.70: "Game Results" เป็นปุ่ม HUD โชว์ "ตลอดระหว่างเล่น" → ห้ามใช้เป็นสัญญาณจบ
-                    --   (เดิม r=matchResult() or "lose" → กดกลางด่าน = false จบ → กลับล็อบบี้กลางด่าน)
-                    --   เปิด Game Results ดูผลเฉพาะตอน "น่าจะจบจริง" (ออกจากด่าน / มีปุ่ม Repeat Stage/Select Portal) + เอาเฉพาะ Victory/Defeat จริง
-                    if not r and not picking and ((not inPortalStage()) or findBtn("Repeat Stage",false) or findBtn("Select Portal",false)) then
-                        local gr=findBtn("Game Results",false); if gr then stopFishing(); L("  📋 เปิดหน้าจบเกม portal"); clickBtn(gr); task.wait(1.2) end
-                        r = matchResult()
+                    -- ⭐ v11.77: จอผลพับ (เห็นแต่ปุ่ม Game Results ไม่มี Defeat/Victory + Map.Paths ยังอยู่) → เปิดดูผลเป็นระยะ (ทุก ~12วิ)
+                    --   ปลอดภัย: เอา r จาก matchResult จริงเท่านั้น (ไม่ force lose = ไม่ false จบกลางด่าน) + ถ้ายังเล่นอยู่ ปิด panel กลับ ไม่รบกวนตกปลา
+                    if not r and not picking and (tick2 % 4 == 0) then
+                        local gr=findBtn("Game Results",false)
+                        if gr then
+                            clickBtn(gr); task.wait(1.2)
+                            r = matchResult()
+                            if not (r=="lose" or r=="win") then quietClick("Game Results") end   -- ยังเล่นอยู่ → ปิด panel กลับ
+                        end
                     end
                     if picking or r=="lose" or r=="win" then
                         L(("  %s → portal จบ → จัดการหน้าเลือก portal → Select Portal"):format(r=="win" and "🏆 ชนะ" or r=="lose" and "💀 แพ้" or "🎁 เลือก portal"))
