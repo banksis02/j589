@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.2"
+local AO_TEST_VERSION = "2.3"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -636,6 +636,7 @@ local function performEntry()
 
     local lobbyRemotes = ReplicatedStorage:FindFirstChild("LobbyRemotes")
     local remote = lobbyRemotes and lobbyRemotes:FindFirstChild("MapSelectRemote")
+    local partyRemote = lobbyRemotes and lobbyRemotes:FindFirstChild("PartyRemote")
     if not remote then
         status.Text = "ไม่พบ LobbyRemotes.MapSelectRemote"
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
@@ -648,58 +649,35 @@ local function performEntry()
     status.Text = string.format("%s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
-    local ok, err = pcall(function()
-        remote:FireServer(
-            "StartSelection",
-            selectedMode,
-            selectedMap.Value,
-            selectedAct.Value,
-            "Hard"
-        )
-    end)
+    -- ⭐ UI ใหม่ (2026-09): เข้าด่านผ่าน remote ล้วน — ไม่ต้องเดินประตู Pod อีก (เกมเปลี่ยน UI)
+    --   flow (จาก ao_entry2 recon): PartyRemote(CreateParty,true) → MapSelectRemote(SelectMap,...) → PartyRemote(StartParty)
+    local diff = tostring(_G.AO_DIFFICULTY or "Hard")   -- ฟาร์มใช้ Hard (รางวัลดีสุด) | override ได้ด้วย _G.AO_DIFFICULTY
+    local mode = selectedMode
+    local mapV = selectedMap.Value
+    local actV = selectedAct.Value
+    if AO_HEADLESS then print(("[AO ENTER v%s] (UI ใหม่ remote) %s / %s / %s / %s"):format(AO_TEST_VERSION, mode, mapV, actV, diff)) end
+    enterButton.Text = "SENDING..."
+    status.Text = string.format("%s | %s | %s | %s", mode, selectedMap.Label, selectedAct.Label, diff)
+    status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
-    if ok then
-        if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] StartSelection fired") end
-        status.Text = string.format("เลือกแล้ว: %s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
-        status.TextColor3 = Color3.fromRGB(122, 224, 150)
-    else
+    local ok, err = pcall(function()
+        if partyRemote then pcall(function() partyRemote:FireServer("CreateParty", true) end); task.wait(0.5) end   -- Open Party
+        remote:FireServer("SelectMap", mode, mapV, actV, diff, {
+            Difficulty = diff, WorldName = mapV, DisplayGameMode = mode, StageType = mode, GameMode = mode
+        })
+        task.wait(0.8)
+        if partyRemote then partyRemote:FireServer("StartParty") end   -- ★ = กด Start เข้าด่าน
+    end)
+    if not ok then
         status.Text = "FireServer error: " .. tostring(err)
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
         busy = false
         enterButton.Text = "SELECT STAGE"
         return false, status.Text
     end
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] SelectMap+StartParty fired → รอเข้าด่าน") end
 
-    enterButton.Text = "MOVING TO POD DOOR..."
-    local entered, enterMessage = teleportThroughNearestDoor()
-    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] pod: " .. tostring(entered) .. " | " .. tostring(enterMessage)) end
-
-    if not entered then
-        status.Text = "เข้า Pod ไม่สำเร็จ: " .. tostring(enterMessage)
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        busy = false
-        enterButton.Text = "SELECT STAGE"
-        return false, status.Text
-    end
-
-    status.Text = enterMessage .. " — กำลังตั้งค่าหน้าเลือกด่าน"
-    status.TextColor3 = Color3.fromRGB(122, 224, 150)
-    enterButton.Text = "SELECTING GAME UI..."
-
-    local selected, selectMessage = selectGameStageUI()
-    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] stage UI: " .. tostring(selected) .. " | " .. tostring(selectMessage)) end
-    if not selected then
-        status.Text = "เลือกหน้าเกมไม่สำเร็จ: " .. tostring(selectMessage)
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        busy = false
-        enterButton.Text = "SELECT STAGE"
-        return false, status.Text
-    end
-
-    status.Text = "ตั้งค่าสำเร็จ: " .. selectMessage
-    status.TextColor3 = Color3.fromRGB(122, 224, 150)
     enterButton.Text = "WAITING FOR GAME..."
-
     local waitStarted = os.clock()
     while game.PlaceId == AO_LOBBY_PLACE_ID and os.clock() - waitStarted < 30 do
         task.wait(0.5)
@@ -707,9 +685,9 @@ local function performEntry()
     busy = false
     enterButton.Text = "SELECT STAGE"
     if game.PlaceId == AO_LOBBY_PLACE_ID then
-        return false, "กด Start ยืนยันแล้ว แต่ครบ 30 วินาทียังอยู่ Lobby"
+        return false, "ยิง SelectMap+StartParty แล้ว แต่ครบ 30 วิยังอยู่ Lobby"
     end
-    return true, selectMessage
+    return true, string.format("เข้าด่าน %s/%s/%s (%s)", mode, mapV, actV, diff)
 end
 
 enterButton.MouseButton1Click:Connect(performEntry)
