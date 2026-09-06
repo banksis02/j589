@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.8"
+local AO_TEST_VERSION = "2.9"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -689,6 +689,38 @@ local function aoWaitVisible(getter, timeout)
     return nil
 end
 
+-- ปิด chat/prompt "Unlock chat (age check)" ที่มาบัง+แย่งคลิกด่าน — หลายวิธี + คลิกไอคอนแชทบน topbar (ตามที่ผู้ใช้ชี้)
+local function aoCloseChat()
+    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false) end)
+    pcall(function() game:GetService("StarterGui"):SetCore("ChatActive", false) end)
+    pcall(function()
+        local TCS = game:GetService("TextChatService")
+        for _, c in ipairs(TCS:GetChildren()) do
+            if c:IsA("ChatWindowConfiguration") or c:IsA("ChatInputBarConfiguration") then
+                pcall(function() c.Enabled = false end)
+            end
+        end
+    end)
+    -- backup: คลิกไอคอนแชทบน topbar (CoreGui) ให้แชทหุบ — topbar อยู่บนสุด ไม่บวก inset
+    pcall(function()
+        local cg = (gethui and gethui()) or game:GetService("CoreGui")
+        for _, d in ipairs(cg:GetDescendants()) do
+            if (d:IsA("ImageButton") or d:IsA("TextButton")) and d.Visible then
+                local nm = string.lower(d.Name)
+                if nm:find("chat") and d.AbsoluteSize.X > 0 and d.AbsolutePosition.Y < 70 then
+                    local x = d.AbsolutePosition.X + d.AbsoluteSize.X / 2
+                    local y = d.AbsolutePosition.Y + d.AbsoluteSize.Y / 2
+                    VIM_AO:SendMouseButtonEvent(x, y, 0, true, game, 0)
+                    task.wait(0.04)
+                    VIM_AO:SendMouseButtonEvent(x, y, 0, false, game, 0)
+                    if AO_HEADLESS then print(("[AO ENTER] ปิด chat: คลิกไอคอน %s @ %d,%d"):format(d.Name, math.floor(x), math.floor(y))) end
+                    break
+                end
+            end
+        end
+    end)
+end
+
 local function performEntry()
     if busy then
         return false, "entry already running"
@@ -719,9 +751,7 @@ local function performEntry()
         return false, msg
     end
 
-    -- ปิด chat core GUI กัน prompt "Unlock chat (age check)" ของ Roblox มาบัง/แย่งคลิกตอนกดด่าน (เวอร์ชั่นเก่าโดนบั๊กนี้)
-    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false) end)
-    pcall(function() game:GetService("StarterGui"):SetCore("ChatActive", false) end)
+    aoCloseChat()   -- กัน prompt "Unlock chat (age check)" มาบัง/แย่งคลิก (เวอร์ชั่นเก่าโดนบั๊กนี้)
 
     local pg = player:FindFirstChildOfClass("PlayerGui")
     local mainUI = pg and pg:FindFirstChild("MainUI")
@@ -751,6 +781,7 @@ local function performEntry()
     if tab then aoClick(tab, "แท็บ " .. mode); task.wait(0.4) end
 
     -- (5) เลือกโลก
+    aoCloseChat()   -- prompt แชทมักโผล่ตอนหน้า MapSelect เปิด → ปิดก่อนกดด่าน
     local worldBtn = aoFind(content, "WorldSelect", "ScrollingFrame", mapV)
     if not worldBtn then return fail("ไม่เจอปุ่มโลก " .. mapV) end
     aoClick(worldBtn, "โลก " .. selectedMap.Label)
