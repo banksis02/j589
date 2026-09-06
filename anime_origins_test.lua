@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.6"
+local AO_TEST_VERSION = "2.7"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -629,13 +629,16 @@ end
 --                        → Difficulty[diff] → BottomFrame.Buttons.Start (Select) → PartyFrame.Buttons.Start
 -- ============================================================
 local VIM_AO = game:GetService("VirtualInputManager")
+local GuiService_AO = game:GetService("GuiService")
 
+-- ⚠️ ต้องบวก inset.Y (เหมือน AE vimClickBtn) — ไม่งั้นคลิกสูงไปเท่า topbar (~36-48px) ไปโดนปุ่มบน
 local function aoVimClick(obj)
     if not obj then return false end
     return pcall(function()
+        local inset = GuiService_AO:GetGuiInset()
         local ap, sz = obj.AbsolutePosition, obj.AbsoluteSize
         local x = ap.X + sz.X / 2
-        local y = ap.Y + sz.Y / 2
+        local y = ap.Y + sz.Y / 2 + inset.Y
         VIM_AO:SendMouseMoveEvent(x, y, game)
         task.wait(0.03)
         VIM_AO:SendMouseButtonEvent(x, y, 0, true, game, 0)
@@ -651,8 +654,9 @@ local function aoClick(obj, label)
         return false
     end
     local okc, sx, sy = pcall(function()
+        local inset = GuiService_AO:GetGuiInset()
         local ap, sz = obj.AbsolutePosition, obj.AbsoluteSize
-        return math.floor(ap.X + sz.X / 2), math.floor(ap.Y + sz.Y / 2)
+        return math.floor(ap.X + sz.X / 2), math.floor(ap.Y + sz.Y / 2 + inset.Y)
     end)
     aoVimClick(obj)
     if AO_HEADLESS then
