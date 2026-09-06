@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.4"
+local AO_TEST_VERSION = "2.5"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -623,6 +623,63 @@ local function selectGameStageUI()
     )
 end
 
+-- ============================================================
+-- ⭐ UI ใหม่ (2026-09): เข้าด่านแบบ "กดปุ่มจริง" (fire connection + VIM คลิกกลางปุ่ม) — เลิกยิง remote
+--   flow ยืนยันจาก dump: Play → CoreSelection[โหมด] → WorldSelect[map] → ActSelect[act]
+--                        → Difficulty[diff] → BottomFrame.Buttons.Start (Select) → PartyFrame.Buttons.Start
+-- ============================================================
+local VIM_AO = game:GetService("VirtualInputManager")
+
+local function aoVimClick(obj)
+    if not obj then return false end
+    return pcall(function()
+        local ap, sz = obj.AbsolutePosition, obj.AbsoluteSize
+        local x = ap.X + sz.X / 2
+        local y = ap.Y + sz.Y / 2
+        VIM_AO:SendMouseMoveEvent(x, y, game)
+        task.wait(0.03)
+        VIM_AO:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.04)
+        VIM_AO:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+end
+
+-- กดปุ่ม: fire connection (ไม่ง้อพิกัด) + คลิกจริงด้วย VIM (เผื่อ handler ผูกกับ input จริง) = ชัวร์สุด
+local function aoClick(obj, label)
+    if not obj then
+        if AO_HEADLESS then print("[AO ENTER] ✗ ไม่เจอปุ่ม: " .. tostring(label)) end
+        return false
+    end
+    pcall(fireGuiButton, obj)
+    aoVimClick(obj)
+    if AO_HEADLESS then print("[AO ENTER] ✓ กด " .. tostring(label)) end
+    return true
+end
+
+local function aoFind(root, ...)
+    local node = root
+    for _, name in ipairs({...}) do
+        if not node then return nil end
+        node = node:FindFirstChild(name)
+    end
+    return node
+end
+
+-- รอจน getter() คืน object ที่ Visible (ไล่ขึ้นถึง ScreenGui) ภายใน timeout
+local function aoWaitVisible(getter, timeout)
+    local t0 = os.clock()
+    while os.clock() - t0 < timeout do
+        local obj = getter()
+        if obj then
+            local vis, n = true, obj
+            while n and n:IsA("GuiObject") do if not n.Visible then vis = false break end n = n.Parent end
+            if vis then return obj end
+        end
+        task.wait(0.15)
+    end
+    return nil
+end
+
 local function performEntry()
     if busy then
         return false, "entry already running"
@@ -634,58 +691,89 @@ local function performEntry()
         return false, status.Text
     end
 
-    local lobbyRemotes = ReplicatedStorage:FindFirstChild("LobbyRemotes")
-    local remote = lobbyRemotes and lobbyRemotes:FindFirstChild("MapSelectRemote")
-    local partyRemote = lobbyRemotes and lobbyRemotes:FindFirstChild("PartyRemote")
-    if not remote then
-        status.Text = "ไม่พบ LobbyRemotes.MapSelectRemote"
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
-        return false, status.Text
-    end
-
     busy = true
-    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] starting " .. selectedMode .. " / " .. selectedMap.Label .. " / " .. selectedAct.Label) end
-    enterButton.Text = "SENDING..."
-    status.Text = string.format("%s | %s | %s", selectedMode, selectedMap.Label, selectedAct.Label)
-    status.TextColor3 = Color3.fromRGB(255, 213, 106)
-
-    -- ⭐ UI ใหม่ (2026-09): เข้าด่านผ่าน remote ล้วน — ไม่ต้องเดินประตู Pod อีก (เกมเปลี่ยน UI)
-    --   flow (จาก ao_entry2 recon): PartyRemote(CreateParty,true) → MapSelectRemote(SelectMap,...) → PartyRemote(StartParty)
-    local diff = tostring(_G.AO_DIFFICULTY or "Hard")   -- ฟาร์มใช้ Hard (รางวัลดีสุด) | override ได้ด้วย _G.AO_DIFFICULTY
-    local mode = selectedMode
-    local mapV = selectedMap.Value
-    local actV = selectedAct.Value
-    if AO_HEADLESS then print(("[AO ENTER v%s] (UI ใหม่ remote) %s / %s / %s / %s"):format(AO_TEST_VERSION, mode, mapV, actV, diff)) end
-    enterButton.Text = "SENDING..."
+    local diff = tostring(_G.AO_DIFFICULTY or "Hard")   -- ฟาร์มใช้ Hard | override ด้วย _G.AO_DIFFICULTY
+    local mode = selectedMode                            -- "Story" / "Legend"
+    local mapV = selectedMap.Value                       -- "WestCity" ...
+    local actName = tostring(selectedAct.Value)          -- "1".."6" / "Infinite" / "Legend1"
+    if mode == "Legend" then actName = actName:match("%d+") or actName end   -- Legend act ใช้เลขล้วน
+    if AO_HEADLESS then print(("[AO ENTER v%s] (กดจริง) %s / %s / %s / %s"):format(AO_TEST_VERSION, mode, mapV, actName, diff)) end
+    enterButton.Text = "ENTERING..."
     status.Text = string.format("%s | %s | %s | %s", mode, selectedMap.Label, selectedAct.Label, diff)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
-    -- ลำดับตรงตามที่ ao_entry2 recon จับตอนกดมือ:
-    --   PartyRemote(CreateParty,true) → MapSelectRemote(StartSelection,...) → MapSelectRemote(SelectMap,...) → PartyRemote(StartParty)
-    -- ก่อนหน้านี้ข้าม StartSelection ไป → server ยังไม่เข้า state เลือกด่าน → StartParty เลย no-op (ยิงได้แต่ไม่เข้า)
-    local ok, err = pcall(function()
-        if partyRemote then pcall(function() partyRemote:FireServer("CreateParty", true) end); task.wait(0.6) end   -- (1) Open Party
-        if AO_HEADLESS then print("[AO ENTER] step1 CreateParty ✓") end
-        remote:FireServer("StartSelection", mode, mapV, actV, diff)   -- (2) เข้าโหมดเลือกด่าน (ที่ขาดไป!)
-        task.wait(0.6)
-        if AO_HEADLESS then print("[AO ENTER] step2 StartSelection ✓") end
-        remote:FireServer("SelectMap", mode, mapV, actV, diff, {      -- (3) เลือกด่าน/act/diff
-            Difficulty = diff, WorldName = mapV, DisplayGameMode = mode, StageType = mode, GameMode = mode
-        })
-        task.wait(1.0)
-        if AO_HEADLESS then print("[AO ENTER] step3 SelectMap ✓") end
-        if partyRemote then partyRemote:FireServer("StartParty") end  -- (4) ★ Start เข้าด่าน
-        if AO_HEADLESS then print("[AO ENTER] step4 StartParty ✓") end
-    end)
-    if not ok then
-        status.Text = "FireServer error: " .. tostring(err)
-        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+    local function fail(msg)
         busy = false
         enterButton.Text = "SELECT STAGE"
-        return false, status.Text
+        status.Text = msg
+        status.TextColor3 = Color3.fromRGB(255, 121, 121)
+        return false, msg
     end
-    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] SelectMap+StartParty fired → รอเข้าด่าน") end
 
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    local mainUI = pg and pg:FindFirstChild("MainUI")
+    if not mainUI then return fail("ไม่พบ MainUI") end
+
+    -- (1) กด Play เปิดหน้าเลือกโหมด
+    aoClick(aoFind(mainUI, "HUD", "LeftButtons", "Play") or aoFind(mainUI, "HUD", "Play"), "Play")
+
+    -- (2) รอ CoreSelection แล้วกด tile โหมด (Story/Legend)
+    local coreItems = aoWaitVisible(function()
+        return aoFind(mainUI, "MapSelect", "CoreSelection", "Main", "ScrollingFrame", "CoreModes", "Items")
+    end, 8)
+    if coreItems then
+        aoClick(coreItems:FindFirstChild(mode), "โหมด " .. mode)
+    elseif AO_HEADLESS then
+        print("[AO ENTER] CoreSelection ไม่โผล่ (อาจเปิด MapSelect อยู่แล้ว) — ไปต่อ")
+    end
+
+    -- (3) รอ MapSelectFrame ContentFrame
+    local content = aoWaitVisible(function()
+        return aoFind(mainUI, "MapSelect", "MapSelectFrame", "Main", "ContentFrame")
+    end, 10)
+    if not content then return fail("หน้า MapSelect ไม่เปิดภายใน 10 วิ") end
+
+    -- (4) แท็บ Story/Legend
+    local tab = aoFind(content, "StageSelection", "Main", mode)
+    if tab then aoClick(tab, "แท็บ " .. mode); task.wait(0.4) end
+
+    -- (5) เลือกโลก
+    local worldBtn = aoFind(content, "WorldSelect", "ScrollingFrame", mapV)
+    if not worldBtn then return fail("ไม่เจอปุ่มโลก " .. mapV) end
+    aoClick(worldBtn, "โลก " .. selectedMap.Label)
+    task.wait(0.5)
+
+    -- (6) เลือก act
+    local actBtn = aoFind(content, "ActSelect", actName)
+    if not actBtn then return fail("ไม่เจอปุ่ม act " .. actName) end
+    aoClick(actBtn, "act " .. selectedAct.Label)
+    task.wait(0.5)
+
+    -- (7) ความยาก
+    local diffBtn = aoFind(content, "ActFrame", "Difficulty", diff)
+    if diffBtn then aoClick(diffBtn, diff); task.wait(0.4) end
+
+    -- (8) ปุ่ม Select/Start ใน MapSelect → เปิด PartyFrame
+    local selBtn = aoFind(content, "BottomFrame", "Buttons", "Start")
+    if not selBtn then return fail("ไม่เจอปุ่ม Select (BottomFrame.Buttons.Start)") end
+    aoClick(selBtn, "Select (ยืนยันด่าน)")
+
+    -- (9) รอ PartyFrame แล้วกด Start เข้าด่าน
+    local function getPartyStart()
+        return aoFind(mainUI, "MapSelect", "PartyFrame", "Main", "Buttons", "Start")
+    end
+    local partyStart = aoWaitVisible(getPartyStart, 10)
+    if partyStart then
+        task.wait(0.4)
+        aoClick(partyStart, "Start (เข้าด่าน)")
+    else
+        if AO_HEADLESS then print("[AO ENTER] PartyFrame ไม่โผล่ — กด Select ซ้ำ") end
+        aoClick(selBtn, "Select ซ้ำ")
+        partyStart = aoWaitVisible(getPartyStart, 6)
+        if partyStart then task.wait(0.4); aoClick(partyStart, "Start (เข้าด่าน)") end
+    end
+
+    if AO_HEADLESS then print("[AO ENTER v" .. AO_TEST_VERSION .. "] กดครบทุกปุ่ม → รอเข้าด่าน") end
     enterButton.Text = "WAITING FOR GAME..."
     local waitStarted = os.clock()
     while game.PlaceId == AO_LOBBY_PLACE_ID and os.clock() - waitStarted < 30 do
@@ -694,9 +782,9 @@ local function performEntry()
     busy = false
     enterButton.Text = "SELECT STAGE"
     if game.PlaceId == AO_LOBBY_PLACE_ID then
-        return false, "ยิง SelectMap+StartParty แล้ว แต่ครบ 30 วิยังอยู่ Lobby"
+        return false, "กดครบทุกปุ่มแล้ว แต่ครบ 30 วิยังอยู่ Lobby"
     end
-    return true, string.format("เข้าด่าน %s/%s/%s (%s)", mode, mapV, actV, diff)
+    return true, string.format("เข้าด่าน %s/%s/%s (%s)", mode, mapV, actName, diff)
 end
 
 enterButton.MouseButton1Click:Connect(performEntry)
