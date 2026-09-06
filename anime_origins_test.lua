@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.3"
+local AO_TEST_VERSION = "2.4"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -660,13 +660,22 @@ local function performEntry()
     status.Text = string.format("%s | %s | %s | %s", mode, selectedMap.Label, selectedAct.Label, diff)
     status.TextColor3 = Color3.fromRGB(255, 213, 106)
 
+    -- ลำดับตรงตามที่ ao_entry2 recon จับตอนกดมือ:
+    --   PartyRemote(CreateParty,true) → MapSelectRemote(StartSelection,...) → MapSelectRemote(SelectMap,...) → PartyRemote(StartParty)
+    -- ก่อนหน้านี้ข้าม StartSelection ไป → server ยังไม่เข้า state เลือกด่าน → StartParty เลย no-op (ยิงได้แต่ไม่เข้า)
     local ok, err = pcall(function()
-        if partyRemote then pcall(function() partyRemote:FireServer("CreateParty", true) end); task.wait(0.5) end   -- Open Party
-        remote:FireServer("SelectMap", mode, mapV, actV, diff, {
+        if partyRemote then pcall(function() partyRemote:FireServer("CreateParty", true) end); task.wait(0.6) end   -- (1) Open Party
+        if AO_HEADLESS then print("[AO ENTER] step1 CreateParty ✓") end
+        remote:FireServer("StartSelection", mode, mapV, actV, diff)   -- (2) เข้าโหมดเลือกด่าน (ที่ขาดไป!)
+        task.wait(0.6)
+        if AO_HEADLESS then print("[AO ENTER] step2 StartSelection ✓") end
+        remote:FireServer("SelectMap", mode, mapV, actV, diff, {      -- (3) เลือกด่าน/act/diff
             Difficulty = diff, WorldName = mapV, DisplayGameMode = mode, StageType = mode, GameMode = mode
         })
-        task.wait(0.8)
-        if partyRemote then partyRemote:FireServer("StartParty") end   -- ★ = กด Start เข้าด่าน
+        task.wait(1.0)
+        if AO_HEADLESS then print("[AO ENTER] step3 SelectMap ✓") end
+        if partyRemote then partyRemote:FireServer("StartParty") end  -- (4) ★ Start เข้าด่าน
+        if AO_HEADLESS then print("[AO ENTER] step4 StartParty ✓") end
     end)
     if not ok then
         status.Text = "FireServer error: " .. tostring(err)
