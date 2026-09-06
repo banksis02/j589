@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.84"
+local SCRIPT_VERSION = "v11.85"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -2718,6 +2718,34 @@ if GAME_ID == "anime_expeditions" then
         end)
         closeStrayDialogs()
         uiRelease()
+        -- ⭐ ปิด chat/prompt "Unlock chat (age check)" หลังตั้งค่าเสร็จ — กันมาบัง/แย่งคลิกตอนวางตัว/เข้าด่าน
+        pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false) end)
+        pcall(function() game:GetService("StarterGui"):SetCore("ChatActive", false) end)
+        pcall(function()
+            local TCS = game:GetService("TextChatService")
+            for _, c in ipairs(TCS:GetChildren()) do
+                if c:IsA("ChatWindowConfiguration") or c:IsA("ChatInputBarConfiguration") then
+                    pcall(function() c.Enabled = false end)
+                end
+            end
+        end)
+        pcall(function()
+            local cg = (gethui and gethui()) or game:GetService("CoreGui")
+            for _, d in ipairs(cg:GetDescendants()) do
+                if (d:IsA("ImageButton") or d:IsA("TextButton")) and d.Visible then
+                    local nm = string.lower(d.Name)
+                    if nm:find("chat") and d.AbsoluteSize.X > 0 and d.AbsolutePosition.Y < 70 then
+                        local x = d.AbsolutePosition.X + d.AbsoluteSize.X / 2
+                        local y = d.AbsolutePosition.Y + d.AbsoluteSize.Y / 2
+                        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+                        task.wait(0.04)
+                        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+                        print(("[AE Settings] ปิด chat: คลิกไอคอน %s @ %d,%d"):format(d.Name, math.floor(x), math.floor(y)))
+                        break
+                    end
+                end
+            end
+        end)
         _G.AE_SETTINGS_DONE = true
         if not ok then warn("[AE Settings] ❌ error: " .. tostring(err)) end
     end
