@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.85"
+local SCRIPT_VERSION = "v11.86"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -14054,6 +14054,7 @@ _G.AE_PORTAL_RUN=function()
         L("🌀🌀 เริ่มโหมด Portal Mode")
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
         local failStreak=0
+        local lastPortalNotify=0   -- ⭐ กัน notify "จบด่าน" สแปม ตอน loop ค้าง (inPortalStage false-positive บนจอ Victory)
         while running and portalRunning and MYGEN==_G.AE_SCRIPT_GEN do
             -- 1) อยู่ล็อบบี้ (ไม่มี Map.Paths) → เปิด portal ใหม่ | ถ้าอยู่ในด่านแล้ว ข้ามไปวางตัวเลย
             if not inPortalStage() then
@@ -14103,7 +14104,7 @@ _G.AE_PORTAL_RUN=function()
                     end
                     if picking or r=="lose" or r=="win" then
                         L(("  %s → portal จบ → จัดการหน้าเลือก portal → Select Portal"):format(r=="win" and "🏆 ชนะ" or r=="lose" and "💀 แพ้" or "🎁 เลือก portal"))
-                        notify("🌀 Portal", "จบด่าน → เปิด portal ใหม่", 5)
+                        if tick()-lastPortalNotify>20 then notify("🌀 Portal", "จบด่าน → เปิด portal ใหม่", 5); lastPortalNotify=tick() end
                         stopFishing(); task.wait(1)
                         -- 1) หน้าเลือก portal 3 อัน (Prompt) → กดการ์ดซ้ายสุด / รอ auto-select (สูงสุด 12วิ)
                         local pw=tick()
