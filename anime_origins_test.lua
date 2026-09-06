@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.5"
+local AO_TEST_VERSION = "2.6"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -644,15 +644,20 @@ local function aoVimClick(obj)
     end)
 end
 
--- กดปุ่ม: fire connection (ไม่ง้อพิกัด) + คลิกจริงด้วย VIM (เผื่อ handler ผูกกับ input จริง) = ชัวร์สุด
+-- กดปุ่ม: จำลองเมาส์จริงล้วน (VIM) เหมือน AE — ไม่ fire connection (กันจอดำ/ยิง handler เกิน)
 local function aoClick(obj, label)
     if not obj then
         if AO_HEADLESS then print("[AO ENTER] ✗ ไม่เจอปุ่ม: " .. tostring(label)) end
         return false
     end
-    pcall(fireGuiButton, obj)
+    local okc, sx, sy = pcall(function()
+        local ap, sz = obj.AbsolutePosition, obj.AbsoluteSize
+        return math.floor(ap.X + sz.X / 2), math.floor(ap.Y + sz.Y / 2)
+    end)
     aoVimClick(obj)
-    if AO_HEADLESS then print("[AO ENTER] ✓ กด " .. tostring(label)) end
+    if AO_HEADLESS then
+        print(("[AO ENTER] ✓ กด %s @ %s,%s"):format(tostring(label), okc and tostring(sx) or "?", okc and tostring(sy) or "?"))
+    end
     return true
 end
 
