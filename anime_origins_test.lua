@@ -3,7 +3,7 @@
 -- Standalone test only - not part of s789
 -- ============================================================
 
-local AO_TEST_VERSION = "2.7"
+local AO_TEST_VERSION = "2.8"
 local AO_LOBBY_PLACE_ID = 129932912185311
 local AO_HEADLESS = _G.AO_HEADLESS == true
 
@@ -718,6 +718,10 @@ local function performEntry()
         status.TextColor3 = Color3.fromRGB(255, 121, 121)
         return false, msg
     end
+
+    -- ปิด chat core GUI กัน prompt "Unlock chat (age check)" ของ Roblox มาบัง/แย่งคลิกตอนกดด่าน (เวอร์ชั่นเก่าโดนบั๊กนี้)
+    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false) end)
+    pcall(function() game:GetService("StarterGui"):SetCore("ChatActive", false) end)
 
     local pg = player:FindFirstChildOfClass("PlayerGui")
     local mainUI = pg and pg:FindFirstChild("MainUI")
