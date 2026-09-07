@@ -165,6 +165,16 @@ local function sendOnce()
         },
         growingEggs = eggs,
         matchInfo   = { map = area, wave = 0 },
+        -- ⭐ บันทึกลง Mission Log ทุกรอบ (เงิน/ความเร็ว/เวลา) — backend ใส่ timestamp เอง
+        recentLog   = {
+            act      = money,
+            file     = area,
+            playTime = "",
+            quantity = speed,
+            rewards  = speed,
+            status   = "SNAPSHOT",
+            wave     = 0,
+        },
     }
 
     local ok, res = pcall(function()
