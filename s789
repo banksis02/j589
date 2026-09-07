@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.91"
+local SCRIPT_VERSION = "v11.92"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -4040,6 +4040,7 @@ if GAME_ID == "anime_origins" then
     local AO_RAW = "https://raw.githubusercontent.com/banksis02/j589/main/"
     local aoCurrentJob = nil
     local aoEnteredKey = ""   -- คีย์งานรวม fixed/cycle — เปลี่ยน = กลับล็อบบี้เข้างานใหม่
+    local aoJobSwitchPending = false
     local aoFarming = false
     local aoLobbyLoaded = false
     local aoGameLoaded = false
@@ -4670,6 +4671,7 @@ if GAME_ID == "anime_origins" then
                         SCRIPT_VERSION, aoMansionFloor, aoMansionConsecutiveLosses, aoMansionLossLimit()))
                 end
                 if game.PlaceId == AO_LOBBY_PLACE_ID then
+                    aoJobSwitchPending = false
                     aoFarming = false
                     if os.clock() - aoLastLobbyAttempt >= 45 then
                         aoLastLobbyAttempt = os.clock()
@@ -4682,7 +4684,9 @@ if GAME_ID == "anime_origins" then
                         and (aoCurrentJob.legendActMode == "cycle" and "cycle" or "fixed") or ""
                     local key = tostring(aoCurrentJob.mode) .. ":" .. tostring(aoCurrentJob.stage)
                         .. ":" .. tostring(aoCurrentJob.difficulty) .. ":" .. legendMode
-                    if aoFarming and aoEnteredKey ~= "" and key ~= aoEnteredKey then
+                    if aoJobSwitchPending then
+                        -- A blocked teleport must not start the new mode in the old match.
+                    elseif aoFarming and aoEnteredKey ~= "" and key ~= aoEnteredKey then
                         -- ⭐ งานเปลี่ยนระหว่างฟาร์ม → กลับล็อบบี้ไปเข้างานใหม่ (เดิมวน Replay ด่านเก่า)
                         if aoCurrentJob.mode == "ao_legend" then
                             print(string.format(
@@ -4699,7 +4703,7 @@ if GAME_ID == "anime_origins" then
                             print("[AO " .. SCRIPT_VERSION .. "] งานเปลี่ยน: " .. aoEnteredKey
                                 .. " -> " .. key .. " → กลับล็อบบี้")
                             aoStop()
-                            aoEnteredKey = ""
+                            aoJobSwitchPending = true
                             aoLastLobbyAttempt = 0
                             pcall(function()
                                 game:GetService("TeleportService"):Teleport(AO_LOBBY_PLACE_ID, player)
@@ -4856,6 +4860,24 @@ if GAME_ID == "anime_origins" then
     local function aoClickReplay()
         return aoClickEndButton("Replay")
     end
+
+    -- Teleport may be blocked by the client. Keep the new workflow paused
+    -- and leave through the game's own result button when the match ends.
+    task.spawn(function()
+        while SCRIPT_GEN == _G.AE_SCRIPT_GEN do
+            if aoJobSwitchPending and aoCurrentJob and aoCurrentJob.status == "active" then
+                if game.PlaceId == AO_LOBBY_PLACE_ID then
+                    aoJobSwitchPending = false
+                else
+                    local frame = aoVictoryFrame()
+                    if frame and frame.Visible then
+                        pcall(aoClickEndButton, "Lobby")
+                    end
+                end
+            end
+            task.wait(1)
+        end
+    end)
 
     local function aoResultFloor()
         local floor = 0
