@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.90"
+local SCRIPT_VERSION = "v11.91"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3397,7 +3397,10 @@ if GAME_ID == "anime_expeditions" then
     local farmingActive = false
     local farmMode = "act1"   -- ⭐ "act1" = ฟาร์มเพชร Act1 Hard | "actM" = ฟาร์มด่าน M
     local farmStage = "School Grounds"   -- ⭐ ด่านที่เลือกจาก dropdown ใน UI
-    local ghEnteredAt = 0                 -- ⭐ Golden Hour: เวลาที่เข้ารอบ GH ล่าสุด (กลับ lobby หา GH ใหม่ทุก 30 นาที)
+    -- ⭐ Golden Hour = ตัวเสริมบนงานฟามหลัก (GH ให้รางวัลแค่รอบแรก):
+    --    เล่น GH 1 รอบ → ฟามด่านหลักที่ลูกค้าเลือก จนครบ 30 นาที → ออกไปเล่น GH รอบใหม่ วนไป
+    local ghPhase  = "gh"                 -- "gh" = ไปเล่น Golden Hour 1 รอบ | "main" = ฟามด่านหลัก
+    local ghLastGH = 0                    -- os.clock ตอนเล่น GH รอบล่าสุด (ครบ 30 นาที = ไป GH ใหม่)
     local function isFarmingActive() return farmingActive end
 
     local function startFarm(mode, stage)
@@ -3405,6 +3408,7 @@ if GAME_ID == "anime_expeditions" then
         farmingActive = true
         farmMode = mode or "act1"
         if stage then farmStage = stage end
+        if farmMode == "golden_hour" then ghPhase = "gh"; ghLastGH = 0 end  -- ⭐ เริ่มงาน GH = เล่น GH ก่อน
         print("[AE Farm] ▶ เริ่มฟาร์ม (mode: " .. farmMode .. " | ด่าน: " .. farmStage .. ")")
 
         -- ⭐ v8.5: โหมด Expedition → ใช้ระบบ Expedition ทั้งชุด (ไม่ใช้ลูปฟาร์มปกติ)
@@ -3602,9 +3606,14 @@ if GAME_ID == "anime_expeditions" then
                         print("[AE Farm] ▶️ [3] เข้าด่าน M")
                         entered = enterStageSequence(farmStage, "M", false)
                     elseif farmMode == "golden_hour" then
-                        -- ⭐ Golden Hour: หาด่านที่มี GH → เข้าเล่น (วางตัวเหมือนฟามเพชร)
-                        entered = enterGoldenHour()
-                        if entered then ghEnteredAt = os.clock() end
+                        -- ⭐ Golden Hour (ตัวเสริม): สลับ GH 1 รอบ ↔ ฟามด่านหลัก (วางตัวเหมือนฟามเพชร)
+                        if ghPhase == "gh" then
+                            print("[AE Farm] 🌟 [GH] เข้าเล่น Golden Hour 1 รอบ")
+                            entered = enterGoldenHour()
+                        else
+                            print("[AE Farm] 🌟 [หลัก] ฟามด่าน " .. tostring(farmStage) .. " Act 1 Hard")
+                            entered = enterStageSequence(farmStage, "1", true)
+                        end
                     else
                         entered = enterStageSequence(farmStage, "1", true)    -- Act 1 + Hard
                     end
@@ -3662,13 +3671,25 @@ if GAME_ID == "anime_expeditions" then
 
                         -- ⭐ v9.17: โหมด M กลับ Lobby "เฉพาะตอน Grey เต็ม 125 จริง" (อ่านจากกระเป๋า)
                         --    ไม่ใช้เงื่อนไข not greyKnownSynced อีก (มันบังคับกลับทุกรอบ = บัค)
+                        -- ⭐ Golden Hour: ตัดสินใจสลับเฟส (เล่น GH จบ → ไปฟามหลัก | ครบ 30 นาที → ไป GH ใหม่)
+                        local ghGoLobby = nil
+                        if farmMode == "golden_hour" then
+                            if ghPhase == "gh" then
+                                ghLastGH = os.clock(); ghPhase = "main"; ghGoLobby = "gh_done"
+                            elseif (os.clock() - ghLastGH) >= 30 * 60 then
+                                ghPhase = "gh"; ghGoLobby = "gh_next"
+                            end
+                        end
                         if farmMode == "actM" and greyKnown >= CRAFT_GREY_FULL then
                             print("[AE Farm] 💿 Grey เต็มแล้ว (" .. greyKnown .. "/" .. CRAFT_GREY_FULL .. ") → กลับ Lobby ไปคราฟ")
                             backToLobby()
                             task.wait(8)  -- รอโหลดกลับ lobby (loop รอบหน้าจะคราฟ + เข้าด่านเอง)
-                        elseif farmMode == "golden_hour" and (os.clock() - ghEnteredAt) >= 30 * 60 then
-                            -- ⭐ Golden Hour ย้ายด่านทุก 30 นาที → กลับ Lobby หา GH ใหม่ (loop รอบหน้า enterGoldenHour เอง)
-                            print("[AE Farm] 🌟 Golden Hour ครบ ~30 นาที → กลับ Lobby หา Golden Hour ด่านใหม่")
+                        elseif ghGoLobby == "gh_done" then
+                            print("[AE Farm] 🌟 เล่น Golden Hour จบ 1 รอบ (ได้รางวัลแล้ว) → กลับ Lobby ไปฟามด่านหลัก " .. tostring(farmStage))
+                            backToLobby()
+                            task.wait(8)
+                        elseif ghGoLobby == "gh_next" then
+                            print("[AE Farm] 🌟 ครบ ~30 นาที → กลับ Lobby ไปเล่น Golden Hour รอบใหม่")
                             backToLobby()
                             task.wait(8)
                         else
