@@ -349,20 +349,34 @@ end)
 
 -- ลูปวาง
 task.spawn(function()
+    local sawEnd = false   -- ⭐ เคยเห็นปุ่ม Repeat (จบด่าน) ในรอบนี้แล้วหรือยัง
     while true do
         task.wait(2)
         if carryOn and not recording then
             local info = getCurrentStageKey()
+            local repeatBtn = findRepeatBtn()
+            if repeatBtn then sawEnd = true end   -- จบด่าน → รอรีเพล
             if not info then
                 playedThisMatch = false
+                sawEnd = false
             else
                 local units = unitCount()
+                -- ⭐ รอบใหม่: ปุ่ม Repeat "หายหลังเคยโผล่" = เกมรีเพลเข้ารอบใหม่แล้ว → ต้องวางใหม่
+                --    (แก้บั๊ก: เดิมป้ายด่านไม่หาย + ตัวไม่เป็น 0 พอดี → flag ค้าง ไม่วางหลังรีเพล)
+                if sawEnd and not repeatBtn then
+                    sawEnd = false
+                    if playedThisMatch then
+                        print("[Carry] 🔄 รอบใหม่เริ่ม (Repeat หาย) → วางใหม่")
+                        playedThisMatch = false
+                    end
+                end
+                -- สำรอง: ตัวในสนามหาย (ตาใหม่)
                 if playedThisMatch and units == 0 and lastUnitsSeen > 0 then
                     print("[Carry] 🔄 ตัวในสนามหาย (ตาใหม่) → วางรอบใหม่")
                     playedThisMatch = false
                 end
                 lastUnitsSeen = units
-                if not playedThisMatch and not findRepeatBtn() then
+                if not playedThisMatch and not repeatBtn then
                     local data = loadRecord(info)
                     if data then
                         playedThisMatch = true
