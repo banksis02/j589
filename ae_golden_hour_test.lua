@@ -128,12 +128,16 @@ local function findGHCardScroll()
     return nil
 end
 
--- อ่าน timer แท็บ GH บนจอ stage-select (ปุ่มที่ text = mm:ss)
+-- อ่านแท็บ GH บนจอ stage-select = ปุ่ม (Text หรือ "label ลูก") = mm:ss
+-- (จาก recon: ปุ่มแท็บเป็น PrimaryButton timer อยู่บน label ลูก ปุ่มเองว่าง)
 local function readGHTimer()
     for _, b in ipairs(playRoot():GetDescendants()) do
-        if b:IsA("TextButton") then
-            local t = strip(b.Text)
-            if string.match(t, "^%d+:%d%d$") then return t, b end
+        if (b:IsA("TextButton") or b:IsA("ImageButton")) then
+            local vis = true; pcall(function() vis = b.Visible end)
+            if vis then
+                local t = norm(btnText(b))
+                if string.match(t, "^%d+:%d%d$") then return t, b end
+            end
         end
     end
     return nil
@@ -153,9 +157,25 @@ ENV.AE_GH_ENTER = function()
     log("→ คลิกการ์ด " .. name)
     fireBtn(card)
     task.wait(1.5)
-    -- เลือกแท็บ GH (ปุ่ม timer mm:ss) ถ้ามี
+    -- เลือกแท็บ GH (บนสุด = ปุ่ม timer mm:ss) — ต้องคลิกก่อน ไม่งั้น Select Stage เข้า Act 1
     local tv, tb = readGHTimer()
-    if tb then log("→ แท็บ GH (เหลือ " .. tostring(tv) .. ") คลิก"); fireBtn(tb); task.wait(1) end
+    if tb then
+        log("→ แท็บ GH (เหลือ " .. tostring(tv) .. ") — คลิก")
+        fireBtn(tb); task.wait(1.3)
+    else
+        log("⚠️ ไม่เจอแท็บ timer — คลิกแท็บบนสุดของ tab list แทน")
+        local top
+        for _, f in ipairs(playRoot():GetDescendants()) do
+            if f:IsA("ScrollingFrame") and f.Visible and f.AbsoluteCanvasSize.Y > f.AbsoluteSize.Y + 20 then
+                for _, b in ipairs(f:GetDescendants()) do
+                    if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible then
+                        if not top or b.AbsolutePosition.Y < top.AbsolutePosition.Y then top = b end
+                    end
+                end
+            end
+        end
+        if top then log("→ คลิกแท็บบนสุด " .. top:GetFullName()); fireBtn(top); task.wait(1.3) end
+    end
     -- กดเริ่ม: ลอง Select Stage → ถ้ามี Start/Enter Matchmaking ค่อยกด
     log("ปุ่มบนจอตอนนี้: " .. (function()
         local names = {}
