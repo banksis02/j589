@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.86"
+local SCRIPT_VERSION = "v11.87"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3359,6 +3359,17 @@ if GAME_ID == "anime_expeditions" then
             return
         end
 
+        -- ⭐ v11.87: โหมด Infinite (ฟามเพชร ตัวเลือก inf) → เข้าด่าน Infinite แมพที่เลือก → เล่นวนจนแพ้แล้วเข้าใหม่
+        if farmMode == "inf" then
+            if _G.AE_INF_RUN then
+                print(("[AE Farm] ⚔️ Infinite — %s (เล่นวนจนแพ้)"):format(tostring(farmStage or "School Grounds")))
+                pcall(_G.AE_INF_RUN, tostring(farmStage or "School Grounds"))   -- ไม่ส่ง targetWave = endless (วนจนแพ้)
+            else
+                warn("[AE Farm] ❌ ไม่เจอระบบ Infinite (_G.AE_INF_RUN)")
+            end
+            return
+        end
+
         -- ⭐ โหมด ทำเควส (Bounty Board) → reroll<3★ → ทำ Legendary/Mythic → เคลม → Challenges → Gold Shop → fallback
         if farmMode == "quest" then
             farmingActive = false
@@ -3577,6 +3588,9 @@ if GAME_ID == "anime_expeditions" then
         end
         if farmMode == "portal" and _G.AE_PORTAL_STOP then   -- ⭐ v11.73
             pcall(_G.AE_PORTAL_STOP)
+        end
+        if farmMode == "inf" and _G.AE_INF_STOP then   -- ⭐ v11.87
+            pcall(_G.AE_INF_STOP)
         end
     end
 
@@ -3815,6 +3829,10 @@ if GAME_ID == "anime_expeditions" then
                     if wantMode == "portal" then
                         _G.AE_EVENT_NAME = job.eventName or "Summer Event"
                         if changed then print("[AE Remote] 🌀 Portal: "..tostring(_G.AE_EVENT_NAME).." (เล่น portal วนไป)") end
+                    end
+                    -- ⭐ v11.87: งาน Infinite (ฟามเพชร ตัวเลือก inf) — เล่น Infinite แมพที่เลือก วนจนแพ้ (นับเพชร)
+                    if wantMode == "inf" then
+                        if changed then print("[AE Remote] ⚔️ Infinite: "..tostring(wantStage).." (เล่นวนจนแพ้ — นับเพชร)") end
                     end
                     -- ⭐ งานทำเควส (Bounty) — รับ fallback (โหมด/ด่าน) จากเว็บ หลังเควสครบ
                     if wantMode == "quest" then
@@ -15037,7 +15055,10 @@ end
 local running=false
 _G.AE_INF_STOP=function() running=false; L("⏹ หยุด Infinite") end
 _G.AE_INF_RUN=function(mapName, targetWave)
-    mapName=mapName or "School Grounds"; targetWave=tonumber(targetWave) or 15
+    mapName=mapName or "School Grounds"
+    -- ⭐ v11.87: ไม่ส่ง targetWave (job mode) = endless → เล่นวนจนแพ้แล้วเข้าใหม่ | ส่ง targetWave (UI) = ถึง wave แล้วออก
+    local endless = (targetWave==nil) or (tonumber(targetWave)==0)
+    targetWave=tonumber(targetWave) or 0
     if running then L("กำลังทำงานอยู่"); return end
     running=true
     -- ตัวเช็ค "อยู่ในด่าน" — ใช้ของสคริปต์หลักก่อน (แม่นสุด) แล้ว fallback ตัวเอง
@@ -15049,34 +15070,45 @@ _G.AE_INF_RUN=function(mapName, targetWave)
     task.spawn(function()
         -- ตั้งค่า (auto-skip/vote/upgrade เปิด) ครั้งเดียว
         if _G.AE_APPLY_SETTINGS and not _G.AE_QUEST_SET_DONE then L("⚙️ ตั้งค่า auto-skip/vote/upgrade"); pcall(_G.AE_APPLY_SETTINGS); _G.AE_QUEST_SET_DONE=true; task.wait(1) end
-        -- เข้าด่าน (best-effort — ไม่หยุดถ้า enter คืน false เพราะบางทีเข้าได้แต่ log ไม่ครบ)
-        if not inGame() then enterInfinite(mapName) end
-        -- รอเข้าด่านจริง (poll _G.AE_IN_GAME) — log ทุก 3 วิ
-        local t0=tick()
-        while running and not inGame() and tick()-t0<90 do
-            L(("  ⏳ รอเข้าด่าน... %ds"):format(math.floor(tick()-t0))); task.wait(3)
-        end
-        if not inGame() then L("⚠️ ไม่เข้าด่านใน 90 วิ"); notify("⚔️ Infinite","ไม่เข้าด่าน",6); running=false; return end
-        L("✅ อยู่ในด่านแล้ว → วางตัว (_G.AE_PLACE)")
-        -- ⭐ v9.48: โหมดเควสวางแบบ Villain (วางทุกตัวที่ใส่ ทุกโหลดเอาต์) — fallback AE_PLACE
-        if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end
-        task.wait(3)
-        -- เฝ้า wave
-        L(("👀 เฝ้า wave → เป้า %d (%s)"):format(targetWave, mapName))
-        local tick2=0
+        L(endless and ("🔁 Infinite (เล่นวนจนแพ้) — "..mapName) or ("🎯 Infinite เป้า wave "..targetWave.." — "..mapName))
+        -- ⭐ outer loop: endless = เข้าใหม่หลังแพ้ทุกรอบ | targetWave = รอบเดียว
         while running and MYGEN==_G.AE_SCRIPT_GEN do
-            if not inGame() then L("⚠️ ออกจากด่านแล้ว (แพ้?) → จบ"); notify("⚔️ Infinite","ออกจากด่าน (แพ้?)",6); break end
-            local w=curWave()
-            L(("  wave %d/%d"):format(w,targetWave))
-            if w>=targetWave then
-                L(("🏁 ถึง wave %d → ออกกลับล็อบบี้"):format(w))
-                if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
-                notify("⚔️ Infinite","✅ สำเร็จ! wave "..w.." "..mapName,6)
-                break
+            -- เข้าด่าน
+            if not inGame() then enterInfinite(mapName) end
+            local t0=tick()
+            while running and not inGame() and tick()-t0<90 do
+                L(("  ⏳ รอเข้าด่าน... %ds"):format(math.floor(tick()-t0))); task.wait(3)
             end
-            -- วางซ้ำทุก ~12 วิ (กันตัวตาย/วางไม่ครบตอนแรก)
-            tick2=tick2+1
-            if tick2%4==0 then L("  🔁 วางซ้ำ"); if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end end
+            if not inGame() then
+                L("⚠️ ไม่เข้าด่านใน 90 วิ")
+                if not endless then notify("⚔️ Infinite","ไม่เข้าด่าน",6); break end
+                task.wait(3)   -- endless: วนลองเข้าใหม่
+            else
+                L("✅ อยู่ในด่านแล้ว → วางตัว")
+                if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end
+                task.wait(3)
+                local tick2=0
+                while running and MYGEN==_G.AE_SCRIPT_GEN do
+                    if not inGame() then L("⚠️ ออกจากด่านแล้ว (แพ้/จบ)"); break end
+                    local w=curWave()
+                    L(("  wave %d%s"):format(w, endless and "" or ("/"..targetWave)))
+                    if (not endless) and w>=targetWave then
+                        L(("🏁 ถึง wave %d → ออกกลับล็อบบี้"):format(w))
+                        if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
+                        notify("⚔️ Infinite","✅ สำเร็จ! wave "..w.." "..mapName,6)
+                        running=false; break
+                    end
+                    -- วางซ้ำทุก ~12 วิ (กันตัวตาย/วางไม่ครบตอนแรก)
+                    tick2=tick2+1
+                    if tick2%4==0 then L("  🔁 วางซ้ำ"); if _G.AE_VILLAIN_PLACE then pcall(_G.AE_VILLAIN_PLACE) elseif _G.AE_PLACE then pcall(_G.AE_PLACE) end end
+                    task.wait(3)
+                end
+            end
+            if not (running and MYGEN==_G.AE_SCRIPT_GEN) then break end
+            if not endless then break end
+            -- endless: แพ้/ออกจากด่าน → กลับล็อบบี้ แล้ววนเข้าใหม่ (นับเพชรต่อเนื่อง)
+            L("  ↩️ แพ้/ออกด่าน → กลับล็อบบี้ เข้าใหม่")
+            if _G.AE_BACK_TO_LOBBY then pcall(_G.AE_BACK_TO_LOBBY) end
             task.wait(3)
         end
         running=false
