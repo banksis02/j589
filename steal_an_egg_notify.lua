@@ -1,13 +1,17 @@
 -- ============================================================
--- STEAL AN EGG — NOTIFY v0.1  (แจ้งเตือนขึ้น ggxshop.online ทุก 1 นาที)
---   อ่านล้วน + invoke AskLiveSnapshot (แบบเดียวกับ farm เดิม) — ไม่ hook
---   ส่ง: เงินรวม + ความเร็ว + ไข่ที่กำลังฟัก (ชื่อ+เวลาเหลือ)
+-- STEAL AN EGG — RUNTIME v0.2  (โหลดโดย s789 อัตโนมัติ / รันเองก็ได้)
+--   เกมนี้ "ไม่มีสคริปต์ฟามของเรา" — ลูกค้า/แอดมินใช้สคริปต์เจ้าอื่นฟาม
+--   หน้าที่ของตัวนี้:
+--     1) รายงาน farming=true ให้ automation-backend → เวลางานเดิน → ครบ → ล้างจอ
+--     2) ส่ง notify เงิน/ความเร็ว/ไข่ที่กำลังฟัก ขึ้น ggxshop.online (ทุก ~30 วิ)
+--     3) anti-AFK กันหลุด
+--   อ่านล้วน + invoke AskLiveSnapshot (ปลอดภัยแบบเดียวกับ farm เดิม) — ไม่ hook
 --
---   SAE_NOTIFY_ONCE()   = อ่าน+ส่ง 1 ครั้ง (ทดสอบ, print ผล)
---   SAE_NOTIFY_START()  = ส่งวนทุก 60 วิ   /   SAE_NOTIFY_STOP() = หยุด
+--   SAE_NOTIFY_ONCE()   = อ่าน+ส่ง 1 ครั้ง (ทดสอบ)
+--   SAE_NOTIFY_START()  = เริ่มลูป (auto เรียกตอนโหลด) /  SAE_NOTIFY_STOP() = หยุด
 -- ============================================================
 
-local SCRIPT_VERSION = "v0.1"
+local SCRIPT_VERSION = "v0.2"
 _G.SAE_NOTIFY_GEN = (_G.SAE_NOTIFY_GEN or 0) + 1
 local GEN = _G.SAE_NOTIFY_GEN
 local function alive() return GEN == _G.SAE_NOTIFY_GEN end
@@ -20,11 +24,12 @@ local PG          = player:WaitForChild("PlayerGui")
 local ENV         = (type(getgenv) == "function" and getgenv()) or _G
 
 local CFG = {
-    BACKEND_URL = "https://overload-backend-production.up.railway.app",
-    INTERVAL    = 60,   -- วินาที
+    BACKEND_URL    = "https://overload-backend-production.up.railway.app",
+    AUTOMATION_URL = "https://ggx-automation-backend-production.up.railway.app",
+    INTERVAL       = 30,   -- วินาที (≤90 เพื่อให้ automation นับเวลาต่อเนื่อง)
 }
 
-local function log(t) print("[SAE-NOTIFY " .. SCRIPT_VERSION .. "] " .. tostring(t)) end
+local function log(t) print("[SAE " .. SCRIPT_VERSION .. "] " .. tostring(t)) end
 
 -- ── helpers ─────────────────────────────────────────────────
 local function findDeep(root, ...)
@@ -37,7 +42,6 @@ local function findDeep(root, ...)
 end
 local function strip(s) return (tostring(s):gsub("<[^>]->", "")) end
 
--- ย่อเลขเป็น K/M/B/T/Qa/Qi (เผื่อ fallback จาก leaderstat ดิบ)
 local UNITS = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
 local function abbrev(n)
     n = tonumber(n) or 0
@@ -53,7 +57,6 @@ local function abbrev(n)
     return (neg and "-" or "") .. s .. UNITS[i]
 end
 
--- "1h 3m" / "27m 45s" / "38s" / "21h 56m" → วินาที
 local function parseTime(t)
     local sec = 0
     for num, unit in string.gmatch(tostring(t), "(%d+)%s*([dhms])") do
@@ -77,13 +80,10 @@ local function hudValue(kind)  -- "Money" | "Speed"
     end
     return nil
 end
-local function getMoney()
-    return hudValue("Money") or "?"
-end
+local function getMoney() return hudValue("Money") or "?" end
 local function getSpeed()
     local s = hudValue("Speed")
     if s then return s end
-    -- fallback: leaderstats.Speed (ดิบ) → ย่อเอง
     local ls = player:FindFirstChild("leaderstats")
     local sp = ls and ls:FindFirstChild("Speed")
     if sp then return abbrev(sp.Value) end
@@ -92,7 +92,7 @@ end
 
 -- ── ไข่ที่กำลังโต: GUI (uid+timer) + AskLiveSnapshot (ชื่อ) ────────
 local NET = findDeep(RS, "Packages", "Networking")
-local nameCache = {}  -- uid → ชื่อไข่ (AssetCategory)
+local nameCache = {}
 
 local function refreshNames()
     if not NET then return end
@@ -133,7 +133,6 @@ end
 
 local function getEggs()
     local slots = readGrowing()
-    -- ต้องรู้ชื่อ: ถ้ามี uid ไหนยังไม่ cache → invoke snapshot รอบเดียว
     local need = false
     for _, s in ipairs(slots) do if not nameCache[s.uid] then need = true break end end
     if need then pcall(refreshNames) end
@@ -145,42 +144,24 @@ local function getEggs()
     return eggs
 end
 
--- ── ส่งขึ้น backend ─────────────────────────────────────────
-local function sendOnce()
+-- ── ส่ง notify ขึ้น overload (ggxshop.online) ───────────────────
+local function sendNotify()
     local money, speed = getMoney(), getSpeed()
     local eggs = getEggs()
     local area = "Steal An Egg"
     pcall(function() local a = player:GetAttribute("AreaId"); if a then area = tostring(a) end end)
 
     local payload = {
-        username    = player.Name,
-        userId      = player.UserId,
-        serviceName = "Steal An Egg",
-        gameId      = "steal_an_egg",
-        farming     = true,
-        currentStats = {
-            money = money,
-            speed = speed,
-            growingCount = #eggs,
-        },
+        username = player.Name, userId = player.UserId,
+        serviceName = "Steal An Egg", gameId = "steal_an_egg", farming = true,
+        currentStats = { money = money, speed = speed, growingCount = #eggs },
         growingEggs = eggs,
-        matchInfo   = { map = area, wave = 0 },
-        -- ⭐ บันทึกลง Mission Log ทุกรอบ (เงิน/ความเร็ว/เวลา) — backend ใส่ timestamp เอง
-        recentLog   = {
-            act      = money,
-            file     = area,
-            playTime = "",
-            quantity = speed,
-            rewards  = speed,
-            status   = "SNAPSHOT",
-            wave     = 0,
-        },
+        matchInfo = { map = area, wave = 0 },
+        recentLog = { act = money, file = area, playTime = "", quantity = speed, rewards = speed, status = "SNAPSHOT", wave = 0 },
     }
-
     local ok, res = pcall(function()
         return HttpService:RequestAsync({
-            Url = CFG.BACKEND_URL .. "/api/overload/update",
-            Method = "POST",
+            Url = CFG.BACKEND_URL .. "/api/overload/update", Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
             Body = HttpService:JSONEncode(payload),
         })
@@ -188,23 +169,53 @@ local function sendOnce()
     local sent = ok and type(res) == "table" and res.Success
     local soon = {}
     for _, e in ipairs(eggs) do if e.seconds > 0 and e.seconds <= 300 then soon[#soon + 1] = e.name end end
-    log(("เงิน %s | ความเร็ว %s | ไข่โต %d ใบ%s | ส่ง=%s")
+    log(("เงิน %s | เร็ว %s | ไข่ %d%s | notify=%s")
         :format(money, speed, #eggs,
-            (#soon > 0 and (" | ⏰ ใกล้ฟัก: " .. table.concat(soon, ", ")) or ""),
-            sent and "OK ✅" or ("FAIL " .. tostring(ok and res and res.StatusCode or res))))
+            (#soon > 0 and (" | ⏰ " .. table.concat(soon, ",")) or ""),
+            sent and "OK" or "FAIL"))
     return sent
 end
 
+-- ── รายงานงานให้ automation-backend (เวลาเดิน→ครบ→ล้างจอ) ─────────
+local function reportJob()
+    local name = player.Name
+    local url = CFG.AUTOMATION_URL .. "/api/public/runtime-jobs/" .. HttpService:UrlEncode(name) .. "?game=steal_an_egg"
+    local ok, res = pcall(function() return HttpService:RequestAsync({ Url = url, Method = "GET" }) end)
+    if not ok or type(res) ~= "table" or not res.Success then return end
+    local okj, job = pcall(function() return HttpService:JSONDecode(res.Body) end)
+    if not okj or type(job) ~= "table" or not job.id then return end  -- idle = ไม่มีงาน
+    ENV.SAE_JOB = job
+    -- POST progress farming=true (นับเวลาเฉพาะตอน status=running)
+    pcall(function()
+        HttpService:RequestAsync({
+            Url = CFG.AUTOMATION_URL .. "/api/public/runtime-jobs/" .. tostring(job.id) .. "/progress",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({ username = name, userId = player.UserId, farming = true, stats = {} }),
+        })
+    end)
+end
+
+-- ── anti-AFK ────────────────────────────────────────────────
+pcall(function()
+    local VirtualUser = game:GetService("VirtualUser")
+    if _G.SAE_ANTIAFK_CONN then pcall(function() _G.SAE_ANTIAFK_CONN:Disconnect() end) end
+    _G.SAE_ANTIAFK_CONN = player.Idled:Connect(function()
+        pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
+    end)
+end)
+
 -- ── COMMANDS ────────────────────────────────────────────────
-ENV.SAE_NOTIFY_ONCE = function() return sendOnce() end
+ENV.SAE_NOTIFY_ONCE = function() pcall(reportJob); return sendNotify() end
 ENV.SAE_NOTIFY_STOP = function() ENV.SAE_NOTIFY_RUNNING = false; log("สั่งหยุด") end
 ENV.SAE_NOTIFY_START = function()
-    if ENV.SAE_NOTIFY_RUNNING then log("กำลังรันอยู่แล้ว"); return end
+    if ENV.SAE_NOTIFY_RUNNING then return end
     ENV.SAE_NOTIFY_RUNNING = true
-    log(("▶️ เริ่มแจ้งเตือนทุก %d วิ (หยุด: SAE_NOTIFY_STOP())"):format(CFG.INTERVAL))
+    log(("▶️ เริ่ม (ทุก %d วิ) — หยุด: SAE_NOTIFY_STOP()"):format(CFG.INTERVAL))
     task.spawn(function()
         while alive() and ENV.SAE_NOTIFY_RUNNING do
-            pcall(sendOnce)
+            pcall(reportJob)
+            pcall(sendNotify)
             local t0 = os.clock()
             while alive() and ENV.SAE_NOTIFY_RUNNING and (os.clock() - t0) < CFG.INTERVAL do
                 task.wait(1)
@@ -215,4 +226,4 @@ ENV.SAE_NOTIFY_START = function()
 end
 
 log("โหลดแล้ว ✅ v" .. SCRIPT_VERSION .. " | Net=" .. (NET and "✅" or "❌"))
-log("SAE_NOTIFY_ONCE() ทดสอบ 1 ครั้ง / SAE_NOTIFY_START() ส่งวนทุก " .. CFG.INTERVAL .. " วิ")
+ENV.SAE_NOTIFY_START()   -- auto-start (s789 โหลดแล้วเริ่มเลย)

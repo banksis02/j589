@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.87"
+local SCRIPT_VERSION = "v11.88"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -42,11 +42,35 @@ elseif placeId == 84515722934860 then
 elseif placeId == 129932912185311 or placeId == 116173040971120 then
     GAME_NAME = "Anime Origins"
     GAME_ID   = "anime_origins"
+elseif placeId == 107778070777162 then
+    GAME_NAME = "Steal An Egg"
+    GAME_ID   = "steal_an_egg"
 else
     GAME_NAME = "Unknown (" .. placeId .. ")"
     GAME_ID   = "unknown"
 end
 print("[OV] Game:", GAME_NAME)
+
+-- ============================================================
+-- 🥚 STEAL AN EGG — โหลด runtime module (notify + จับเวลางาน + ล้างจอ)
+--    เกมนี้ไม่มีสคริปต์ฟามของเรา (ลูกค้าใช้สคริปต์เจ้าอื่น) s789 แค่:
+--    รายงาน farming ให้ automation-backend (เวลาเดิน→ครบ→ล้างจอ) + notify เงิน/ความเร็ว/ไข่
+-- ============================================================
+if GAME_ID == "steal_an_egg" then
+    print("[OV] Steal An Egg → loading runtime module")
+    task.spawn(function()
+        local ok, src = pcall(function()
+            return game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_notify.lua")
+        end)
+        if ok and type(src) == "string" and #src > 0 then
+            local fn = loadstring(src)
+            if fn then pcall(fn) else warn("[OV] compile steal_an_egg_notify ไม่สำเร็จ") end
+        else
+            warn("[OV] โหลด steal_an_egg_notify ไม่สำเร็จ: " .. tostring(src))
+        end
+    end)
+    return
+end
 
 -- ============================================================
 -- 🛡️ ANTI-AFK (ทำงานทุกเกม)
