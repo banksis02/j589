@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.88"
+local SCRIPT_VERSION = "v11.89"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -1626,6 +1626,92 @@ if GAME_ID == "anime_expeditions" then
         if not ok then warn("[AE Enter] ❌ error: " .. tostring(res)); return false end
         return res
     end
+
+    -- ============================================================
+    -- ⭐ GOLDEN HOUR — หาด่านที่มี Golden Hour → เข้าเล่น (วางตัวเหมือนฟามเพชร)
+    --    detect: การ์ดด่านใน story map ที่มีลูก TextLabel "Golden Hour"
+    --    entry: คลิกการ์ด → คลิกแท็บ GH (ปุ่ม timer mm:ss บนสุด) → Select Stage → Start
+    -- ============================================================
+    local function ghClickText(text, tries)
+        for _ = 1, (tries or 6) do
+            if clickExact(text) then return true end
+            task.wait(0.6)
+        end
+        return false
+    end
+    local function ghTimerButton()
+        local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
+        for _, b in ipairs(root:GetDescendants()) do
+            if (b:IsA("TextButton") or b:IsA("ImageButton")) and b.Visible then
+                local t = (b:IsA("TextButton") and b.Text ~= "" and b.Text) or ""
+                if t == "" then
+                    for _, c in ipairs(b:GetDescendants()) do
+                        if c:IsA("TextLabel") and c.Text ~= "" then t = c.Text; break end
+                    end
+                end
+                if string.match(t, "^%s*%d+:%d%d%s*$") then return b, t end
+            end
+        end
+        return nil
+    end
+    local function findGHCard()
+        local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
+        local function scan()
+            for _, b in ipairs(root:GetDescendants()) do
+                if b:IsA("TextButton") then
+                    for _, c in ipairs(b:GetDescendants()) do
+                        if c:IsA("TextLabel") and normName(c.Text) == "goldenhour" then return b end
+                    end
+                end
+            end
+            return nil
+        end
+        local card = scan(); if card then return card end
+        local sf
+        for _, f in ipairs(root:GetDescendants()) do
+            if f:IsA("ScrollingFrame") and f.Visible and f.AbsoluteCanvasSize.X > f.AbsoluteSize.X + 50 then
+                if not sf or f.AbsoluteSize.X > sf.AbsoluteSize.X then sf = f end
+            end
+        end
+        if not sf then return nil end
+        local maxX = math.max(0, sf.AbsoluteCanvasSize.X - sf.AbsoluteSize.X)
+        local step = math.max(200, sf.AbsoluteSize.X * 0.6)
+        local x = 0
+        while x <= maxX + step do
+            pcall(function() sf.CanvasPosition = Vector2.new(math.min(x, maxX), sf.CanvasPosition.Y) end)
+            task.wait(0.35)
+            card = scan(); if card then return card end
+            if x >= maxX then break end
+            x = x + step
+        end
+        return nil
+    end
+    local function enterGoldenHour()
+        if not uiAcquire("เข้า GH", 90) then return false end
+        local ok, res = pcall(function()
+            closeStrayDialogs()
+            clickExact("Play"); task.wait(2)
+            clickExact("Story"); task.wait(2)
+            local card = findGHCard()
+            if not card then warn("[AE GH] ❌ ไม่เจอด่าน Golden Hour (story map)"); return false end
+            print("[AE GH] เจอการ์ด Golden Hour → คลิก")
+            fireButtonConns(card); task.wait(1.8)
+            local tb = ghTimerButton()
+            if tb then print("[AE GH] คลิกแท็บ GH (timer)"); fireButtonConns(tb); task.wait(1.3)
+            else warn("[AE GH] ⚠️ ไม่เจอแท็บ timer — กด Select Stage เลย") end
+            if not ghClickText("Select Stage", 8) then warn("[AE GH] ❌ ล้มเหลว Select Stage"); return false end
+            task.wait(3)
+            if not ghClickText("Start", 12) then
+                ghClickText("Select Stage", 4); task.wait(2)
+                if not ghClickText("Start", 10) then warn("[AE GH] ❌ ล้มเหลว Start"); return false end
+            end
+            print("[AE GH] ✅ เข้า Golden Hour แล้ว")
+            return true
+        end)
+        uiRelease()
+        return ok and res == true
+    end
+    _G.AE_ENTER_GOLDEN_HOUR = enterGoldenHour   -- เผื่อเรียกทดสอบ
 
     enterStageInner = function(stageName, actButton, needHard)
         stageName = stageName or "School Grounds"
@@ -3300,6 +3386,7 @@ if GAME_ID == "anime_expeditions" then
     local farmingActive = false
     local farmMode = "act1"   -- ⭐ "act1" = ฟาร์มเพชร Act1 Hard | "actM" = ฟาร์มด่าน M
     local farmStage = "School Grounds"   -- ⭐ ด่านที่เลือกจาก dropdown ใน UI
+    local ghEnteredAt = 0                 -- ⭐ Golden Hour: เวลาที่เข้ารอบ GH ล่าสุด (กลับ lobby หา GH ใหม่ทุก 30 นาที)
     local function isFarmingActive() return farmingActive end
 
     local function startFarm(mode, stage)
@@ -3503,6 +3590,10 @@ if GAME_ID == "anime_expeditions" then
                         -- [3] เข้าด่าน
                         print("[AE Farm] ▶️ [3] เข้าด่าน M")
                         entered = enterStageSequence(farmStage, "M", false)
+                    elseif farmMode == "golden_hour" then
+                        -- ⭐ Golden Hour: หาด่านที่มี GH → เข้าเล่น (วางตัวเหมือนฟามเพชร)
+                        entered = enterGoldenHour()
+                        if entered then ghEnteredAt = os.clock() end
                     else
                         entered = enterStageSequence(farmStage, "1", true)    -- Act 1 + Hard
                     end
@@ -3564,6 +3655,11 @@ if GAME_ID == "anime_expeditions" then
                             print("[AE Farm] 💿 Grey เต็มแล้ว (" .. greyKnown .. "/" .. CRAFT_GREY_FULL .. ") → กลับ Lobby ไปคราฟ")
                             backToLobby()
                             task.wait(8)  -- รอโหลดกลับ lobby (loop รอบหน้าจะคราฟ + เข้าด่านเอง)
+                        elseif farmMode == "golden_hour" and (os.clock() - ghEnteredAt) >= 30 * 60 then
+                            -- ⭐ Golden Hour ย้ายด่านทุก 30 นาที → กลับ Lobby หา GH ใหม่ (loop รอบหน้า enterGoldenHour เอง)
+                            print("[AE Farm] 🌟 Golden Hour ครบ ~30 นาที → กลับ Lobby หา Golden Hour ด่านใหม่")
+                            backToLobby()
+                            task.wait(8)
                         else
                             fireRestart()
 
