@@ -7,7 +7,7 @@
 --     AE_GH_STOP()   = หยุด
 --   *** ทดสอบ AE_GH_FIND() ก่อน แล้ว AE_GH_ENTER() แล้วบอกผลว่าเข้าด่านได้ไหม ***
 -- ============================================================
-local SV = "v0.1"
+local SV = "v0.3"
 _G.AE_GH_GEN = (_G.AE_GH_GEN or 0) + 1
 local GEN = _G.AE_GH_GEN
 local function alive() return GEN == _G.AE_GH_GEN end
@@ -44,6 +44,19 @@ local function fireBtn(btn)
         VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
     end)
     return fired
+end
+
+-- ⭐ คลิกเมาส์จริงล้วน (move→press→release) — แท็บ/act ต้องใช้แบบนี้ (fire connection = จอดำ)
+local function vimClick(inst)
+    local ok = pcall(function()
+        local inset = GuiSvc:GetGuiInset()
+        local cx = inst.AbsolutePosition.X + inst.AbsoluteSize.X / 2
+        local cy = inst.AbsolutePosition.Y + inst.AbsoluteSize.Y / 2 + inset.Y
+        VIM:SendMouseMoveEvent(cx, cy, game); task.wait(0.1)
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.09)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+    end)
+    return ok
 end
 
 -- หาปุ่ม (TextButton/ImageButton) ที่ text ตัวเอง/ลูก == target (normalize)
@@ -160,10 +173,10 @@ ENV.AE_GH_ENTER = function()
     -- เลือกแท็บ GH (บนสุด = ปุ่ม timer mm:ss) — ต้องคลิกก่อน ไม่งั้น Select Stage เข้า Act 1
     local tv, tb = readGHTimer()
     if tb then
-        log("→ แท็บ GH (เหลือ " .. tostring(tv) .. ") — คลิก")
-        fireBtn(tb); task.wait(1.3)
+        log("→ แท็บ GH (เหลือ " .. tostring(tv) .. ") — คลิกด้วยเมาส์จริง")
+        vimClick(tb); task.wait(1.5)
     else
-        log("⚠️ ไม่เจอแท็บ timer — คลิกแท็บบนสุดของ tab list แทน")
+        log("⚠️ ไม่เจอแท็บ timer — คลิกแท็บบนสุดของ tab list ด้วยเมาส์จริง")
         local top
         for _, f in ipairs(playRoot():GetDescendants()) do
             if f:IsA("ScrollingFrame") and f.Visible and f.AbsoluteCanvasSize.Y > f.AbsoluteSize.Y + 20 then
@@ -174,7 +187,7 @@ ENV.AE_GH_ENTER = function()
                 end
             end
         end
-        if top then log("→ คลิกแท็บบนสุด " .. top:GetFullName()); fireBtn(top); task.wait(1.3) end
+        if top then log("→ คลิกแท็บบนสุด " .. top:GetFullName()); vimClick(top); task.wait(1.5) end
     end
     -- กดเริ่ม: ลอง Select Stage → ถ้ามี Start/Enter Matchmaking ค่อยกด
     log("ปุ่มบนจอตอนนี้: " .. (function()

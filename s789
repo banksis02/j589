@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.89"
+local SCRIPT_VERSION = "v11.90"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -1639,6 +1639,17 @@ if GAME_ID == "anime_expeditions" then
         end
         return false
     end
+    -- ⭐ คลิกเมาส์จริง (move→press→release) — แท็บ/act ต้องใช้แบบนี้ (fire connection = จอดำ โหลดด่านไม่ขึ้น)
+    local function ghVimClick(inst)
+        return pcall(function()
+            local inset = game:GetService("GuiService"):GetGuiInset()
+            local cx = inst.AbsolutePosition.X + inst.AbsoluteSize.X / 2
+            local cy = inst.AbsolutePosition.Y + inst.AbsoluteSize.Y / 2 + inset.Y
+            VirtualInputManager:SendMouseMoveEvent(cx, cy, game); task.wait(0.1)
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0); task.wait(0.09)
+            VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+        end)
+    end
     local function ghTimerButton()
         local root = player.PlayerGui:FindFirstChild("Play") or player.PlayerGui
         for _, b in ipairs(root:GetDescendants()) do
@@ -1697,7 +1708,7 @@ if GAME_ID == "anime_expeditions" then
             print("[AE GH] เจอการ์ด Golden Hour → คลิก")
             fireButtonConns(card); task.wait(1.8)
             local tb = ghTimerButton()
-            if tb then print("[AE GH] คลิกแท็บ GH (timer)"); fireButtonConns(tb); task.wait(1.3)
+            if tb then print("[AE GH] คลิกแท็บ GH (timer) ด้วยเมาส์จริง"); ghVimClick(tb); task.wait(1.5)
             else warn("[AE GH] ⚠️ ไม่เจอแท็บ timer — กด Select Stage เลย") end
             if not ghClickText("Select Stage", 8) then warn("[AE GH] ❌ ล้มเหลว Select Stage"); return false end
             task.wait(3)
