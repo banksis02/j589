@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.94"
+local SCRIPT_VERSION = "v11.95"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -2804,6 +2804,24 @@ if GAME_ID == "anime_expeditions" then
     end
 
     local function applyRecommendedSettings()
+        -- ⭐ v11.95: ยิง setting ตรง (ไม่เปิด UI — ทน UI scale/แลค + เร็ว) ถ้ามี _G.AE_FIRE_SETTING
+        if _G.AE_FIRE_SETTING then
+            local MAP = { ["auto retry"]="AutoRetry", ["auto next"]="AutoNext", ["auto skip waves"]="AutoSkipWaves",
+                          ["auto vote start"]="AutoVoteStart", ["show match end rewards"]="DisplayEndRewards",
+                          ["auto-upgrade placed units"]="AutoUpgradeOnPlacement" }
+            local n = 0
+            for _, pref in ipairs(SETTING_PREFS) do
+                local label = string.lower(tostring(pref.name or (pref.names and pref.names[1]) or ""))
+                local internal = MAP[label]
+                if internal then _G.AE_FIRE_SETTING(internal, pref.want == true); n = n + 1
+                    print(("[AE Settings] ✅ %s = %s"):format(internal, tostring(pref.want == true)))
+                else warn("[AE Settings] ⚠️ ไม่รู้ชื่อภายใน: " .. label) end
+                task.wait(0.08)
+            end
+            if _G.AE_SET_UI_SCALE_1 then _G.AE_SET_UI_SCALE_1() end
+            print(("[AE Settings] ✅ ตั้งค่าแนะนำ (ยิงตรง %d อัน ไม่เปิด UI)"):format(n))
+            return
+        end
         if not uiAcquire("ตั้งค่า", 90) then return end
         local ok, err = pcall(function()
             print("[AE Settings] ⚙️ เช็ค + ตั้งค่าอัตโนมัติ...")
@@ -8703,46 +8721,48 @@ local function setUiScaleOne()
 end
 _G.AE_SET_UI_SCALE_1 = setUiScaleOne   -- เรียกได้ทุกโหมด/ทดสอบตรง
 
--- ⭐ v9.31: รับ pref list ได้ (ค่าเริ่มต้น = EXP_SETTING_PREFS) — ให้ฟาร์มหลักเรียกใช้ชุดของมันเองได้
+-- ⭐ ชื่อ setting ภายใน (จาก recon spy) — ยิงตรงผ่าน _updateNode ไม่ต้องเปิด UI เลย
+local SETTING_INTERNAL = {
+    ["auto retry"]                = "AutoRetry",
+    ["auto next"]                 = "AutoNext",
+    ["auto skip waves"]           = "AutoSkipWaves",
+    ["auto vote start"]           = "AutoVoteStart",
+    ["show match end rewards"]    = "DisplayEndRewards",
+    ["auto-upgrade placed units"] = "AutoUpgradeOnPlacement",
+}
+local function fireSetting(internalName, value)
+    return pcall(function()
+        local ev = game:GetService("ReplicatedStorage")
+            :WaitForChild("Nodes", 5):WaitForChild("Network", 5)
+            :WaitForChild("NetworkEvents", 5):WaitForChild("_updateNode", 5)
+        ev:FireServer({ Type = "Post" }, "CLIENT_CHANGE_SETTING", internalName, value)
+    end)
+end
+_G.AE_FIRE_SETTING = fireSetting   -- ยิง setting AE อะไรก็ได้ตรงๆ: _G.AE_FIRE_SETTING("AutoRetry", false)
+
+-- ⭐ v11.95: ตั้งค่าทั้งหมดแบบ "ยิง remote ตรง" (ไม่เปิด/หา UI — ทน UI scale/เครื่องแลค + เร็ว)
+--    รับ pref list เดิม (names + want) → map label → ชื่อภายใน → ยิง. (โค้ด UI นาวิเกตเดิมเก็บไว้ใช้เป็น helper อื่นได้)
 local function run(prefs)
     prefs = prefs or EXP_SETTING_PREFS
-    print("[Exp Settings] ⚙️ เปิด Settings...")
-    if not openSettings() then warn("[Exp Settings] ❌ เปิด Settings ไม่ได้"); return end
-    task.wait(1.2)
-
-    local okCount = 0
+    print("[Exp Settings] ⚙️ ตั้งค่า (ยิงตรง ไม่เปิด UI)...")
+    local ok = 0
     for _, pref in ipairs(prefs) do
-        local names = nameList(pref)
-        if pref.tab then
-            if not clickTab(pref.tab, pref.tabTH) then clickTab("All", "ทั้งหมด") end
-            task.wait(0.5)
+        local label = string.lower(tostring(nameList(pref)[1] or ""))
+        local internal = SETTING_INTERNAL[label]
+        if internal then
+            if fireSetting(internal, pref.want == true) then
+                ok = ok + 1
+                print(("[Exp Settings] ✅ %s = %s"):format(internal, tostring(pref.want == true)))
+            else
+                warn("[Exp Settings] ⚠️ ยิง " .. internal .. " ไม่สำเร็จ")
+            end
+        else
+            warn("[Exp Settings] ⚠️ ไม่รู้ชื่อภายในของ '" .. label .. "' (ข้าม — เพิ่มใน SETTING_INTERNAL ได้)")
         end
-        if not scrollToLabel(names) then
-            clickTab("All", "ทั้งหมด"); task.wait(0.5); scrollToLabel(names)
-        end
-        if setSettingState(names, pref.want) then okCount = okCount + 1 end
-        task.wait(0.4)
+        task.wait(0.08)
     end
-
-    -- ⭐ v9.94: รอบตรวจซ้ำทั้งหมด — เผื่อรอบแรกมีอันไหนไม่ติด (เครื่องแลค)
-    for _, pref in ipairs(prefs) do
-        local names = nameList(pref)
-        local wantState = pref.want and "on" or "off"
-        if pref.tab then if not clickTab(pref.tab, pref.tabTH) then clickTab("All", "ทั้งหมด") end; task.wait(0.4) end
-        if not scrollToLabel(names) then clickTab("All", "ทั้งหมด"); task.wait(0.4); scrollToLabel(names) end
-        local st = getSettingStateStable(names)
-        if st ~= nil and st ~= wantState then
-            print("[Exp Settings] 🔁 ตรวจซ้ำ: " .. names[1] .. " ยังไม่ตรง (" .. tostring(st) .. ") → แก้อีก")
-            setSettingState(names, pref.want)
-            task.wait(0.35)
-        end
-    end
-
-    -- ⭐ บังคับ UI Scale = 1 ก่อนปิด (ใช้ Settings session เดียวกัน ไม่เปิดซ้ำ)
-    pcall(setUiScaleOne)
-
-    closeSettings()
-    print(("[Exp Settings] ✅ เสร็จ (%d/%d ตั้งค่าเรียบร้อย)"):format(okCount, #prefs))
+    setUiScaleOne()   -- UIScale = 1
+    print(("[Exp Settings] ✅ เสร็จ (%d/%d ยิงตรง)"):format(ok, #prefs))
 end
 
 _G.AE_EXP_SETTINGS = function() run() end          -- Expedition/Villain (ปิด auto-upgrade)
