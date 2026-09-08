@@ -1,5 +1,8 @@
 -- ============================================================
--- AE Carry v2 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ)
+-- AE Carry v3 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+--   ⭐ v3: อัด/เล่นซ้ำ "Priority (First/Boss/..) + ระดับอัพเกรด" ต่อยูนิต
+--          — อ่านจาก replica (TargetPriority/Upgrade) ไม่ hook เพิ่ม (กันแครช)
+--          — replay: วาง → หายูนิตที่เพิ่งวาง (ตำแหน่ง) → ยิง ChangeGameUnitPriority + UpgradeGameUnit
 --
 -- ⏺ อัด: ดักคำสั่ง PlaceGameUnit ของตัวเอง (ได้ "เลขช่องจริง + พิกัดเป๊ะ")
 --    - hook ติดตั้งครั้งแรกที่กดอัดเท่านั้น และในนั้นทำแค่ "จดใส่คิว" (เบาสุด)
@@ -66,6 +69,47 @@ local function getGameReplica()
         if rawget(rep, "write_lib") then return rep end
     end
     return cand[1]
+end
+
+-- ⭐ อ่านยูนิตเราในสนาม (GameUnit replica) — id/asset/pos/priority/upgrade (อ่านล้วน ไม่ hook)
+local function getMyUnits()
+    local out = {}
+    if not replicaRegistry then pcall(setupReplica) end
+    if not replicaRegistry then return out end
+    for _, rep in pairs(replicaRegistry) do
+        local ok, tok = pcall(function() return rep.Token end)
+        if ok and tok == "GameUnit" then
+            local okd, d = pcall(function() return rep.Data end)
+            if okd and type(d) == "table" and d.Owner == player and (d.ID or d.Id) then
+                local pos
+                pcall(function() if typeof(d.CFrame) == "CFrame" then pos = d.CFrame.Position end end)
+                out[#out + 1] = {
+                    id       = tostring(d.ID or d.Id),
+                    asset    = (d.UnitData and d.UnitData.Asset) or "",
+                    pos      = pos,
+                    priority = tostring(d.TargetPriority or ""),
+                    upgrade  = tonumber(d.Upgrade) or 0,
+                    maxUp    = tonumber(d.MaxUpgrade) or 9,
+                }
+            end
+        end
+    end
+    return out
+end
+local function findUnitById(id)
+    for _, u in ipairs(getMyUnits()) do if u.id == id then return u end end
+    return nil
+end
+local function findUnitNearPos(pos, radius, usedIds)
+    if not pos then return nil end
+    local best, bestD
+    for _, u in ipairs(getMyUnits()) do
+        if u.pos and not (usedIds and usedIds[u.id]) then
+            local dd = (u.pos - pos).Magnitude
+            if dd <= (radius or 6) and (not bestD or dd < bestD) then best, bestD = u, dd end
+        end
+    end
+    return best
 end
 
 -- fallback: ยิง ReplicaSignal ตรงๆ ถ้าใช้ replica ไม่ได้ (ไล่ id กว้าง)
@@ -202,6 +246,33 @@ task.spawn(function()
     end
 end)
 
+-- ⭐ ตอนอัด: poll replica เก็บ priority/upgrade ต่อ step (จับคู่ยูนิตด้วยตำแหน่ง) — ไม่ hook
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if recording then
+            local used = {}
+            for _, step in ipairs(recSteps) do
+                if step and step.cf then
+                    local u
+                    if step._id then u = findUnitById(step._id) end
+                    if not u then
+                        local pos = CFrame.new(unpack(step.cf)).Position
+                        u = findUnitNearPos(pos, 6, used)
+                    end
+                    if u then
+                        used[u.id] = true
+                        step._id      = u.id
+                        step.asset    = u.asset
+                        step.priority = u.priority   -- "First"/"Boss"/... หรือ "None"
+                        step.upgrade  = u.upgrade     -- ระดับอัพล่าสุดที่ผู้เล่นทำ
+                    end
+                end
+            end
+        end
+    end
+end)
+
 local function startRecord()
     local info = getCurrentStageKey()
     if not info then
@@ -288,9 +359,38 @@ local function fireRestart()
     print("[Carry] 🔄 Restart (ผ่าน replica)")
 end
 
+-- ⭐ หลังวางติด: หายูนิตที่เพิ่งวาง (จับด้วยตำแหน่ง) → ตั้ง priority + อัพเกรดตามที่อัด (ยิง FireServer ไม่ hook)
+local function applyUnitConfig(target, step, usedIds)
+    local hasPri = step.priority and step.priority ~= "" and step.priority ~= "None"
+    local wantUp = tonumber(step.upgrade) or 0
+    if not hasPri and wantUp <= 0 then return end
+    task.wait(0.4)
+    local u = findUnitNearPos(target, 6, usedIds)
+    if not u then warn("[Carry ▶] ⚠️ หายูนิตที่เพิ่งวางไม่เจอ — ข้าม priority/upgrade"); return end
+    usedIds[u.id] = true
+    if hasPri then
+        replicaFire("ChangeGameUnitPriority", u.id, step.priority)
+        print(("[Carry ▶] 🎚️ priority %s (id %s)"):format(step.priority, u.id))
+        task.wait(0.3)
+    end
+    if wantUp > 0 then
+        local tries = 0
+        while carryOn and tries < wantUp * 4 + 12 do
+            local cur = findUnitById(u.id)
+            if not cur or cur.upgrade >= math.min(wantUp, cur.maxUp) then break end
+            replicaFire("UpgradeGameUnit", u.id)   -- เงินไม่พอ server ปฏิเสธเงียบ → ขั้นไม่เพิ่ม → รอ+ลองใหม่
+            task.wait(1.2)
+            tries = tries + 1
+        end
+        local cur = findUnitById(u.id)
+        print(("[Carry ▶] ⬆️ upgrade → %d (อัดไว้ %d)"):format(cur and cur.upgrade or -1, wantUp))
+    end
+end
+
 local function playRecord(data)
     print(("[Carry ▶] วางตาม record: %s - Act %s (%d ตัว)")
         :format(data.stage, data.act, #data.steps))
+    local usedIds = {}   -- ยูนิตที่ผูกกับ step ไปแล้ว (กันตั้ง priority/upgrade ผิดตัว)
     for i, step in ipairs(data.steps) do
         if not carryOn then return end
         task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
@@ -299,11 +399,11 @@ local function playRecord(data)
         local before = unitCountNear(target, 5)
         firePlace(step.slot, cf)
         task.wait(0.8)
-        if unitCountNear(target, 5) > before then
+        local placed = unitCountNear(target, 5) > before
+        if placed then
             print(("[Carry ▶] ✅ #%d ช่อง %d"):format(i, step.slot))
         else
             -- วางไม่ติด (เงินไม่ทัน?) → ลองซ้ำสูงสุด 3 รอบ รอบละ 3 วิ
-            local placed = false
             for r = 1, 3 do
                 task.wait(3)
                 if not carryOn then return end
@@ -319,6 +419,8 @@ local function playRecord(data)
                 warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด — ข้าม"):format(i, step.slot))
             end
         end
+        -- ⭐ วางติดแล้ว → ตั้ง priority + อัพเกรดตามที่อัด
+        if placed then pcall(applyUnitConfig, target, step, usedIds) end
     end
     print("[Carry ▶] ✅ วางครบตาม record แล้ว")
 end
