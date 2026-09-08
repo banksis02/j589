@@ -20,8 +20,8 @@ local function run(file)
 end
 
 if pid == 107778070777162 then
-    -- Steal An Egg → เฉพาะตัว min (ห้ามโหลด s789 — BAC เตะ)
-    run("steal_an_egg_notify_min.lua")
+    -- Steal An Egg → ตัว notify มีชื่อไข่ (invoke cache, ไม่มี VirtualUser — รอด BAC)
+    run("steal_an_egg_notify_names.lua")
 else
     -- เกมอื่นๆ → s789 ตามปกติ
     run("s789")
