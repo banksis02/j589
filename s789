@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.93"
+local SCRIPT_VERSION = "v11.94"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -3410,6 +3410,7 @@ if GAME_ID == "anime_expeditions" then
         if stage then farmStage = stage end
         if farmMode == "golden_hour" then ghPhase = "gh"; ghLastGH = 0 end  -- ⭐ เริ่มงาน GH = เล่น GH ก่อน
         print("[AE Farm] ▶ เริ่มฟาร์ม (mode: " .. farmMode .. " | ด่าน: " .. farmStage .. ")")
+        pcall(function() if _G.AE_SET_UI_SCALE_1 then _G.AE_SET_UI_SCALE_1() end end)  -- ⭐ บังคับ UI Scale=1 (กันปุ่มใหญ่ บอทเอ๋อ) ทุกโหมด
 
         -- ⭐ v8.5: โหมด Expedition → ใช้ระบบ Expedition ทั้งชุด (ไม่ใช้ลูปฟาร์มปกติ)
         --    ความยาก/แมพ สั่งมาจากเว็บผ่าน _G.AE_EXP_DIFF / _G.AE_EXP_MAP
@@ -8686,50 +8687,21 @@ local function closeSettings()
     return not settingsOpen()
 end
 
--- ⭐ บังคับ UI Scale = 1 (บางไอดีลูกค้าตั้งใหญ่ → ปุ่มใหญ่ → บอทกดพลาด/เอ๋อ)
---    UI Scale เป็น TextBox (ช่องพิมพ์เลข) ในแท็บ Miscellaneous — set .Text="1" + ReleaseFocus(enter) ให้เกม apply
+-- ⭐ บังคับ UI Scale = 1 แบบ "ยิง remote ตรง" (ไม่เปิด/หา UI เลย — เหมือน AO, ทน UI scale ทุกไอดี)
+--    จาก recon: เปลี่ยน UI Scale = ยิง _updateNode:FireServer({Type="Post"}, "CLIENT_CHANGE_SETTING", "UIScale", <ค่า>)
+--    (บางไอดีลูกค้าตั้งใหญ่ → ปุ่มใหญ่ → บอทกดพลาด/เอ๋อ)
 local function setUiScaleOne()
-    if not clickTab("Miscellaneous", "เบ็ดเตล็ด") then clickTab("All", "ทั้งหมด") end
-    task.wait(0.5)
-    if not scrollToLabel({ "UI Scale" }) then
-        clickTab("All", "ทั้งหมด"); task.wait(0.4); scrollToLabel({ "UI Scale" })
-    end
-    local lbl = findLabel({ "UI Scale" })
-    if not lbl then warn("[Exp Settings] ⚠️ ไม่เจอ UI Scale (ข้าม)"); return false end
-    -- ⭐ หา TextBox แบบ "ไต่ ancestor" (ตามลำดับชั้น UI ไม่พึ่งพิกัด/ขนาด)
-    --    → ทน UI scale ลูกค้าตั้งไม่เท่ากัน. การ์ด UI Scale = ancestor ใกล้สุดที่มี TextBox ข้างใน
-    local s = player.PlayerGui:FindFirstChild("Settings")
-    local box
-    local node = lbl
-    for _ = 1, 8 do
-        node = node.Parent
-        if not node or node == s then break end
-        for _, c in ipairs(node:GetDescendants()) do
-            if c:IsA("TextBox") and c.Visible then box = c; break end
-        end
-        if box then break end
-    end
-    -- fallback: y ใกล้ label แบบสัดส่วน (เผื่อ hierarchy แปลก)
-    if not box then
-        local ly = lbl.AbsolutePosition.Y
-        for _, c in ipairs(s:GetDescendants()) do
-            if c:IsA("TextBox") and c.Visible and math.abs(c.AbsolutePosition.Y - ly) < lbl.AbsoluteSize.Y * 4 then box = c; break end
-        end
-    end
-    if not box then warn("[Exp Settings] ⚠️ ไม่เจอช่อง UI Scale (ข้าม)"); return false end
-    if tostring(box.Text) == "1" then print("[Exp Settings] ✓ UI Scale = 1 (ตรงแล้ว)"); return true end
-    local from = tostring(box.Text)
-    pcall(function()
-        box:CaptureFocus(); box.Text = "1"; task.wait(0.12); box:ReleaseFocus(true)
+    local ok, err = pcall(function()
+        local ev = game:GetService("ReplicatedStorage")
+            :WaitForChild("Nodes", 5):WaitForChild("Network", 5)
+            :WaitForChild("NetworkEvents", 5):WaitForChild("_updateNode", 5)
+        ev:FireServer({ Type = "Post" }, "CLIENT_CHANGE_SETTING", "UIScale", 1)
     end)
-    -- backup: ยิง FocusLost (enterPressed=true) เผื่อ ReleaseFocus ไม่ trigger
-    pcall(function()
-        for _, cn in ipairs(getconnections(box.FocusLost)) do cn:Fire(true) end
-    end)
-    task.wait(0.35)
-    print("[Exp Settings] ✅ ตั้ง UI Scale = 1 (จาก " .. from .. ")")
-    return true
+    if ok then print("[AE] ✅ UI Scale = 1 (ยิง CLIENT_CHANGE_SETTING ตรง — ไม่เปิด UI)")
+    else warn("[AE] ⚠️ ตั้ง UI Scale = 1 ไม่สำเร็จ: " .. tostring(err)) end
+    return ok
 end
+_G.AE_SET_UI_SCALE_1 = setUiScaleOne   -- เรียกได้ทุกโหมด/ทดสอบตรง
 
 -- ⭐ v9.31: รับ pref list ได้ (ค่าเริ่มต้น = EXP_SETTING_PREFS) — ให้ฟาร์มหลักเรียกใช้ชุดของมันเองได้
 local function run(prefs)
