@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.92"
+local SCRIPT_VERSION = "v11.93"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -8696,13 +8696,24 @@ local function setUiScaleOne()
     end
     local lbl = findLabel({ "UI Scale" })
     if not lbl then warn("[Exp Settings] ⚠️ ไม่เจอ UI Scale (ข้าม)"); return false end
-    -- หา TextBox (ช่องค่า) ที่อยู่แถวเดียวกับ label — ตัดช่อง Search ที่ y คนละที่
+    -- ⭐ หา TextBox แบบ "ไต่ ancestor" (ตามลำดับชั้น UI ไม่พึ่งพิกัด/ขนาด)
+    --    → ทน UI scale ลูกค้าตั้งไม่เท่ากัน. การ์ด UI Scale = ancestor ใกล้สุดที่มี TextBox ข้างใน
     local s = player.PlayerGui:FindFirstChild("Settings")
-    local ly = lbl.AbsolutePosition.Y
     local box
-    for _, c in ipairs(s:GetDescendants()) do
-        if c:IsA("TextBox") and c.Visible and math.abs(c.AbsolutePosition.Y - ly) < math.max(lbl.AbsoluteSize.Y * 3, 30) then
-            box = c; break
+    local node = lbl
+    for _ = 1, 8 do
+        node = node.Parent
+        if not node or node == s then break end
+        for _, c in ipairs(node:GetDescendants()) do
+            if c:IsA("TextBox") and c.Visible then box = c; break end
+        end
+        if box then break end
+    end
+    -- fallback: y ใกล้ label แบบสัดส่วน (เผื่อ hierarchy แปลก)
+    if not box then
+        local ly = lbl.AbsolutePosition.Y
+        for _, c in ipairs(s:GetDescendants()) do
+            if c:IsA("TextBox") and c.Visible and math.abs(c.AbsolutePosition.Y - ly) < lbl.AbsoluteSize.Y * 4 then box = c; break end
         end
     end
     if not box then warn("[Exp Settings] ⚠️ ไม่เจอช่อง UI Scale (ข้าม)"); return false end
