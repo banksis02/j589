@@ -1,5 +1,8 @@
 -- ============================================================
--- AE Carry v4 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+-- AE Carry v5 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+--   ⭐ v5: อัด upgrade/priority จาก hook "ตรงๆ" (นับครั้งกดอัพ + จำ priority ต่อยูนิต)
+--          — เลิกพึ่งการอ่าน replica ทีหลังอย่างเดียว (แก้เคสจำไม่ครบ/ไม่จำ)
+--          — remote/field ยืนยันจาก recon จริง: UpgradeGameUnit(id) / ChangeGameUnitPriority(id,prio)
 --   ⭐ v3: อัด/เล่นซ้ำ "Priority (First/Boss/..) + ระดับอัพเกรด" ต่อยูนิต
 --          — อ่านจาก replica (TargetPriority/Upgrade) ไม่ hook เพิ่ม (กันแครช)
 --          — replay: วาง → หายูนิตที่เพิ่งวาง (ตำแหน่ง) → ยิง ChangeGameUnitPriority + UpgradeGameUnit
@@ -205,6 +208,8 @@ local recSteps = {}
 local recLastT = 0
 local recKey = nil
 local recPending = {}
+local recUpCount = {}   -- ⭐ [unitId] = จำนวนครั้งที่กด Upgrade (ดักจาก hook ตรงๆ)
+local recPrio    = {}   -- ⭐ [unitId] = priority ล่าสุดที่ตั้ง (ดักจาก hook ตรงๆ)
 local hookInstalled = false
 
 local function installHook()
@@ -220,6 +225,10 @@ local function installHook()
                 local a1, a2, a3, a4 = ...
                 if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
                     recPending[#recPending + 1] = { slot = a3, cf = a4, t = tick() }
+                elseif a2 == "UpgradeGameUnit" and type(a3) == "string" then
+                    recUpCount[a3] = (recUpCount[a3] or 0) + 1   -- นับครั้งกดอัพต่อ id
+                elseif a2 == "ChangeGameUnitPriority" and type(a3) == "string" then
+                    recPrio[a3] = a4                              -- จำ priority ล่าสุดต่อ id
                 end
             end
             return oldNC(self, ...)
@@ -277,6 +286,17 @@ local function captureConfigs()
             end
         end
     end
+    -- ⭐ ทับด้วย "สิ่งที่ผู้เล่นสั่งจริง" จาก hook (แม่นกว่าอ่าน replica ที่แข่งกับจังหวะเซิร์ฟเวอร์)
+    --    - priority: ใช้ค่าที่กดเปลี่ยนจริง (ถ้ามี)
+    --    - upgrade : ถ้าอ่าน replica ได้ 0 แต่กดอัพจริง → ใช้จำนวนครั้งที่กด (จะถูก clamp ด้วย maxUp ตอนเล่นซ้ำ)
+    for _, step in ipairs(recSteps) do
+        if step and step._id then
+            if recPrio[step._id] ~= nil then step.priority = recPrio[step._id] end
+            local lvl    = tonumber(step.upgrade) or 0
+            local clicks = recUpCount[step._id] or 0
+            if lvl == 0 and clicks > 0 then step.upgrade = clicks end
+        end
+    end
 end
 
 task.spawn(function()
@@ -299,6 +319,8 @@ local function startRecord()
     recKey = info
     recSteps = {}
     recPending = {}
+    recUpCount = {}
+    recPrio = {}
     recLastT = tick()
     recording = true
     print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย"):format(info.stage, info.act))
@@ -549,7 +571,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v4"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v5"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -642,4 +664,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v4] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v5] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
