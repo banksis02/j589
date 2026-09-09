@@ -1,5 +1,8 @@
 -- ============================================================
--- AE Carry v13 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ เป็น TIMELINE ตามเวลา)
+-- AE Carry v14 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ เป็น TIMELINE ตามเวลา)
+--   ⭐ v14: อัด/เล่นซ้ำ "ขายตัว" (recon ยืนยัน remote = SellGameUnit(id)) — เผื่อมอนหลุด ขายแล้ววางใหม่ (อยู่ใน timeline)
+--           map id ตอนอัด→เล่น ตัวเดียวกับ priority (คิวลำดับ v13) → ไม่ขายผิดตัว (ถ้า map ไม่เจอ = ข้าม ไม่ขาย)
+--           + ผูก uid place ทันทีหลังวาง (กันวางแล้วขายเร็ว ผูกไม่ทัน)
 --   ⭐ v13: เล่นซ้ำ resolve ยูนิต "ทีละตัวตามลำดับ" (คิว) — กันวางใกล้เวลากันแล้วแย่ง/สลับ id → priority ไปตกผิดตัว
 --   ⭐ v12: เล่นซ้ำ priority → ตรวจว่าค่าเปลี่ยนจริงไหม (อ่าน TargetPriority) ถ้ายังไม่เปลี่ยนยิงซ้ำสูงสุด 4 รอบ + log ค่า ก่อน→หลัง
 --   ⭐ v11: รื้อเป็น "event timeline" — จำ ทุก action (วาง/ปรับการโจมตี/อัพเกรดมือ/ออโต้) + เวลา + ลำดับจริง
@@ -249,6 +252,8 @@ local function installHook()
                     recPending[#recPending + 1] = { t = tick(), k = "prio", uid = a3, prio = a4 }
                 elseif a2 == "ChangeGameUnitAutoUpgradePriority" and type(a3) == "string" then
                     recPending[#recPending + 1] = { t = tick(), k = "auto", uid = a3 }
+                elseif a2 == "SellGameUnit" and type(a3) == "string" then
+                    recPending[#recPending + 1] = { t = tick(), k = "sell", uid = a3 }
                 end
             end
             return oldNC(self, ...)
@@ -257,29 +262,6 @@ local function installHook()
     hookInstalled = ok
     return ok
 end
-
--- ตัวประมวลผลคิว (นอก hook): event ดิบ → recEvents (t = เวลาสัมพัทธ์จากเริ่มอัด)
-task.spawn(function()
-    while true do
-        task.wait(0.2)
-        while #recPending > 0 do
-            local it = table.remove(recPending, 1)
-            local ev = { t = math.max(0, it.t - recStartT), k = it.k }
-            if it.k == "place" then
-                ev.slot = it.slot
-                ev.cf = { it.cf:GetComponents() }
-                print(("[Carry ⏺] %.1fs วาง ช่อง %s"):format(ev.t, tostring(ev.slot)))
-            else
-                ev.uid = it.uid
-                if it.prio then ev.prio = it.prio end
-                local name = (it.k == "prio" and ("ปรับการโจมตี " .. tostring(it.prio)))
-                          or (it.k == "up" and "อัพเกรดมือ") or "ออโต้อัพเกรด"
-                print(("[Carry ⏺] %.1fs %s (id %s)"):format(ev.t, name, tostring(it.uid)))
-            end
-            recEvents[#recEvents + 1] = ev
-        end
-    end
-end)
 
 -- ⭐ bind uid ให้ event "place" (id ยูนิตตอนอัด) — จับด้วยตำแหน่ง (ตอนอัด replica ตรงพิกัดจริง)
 --    ข้ามยูนิตที่มีอยู่ก่อนอัด (recPreIds) และที่ผูกไปแล้ว
@@ -301,6 +283,33 @@ local function bindPlaceUids()
         end
     end
 end
+
+-- ตัวประมวลผลคิว (นอก hook): event ดิบ → recEvents (t = เวลาสัมพัทธ์จากเริ่มอัด)
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        local placed = false
+        while #recPending > 0 do
+            local it = table.remove(recPending, 1)
+            local ev = { t = math.max(0, it.t - recStartT), k = it.k }
+            if it.k == "place" then
+                ev.slot = it.slot
+                ev.cf = { it.cf:GetComponents() }
+                placed = true
+                print(("[Carry ⏺] %.1fs วาง ช่อง %s"):format(ev.t, tostring(ev.slot)))
+            else
+                ev.uid = it.uid
+                if it.prio then ev.prio = it.prio end
+                local name = (it.k == "prio" and ("ปรับการโจมตี " .. tostring(it.prio)))
+                          or (it.k == "up" and "อัพเกรดมือ") or (it.k == "sell" and "ขายตัว") or "ออโต้อัพเกรด"
+                print(("[Carry ⏺] %.1fs %s (id %s)"):format(ev.t, name, tostring(it.uid)))
+            end
+            recEvents[#recEvents + 1] = ev
+        end
+        -- ⭐ ผูก uid ทันทีหลังเจอ place ใหม่ (ยูนิตยังอยู่ กันเคสวางแล้วขายเร็ว → ผูกไม่ทัน)
+        if placed then pcall(bindPlaceUids) end
+    end
+end)
 
 task.spawn(function()
     while true do
@@ -348,7 +357,7 @@ local function stopRecord()
             print(("   %.1fs วาง ช่อง %s → id %s"):format(ev.t, tostring(ev.slot), tostring(ev.uid or "?")))
         else
             local name = (ev.k == "prio" and ("ปรับการโจมตี " .. tostring(ev.prio)))
-                      or (ev.k == "up" and "อัพเกรดมือ") or "ออโต้อัพเกรด"
+                      or (ev.k == "up" and "อัพเกรดมือ") or (ev.k == "sell" and "ขายตัว") or "ออโต้อัพเกรด"
             print(("   %.1fs %s (id %s)"):format(ev.t, name, tostring(ev.uid)))
         end
     end
@@ -526,6 +535,9 @@ local function playRecord(data)
             elseif ev.k == "auto" then
                 replicaFire("ChangeGameUnitAutoUpgradePriority", rid)
                 print(("[Carry ▶] 🔁 ออโต้อัพเกรด (id %s)"):format(rid))
+            elseif ev.k == "sell" then
+                replicaFire("SellGameUnit", rid)
+                print(("[Carry ▶] 💸 ขายตัว (id %s)"):format(rid))
             end
         end
     end
@@ -629,7 +641,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v13"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v14"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -722,4 +734,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v13] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v14] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
