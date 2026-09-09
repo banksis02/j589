@@ -1,5 +1,7 @@
 -- ============================================================
--- AE Carry v5 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+-- AE Carry v6 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+--   ⭐ v6: เล่นซ้ำ — resolve "ยูนิตที่เพิ่งวาง" ด้วย id ใหม่ที่โผล่ (diff ก่อน/หลังวาง) + รอ replica ~3 วิ
+--          แก้เคส "หายูนิตที่เพิ่งวางไม่เจอ — ข้าม priority/upgrade" (เดิมรอแค่ 0.4 วิ + จับตำแหน่งเฉยๆ)
 --   ⭐ v5: อัด upgrade/priority จาก hook "ตรงๆ" (นับครั้งกดอัพ + จำ priority ต่อยูนิต)
 --          — เลิกพึ่งการอ่าน replica ทีหลังอย่างเดียว (แก้เคสจำไม่ครบ/ไม่จำ)
 --          — remote/field ยืนยันจาก recon จริง: UpgradeGameUnit(id) / ChangeGameUnitPriority(id,prio)
@@ -408,15 +410,30 @@ local function fireRestart()
     print("[Carry] 🔄 Restart (ผ่าน replica)")
 end
 
--- ⭐ หลังวางติด: หายูนิตที่เพิ่งวาง (จับด้วยตำแหน่ง) → ตั้ง priority + อัพเกรดตามที่อัด (ยิง FireServer ไม่ hook)
-local function applyUnitConfig(target, step, usedIds)
+-- ⭐ หา "ยูนิตที่เพิ่งวางใหม่" ใกล้ตำแหน่ง — id ต้องไม่มีอยู่ก่อนวาง (beforeIds) และยังไม่ถูกใช้
+--    (แม่นกว่าจับตำแหน่งเฉยๆ — กันเคสวางใกล้กัน/replica ตัวเก่ามาหลอก)
+local function findNewUnitNearPos(pos, radius, beforeIds, usedIds)
+    if not pos then return nil end
+    local best, bestD
+    for _, u in ipairs(getMyUnits()) do
+        if u.pos and not (beforeIds and beforeIds[u.id]) and not (usedIds and usedIds[u.id]) then
+            local dd = (u.pos - pos).Magnitude
+            if dd <= (radius or 8) and (not bestD or dd < bestD) then best, bestD = u, dd end
+        end
+    end
+    return best
+end
+
+-- ⭐ ตั้ง priority + อัพเกรดให้ "ยูนิตที่ระบุ" (u = ยูนิตที่เพิ่งวาง resolve มาแล้ว)
+local function applyUnitConfig(u, step, usedIds)
+    if not u then
+        warn("[Carry ▶] ⚠️ หายูนิตที่เพิ่งวางไม่เจอ — ข้าม priority/upgrade")
+        return
+    end
+    usedIds[u.id] = true
     local hasPri = step.priority and step.priority ~= "" and step.priority ~= "None"
     local wantUp = tonumber(step.upgrade) or 0
     if not hasPri and wantUp <= 0 then return end
-    task.wait(0.4)
-    local u = findUnitNearPos(target, 6, usedIds)
-    if not u then warn("[Carry ▶] ⚠️ หายูนิตที่เพิ่งวางไม่เจอ — ข้าม priority/upgrade"); return end
-    usedIds[u.id] = true
     if hasPri then
         replicaFire("ChangeGameUnitPriority", u.id, step.priority)
         print(("[Carry ▶] 🎚️ priority %s (id %s)"):format(step.priority, u.id))
@@ -446,6 +463,9 @@ local function playRecord(data)
         local cf = CFrame.new(unpack(step.cf))
         local target = cf.Position
         local before = unitCountNear(target, 5)
+        -- ⭐ จำ id ยูนิตทั้งหมด "ก่อนวาง" — ไว้หาตัวใหม่ที่เพิ่งโผล่
+        local beforeIds = {}
+        for _, u in ipairs(getMyUnits()) do beforeIds[u.id] = true end
         firePlace(step.slot, cf)
         task.wait(0.8)
         local placed = unitCountNear(target, 5) > before
@@ -468,8 +488,17 @@ local function playRecord(data)
                 warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด — ข้าม"):format(i, step.slot))
             end
         end
-        -- ⭐ วางติดแล้ว → ตั้ง priority + อัพเกรดตามที่อัด
-        if placed then pcall(applyUnitConfig, target, step, usedIds) end
+        -- ⭐ วางติดแล้ว → resolve "ยูนิตที่เพิ่งวาง" (id ใหม่ ใกล้ target) รอ replica ลงทะเบียนสูงสุด ~3 วิ → ตั้ง priority/อัพเกรด
+        if placed then
+            local newU
+            for _ = 1, 15 do
+                newU = findNewUnitNearPos(target, 8, beforeIds, usedIds)
+                if newU then break end
+                task.wait(0.2)
+            end
+            if not newU then newU = findUnitNearPos(target, 8, usedIds) end  -- fallback: ตัวใกล้สุดที่ยังไม่ใช้
+            pcall(applyUnitConfig, newU, step, usedIds)
+        end
     end
     print("[Carry ▶] ✅ วางครบตาม record แล้ว")
 end
@@ -571,7 +600,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v5"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v6"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -664,4 +693,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v5] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v6] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
