@@ -1,5 +1,6 @@
 -- ============================================================
--- AE Carry v11 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ เป็น TIMELINE ตามเวลา)
+-- AE Carry v12 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ เป็น TIMELINE ตามเวลา)
+--   ⭐ v12: เล่นซ้ำ priority → ตรวจว่าค่าเปลี่ยนจริงไหม (อ่าน TargetPriority) ถ้ายังไม่เปลี่ยนยิงซ้ำสูงสุด 4 รอบ + log ค่า ก่อน→หลัง
 --   ⭐ v11: รื้อเป็น "event timeline" — จำ ทุก action (วาง/ปรับการโจมตี/อัพเกรดมือ/ออโต้) + เวลา + ลำดับจริง
 --           เล่นซ้ำตามเวลาสัมพัทธ์เป๊ะ + map id ยูนิต(ตอนอัด→ตอนเล่น) อัตโนมัติ
 --           แก้: ลำดับข้าม/ปรับการโจมตีเพี้ยน (เดิมแปะ config เป็น attribute ต่อตัวแล้วตั้งทันทีหลังวาง)
@@ -493,8 +494,21 @@ local function playRecord(data)
             if not rid then
                 warn(("[Carry ▶] ⚠️ ข้าม %s — ยังไม่รู้ยูนิต (uid %s)"):format(ev.k, tostring(ev.uid)))
             elseif ev.k == "prio" then
-                replicaFire("ChangeGameUnitPriority", rid, ev.prio)
-                print(("[Carry ▶] 🎚️ ปรับการโจมตี %s (id %s)"):format(tostring(ev.prio), rid))
+                -- ⭐ ยิงตั้ง priority แล้ว "ตรวจว่าเปลี่ยนจริงไหม" ถ้ายังไม่เปลี่ยน → ยิงซ้ำ (สูงสุด 4 รอบ)
+                local b = findUnitById(rid)
+                local okp = false
+                for _ = 1, 4 do
+                    if stopped() then break end
+                    replicaFire("ChangeGameUnitPriority", rid, ev.prio)
+                    task.wait(0.4)
+                    local cur = findUnitById(rid)
+                    if cur and cur.priority == ev.prio then okp = true; break end
+                end
+                local a = findUnitById(rid)
+                print(("[Carry ▶] 🎚️ ปรับการโจมตี %s (id %s) : %s → %s %s"):format(
+                    tostring(ev.prio), rid,
+                    b and b.priority or "?", a and a.priority or "?",
+                    okp and "✅" or "⚠️ไม่เปลี่ยน"))
             elseif ev.k == "up" then
                 replicaFire("UpgradeGameUnit", rid)
                 print(("[Carry ▶] ⬆️ อัพเกรดมือ (id %s)"):format(rid))
@@ -604,7 +618,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v11"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v12"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -697,4 +711,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v11] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v12] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
