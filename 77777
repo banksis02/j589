@@ -1,5 +1,7 @@
 -- ============================================================
--- AE Carry v8 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+-- AE Carry v9 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+--   ⭐ v9: เล่นซ้ำ "วางตรงจังหวะ dt ที่อัด" — ยืนยัน+หายูนิต+ตั้ง config ทำเบื้องหลัง (ขนาน) ไม่หน่วงตัวถัดไป
+--          (เดิม config/upgrade บล็อกก่อนวางตัวถัดไป → วางช้ากว่าที่อัด; dt รวมเวลาอัพเกรดอยู่แล้ว) + session guard กันงานค้างข้ามรอบ
 --   ⭐ v8: อัด/เล่นซ้ำ "ออโต้อัพเกรด" ด้วย (recon ยืนยัน remote = ChangeGameUnitAutoUpgradePriority(id) แบบ toggle)
 --          — ดักจาก hook นับครั้ง toggle ต่อยูนิต → เล่นซ้ำ toggle เท่าเดิม
 --   ⭐ v7: เล่นซ้ำ — resolve ยูนิตที่เพิ่งวางด้วย "id ใหม่ที่โผล่" ล้วนๆ (ไม่พึ่งรัศมี — ยูนิตอาจสแนปไกล)
@@ -454,73 +456,67 @@ local function applyUnitConfig(u, step, usedIds)
     end
 end
 
+-- ⭐ นับรอบเล่น — กัน worker เบื้องหลังของรอบเก่าไปตั้ง config ผิดรอบ
+local playSession = 0
+
+-- worker เบื้องหลัง 1 ตัว/การวาง: ยืนยันวางติด → หายูนิตใหม่ → ตั้ง priority/upgrade/auto
+--   แยกจากลูปวาง เพื่อไม่ให้เวลา config ไปหน่วงการวางตัวถัดไป (วางตรงจังหวะที่อัด)
+local function placeWorker(i, step, cf, target, beforeIds, usedIds, mySession)
+    local newU
+    for attempt = 1, 3 do                     -- วางไม่ติด (เงินไม่ทัน?) → ลองซ้ำสูงสุด 3 รอบ
+        for _ = 1, 15 do                       -- รอยูนิตใหม่โผล่ (= วางติด) สูงสุด ~3 วิ/รอบ
+            if not carryOn or mySession ~= playSession then return end
+            local news = {}
+            for _, u in ipairs(getMyUnits()) do
+                if not beforeIds[u.id] and not usedIds[u.id] then news[#news + 1] = u end
+            end
+            if #news == 1 then
+                newU = news[1]; break
+            elseif #news > 1 then              -- มีตัวใหม่หลายตัว → เลือกตัวใกล้พิกัดที่อัดสุด
+                local best, bestD
+                for _, u in ipairs(news) do
+                    if u.pos then
+                        local dd = (u.pos - target).Magnitude
+                        if not bestD or dd < bestD then best, bestD = u, dd end
+                    end
+                end
+                newU = best or news[1]; break
+            end
+            task.wait(0.2)
+        end
+        if newU then break end
+        if not carryOn or mySession ~= playSession then return end
+        firePlace(step.slot, cf)               -- ยังไม่เจอ = วางไม่ติด → ยิงวางซ้ำ
+    end
+    if not newU then
+        warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด/ไม่เจอยูนิต — ข้าม config"):format(i, step.slot))
+        return
+    end
+    usedIds[newU.id] = true
+    print(("[Carry ▶] ✅ #%d ช่อง %d (id %s)"):format(i, step.slot, newU.id))
+    pcall(applyUnitConfig, newU, step, usedIds)
+end
+
 local function playRecord(data)
     print(("[Carry ▶] วางตาม record: %s - Act %s (%d ตัว)")
         :format(data.stage, data.act, #data.steps))
-    local usedIds = {}   -- ยูนิตที่ผูกกับ step ไปแล้ว (กันตั้ง priority/upgrade ผิดตัว)
+    playSession = playSession + 1
+    local mySession = playSession
+    local usedIds = {}   -- ยูนิตที่ผูกกับ step ไปแล้ว (กันตั้ง priority/upgrade ผิดตัว) — แชร์กับ worker
     for i, step in ipairs(data.steps) do
-        if not carryOn then return end
+        if not carryOn or mySession ~= playSession then return end
+        -- ⭐ วางตามจังหวะ dt ที่อัดไว้เป๊ะ (dt รวมเวลาที่ผู้เล่นอัพเกรดไปแล้ว)
         task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
         local cf = CFrame.new(unpack(step.cf))
         local target = cf.Position
-        local before = unitCountNear(target, 5)
-        -- ⭐ จำ id ยูนิตทั้งหมด "ก่อนวาง" — ไว้หาตัวใหม่ที่เพิ่งโผล่
+        -- จำ id ยูนิตทั้งหมด "ก่อนวาง" (ตอนนี้ยังในลูปหลัก = ยังไม่ปนกับตัวถัดไป)
         local beforeIds = {}
         for _, u in ipairs(getMyUnits()) do beforeIds[u.id] = true end
         firePlace(step.slot, cf)
-        task.wait(0.8)
-        local placed = unitCountNear(target, 5) > before
-        if placed then
-            print(("[Carry ▶] ✅ #%d ช่อง %d"):format(i, step.slot))
-        else
-            -- วางไม่ติด (เงินไม่ทัน?) → ลองซ้ำสูงสุด 3 รอบ รอบละ 3 วิ
-            for r = 1, 3 do
-                task.wait(3)
-                if not carryOn then return end
-                firePlace(step.slot, cf)
-                task.wait(0.8)
-                if unitCountNear(target, 5) > before then
-                    print(("[Carry ▶] ✅ #%d ช่อง %d (รอบ %d)"):format(i, step.slot, r + 1))
-                    placed = true
-                    break
-                end
-            end
-            if not placed then
-                warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด — ข้าม"):format(i, step.slot))
-            end
-        end
-        -- ⭐ วางติดแล้ว → resolve "ยูนิตที่เพิ่งวาง" = id ที่เพิ่งโผล่ในลิสต์ยูนิตของเรา (diff ก่อน/หลัง)
-        --    ไม่พึ่งรัศมี/ตำแหน่ง (ยูนิตอาจสแนปไปไกลจากพิกัดที่อัด) — ใช้ตำแหน่งแค่ตอนมีตัวใหม่หลายตัว
-        if placed then
-            local newU
-            for _ = 1, 25 do   -- รอ replica ลงทะเบียนสูงสุด ~5 วิ
-                local news = {}
-                for _, u in ipairs(getMyUnits()) do
-                    if not beforeIds[u.id] and not usedIds[u.id] then news[#news + 1] = u end
-                end
-                if #news == 1 then
-                    newU = news[1]; break
-                elseif #news > 1 then
-                    -- มีตัวใหม่หลายตัว (วางเร็ว/ตกค้าง) → เลือกตัวใกล้พิกัดที่อัดสุด
-                    local best, bestD
-                    for _, u in ipairs(news) do
-                        if u.pos then
-                            local dd = (u.pos - target).Magnitude
-                            if not bestD or dd < bestD then best, bestD = u, dd end
-                        end
-                    end
-                    newU = best or news[1]; break
-                end
-                task.wait(0.2)
-            end
-            if not newU then
-                warn(("[Carry ▶] ⚠️ #%d ไม่เจอยูนิตใหม่หลังวาง (ยูนิตเรา %d ตัว) — ข้าม config")
-                    :format(i, #getMyUnits()))
-            end
-            pcall(applyUnitConfig, newU, step, usedIds)
-        end
+        -- ⭐ ยืนยัน+หายูนิต+ตั้ง config = ทำเบื้องหลัง ไม่บล็อกการวางตัวถัดไป
+        task.spawn(placeWorker, i, step, cf, target, beforeIds, usedIds, mySession)
     end
-    print("[Carry ▶] ✅ วางครบตาม record แล้ว")
+    print("[Carry ▶] ✅ สั่งวางครบตาม record แล้ว (config ตั้งเบื้องหลังต่อ)")
 end
 
 -- ลูปรีเพล — ⭐ cooldown 10 วิ/ครั้ง กันสแปมยิงจนโดนเตะ
@@ -620,7 +616,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v8"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v9"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -713,4 +709,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v8] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v9] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
