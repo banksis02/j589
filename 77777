@@ -1,5 +1,8 @@
 -- ============================================================
--- AE Carry v10 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+-- AE Carry v11 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ เป็น TIMELINE ตามเวลา)
+--   ⭐ v11: รื้อเป็น "event timeline" — จำ ทุก action (วาง/ปรับการโจมตี/อัพเกรดมือ/ออโต้) + เวลา + ลำดับจริง
+--           เล่นซ้ำตามเวลาสัมพัทธ์เป๊ะ + map id ยูนิต(ตอนอัด→ตอนเล่น) อัตโนมัติ
+--           แก้: ลำดับข้าม/ปรับการโจมตีเพี้ยน (เดิมแปะ config เป็น attribute ต่อตัวแล้วตั้งทันทีหลังวาง)
 --   ⭐ v10: upgrade อัด "เฉพาะที่กดอัพด้วยมือจริง" (recUpCount) — ไม่อ่านระดับจาก replica
 --           (เปิดออโต้อัพเกรด → เกมอัพเลขเองจากออโต้ ไม่ใช่มือ → เดิมอัดเลขนั้นมา เล่นซ้ำเลยกดอัพมือผิด+แย่งเงิน)
 --           ใช้ออโต้อัพเกรด = กดมือ 0 = upgrade 0 → เล่นซ้ำแค่ toggle ออโต้ + ตั้ง priority (เกมอัพเอง)
@@ -213,14 +216,16 @@ end
 -- ============================================================
 -- ⏺ Recorder (hook เบา — ติดตั้งครั้งแรกที่กดอัด)
 -- ============================================================
+-- ⭐ v11: เก็บเป็น "timeline" — ทุก action (วาง/ปรับการโจมตี/อัพเกรดมือ/ออโต้) จำเวลา+ลำดับจริง
+--    event: { t=เวลาสัมพัทธ์(วิ), k="place"|"prio"|"up"|"auto", ... }
+--      place: {t,k="place", slot, cf, uid}  (uid = id ยูนิตตอนอัด — bind ด้วยตำแหน่งทีหลัง)
+--      prio : {t,k="prio",  uid, prio}   up: {t,k="up", uid}   auto: {t,k="auto", uid}
 local recording = false
-local recSteps = {}
-local recLastT = 0
+local recEvents = {}    -- timeline (เรียงตามเวลา)
+local recStartT = 0
 local recKey = nil
-local recPending = {}
-local recUpCount = {}   -- ⭐ [unitId] = จำนวนครั้งที่กด Upgrade (ดักจาก hook ตรงๆ)
-local recPrio    = {}   -- ⭐ [unitId] = priority ล่าสุดที่ตั้ง (ดักจาก hook ตรงๆ)
-local recAutoUp  = {}   -- ⭐ [unitId] = จำนวนครั้งกด "ออโต้อัพเกรด" (toggle) ดักจาก hook ตรงๆ
+local recPending = {}   -- คิวดิบจาก hook → ประมวลผลนอก hook
+local recPreIds = {}    -- id ยูนิตที่มีอยู่ "ก่อนเริ่มอัด" (ไม่เอามา bind ให้ place)
 local hookInstalled = false
 
 local function installHook()
@@ -235,13 +240,13 @@ local function installHook()
                and getnamecallmethod() == "FireServer" then
                 local a1, a2, a3, a4 = ...
                 if a2 == "PlaceGameUnit" and typeof(a4) == "CFrame" then
-                    recPending[#recPending + 1] = { slot = a3, cf = a4, t = tick() }
+                    recPending[#recPending + 1] = { t = tick(), k = "place", slot = a3, cf = a4 }
                 elseif a2 == "UpgradeGameUnit" and type(a3) == "string" then
-                    recUpCount[a3] = (recUpCount[a3] or 0) + 1   -- นับครั้งกดอัพต่อ id
+                    recPending[#recPending + 1] = { t = tick(), k = "up", uid = a3 }
                 elseif a2 == "ChangeGameUnitPriority" and type(a3) == "string" then
-                    recPrio[a3] = a4                              -- จำ priority ล่าสุดต่อ id
+                    recPending[#recPending + 1] = { t = tick(), k = "prio", uid = a3, prio = a4 }
                 elseif a2 == "ChangeGameUnitAutoUpgradePriority" and type(a3) == "string" then
-                    recAutoUp[a3] = (recAutoUp[a3] or 0) + 1      -- นับครั้งกดออโต้อัพเกรดต่อ id
+                    recPending[#recPending + 1] = { t = tick(), k = "auto", uid = a3 }
                 end
             end
             return oldNC(self, ...)
@@ -251,60 +256,46 @@ local function installHook()
     return ok
 end
 
--- ตัวประมวลผลคิว (นอก hook)
+-- ตัวประมวลผลคิว (นอก hook): event ดิบ → recEvents (t = เวลาสัมพัทธ์จากเริ่มอัด)
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.2)
         while #recPending > 0 do
-            local item = table.remove(recPending, 1)
-            local dt = math.clamp(item.t - recLastT, 0, MAX_STEP_WAIT)
-            recLastT = item.t
-            table.insert(recSteps, {
-                slot = item.slot,
-                dt = math.floor(dt * 10) / 10,
-                cf = { item.cf:GetComponents() },
-            })
-            print(("[Carry ⏺] #%d ช่อง %s | หน่วง %.1fs")
-                :format(#recSteps, tostring(item.slot), dt))
+            local it = table.remove(recPending, 1)
+            local ev = { t = math.max(0, it.t - recStartT), k = it.k }
+            if it.k == "place" then
+                ev.slot = it.slot
+                ev.cf = { it.cf:GetComponents() }
+                print(("[Carry ⏺] %.1fs วาง ช่อง %s"):format(ev.t, tostring(ev.slot)))
+            else
+                ev.uid = it.uid
+                if it.prio then ev.prio = it.prio end
+                local name = (it.k == "prio" and ("ปรับการโจมตี " .. tostring(it.prio)))
+                          or (it.k == "up" and "อัพเกรดมือ") or "ออโต้อัพเกรด"
+                print(("[Carry ⏺] %.1fs %s (id %s)"):format(ev.t, name, tostring(it.uid)))
+            end
+            recEvents[#recEvents + 1] = ev
         end
     end
 end)
 
--- ⭐ ตอนอัด: อ่าน priority/upgrade ปัจจุบันของทุก step จาก replica (จับคู่ยูนิตด้วย id/ตำแหน่ง) — ไม่ hook
---    จับคู่ 2 รอบ: (1) step ที่ผูก id แล้วยึดยูนิตของตัวเองก่อน (กันวางใกล้กันแล้วแย่งยูนิตผิดตัว)
---                 (2) step ที่ยังไม่ผูก → จับด้วยตำแหน่งจากยูนิตที่เหลือ
-local function captureConfigs()
-    local used = {}
-    for _, step in ipairs(recSteps) do
-        if step and step._id then
-            local u = findUnitById(step._id)
-            if u then
-                used[u.id]    = true
-                step.asset    = u.asset
-                step.priority = u.priority   -- อ่าน priority จาก replica (default; recPrio ทับทีหลัง)
+-- ⭐ bind uid ให้ event "place" (id ยูนิตตอนอัด) — จับด้วยตำแหน่ง (ตอนอัด replica ตรงพิกัดจริง)
+--    ข้ามยูนิตที่มีอยู่ก่อนอัด (recPreIds) และที่ผูกไปแล้ว
+local function bindPlaceUids()
+    local units = getMyUnits()
+    local assigned = {}
+    for _, ev in ipairs(recEvents) do if ev.k == "place" and ev.uid then assigned[ev.uid] = true end end
+    for _, ev in ipairs(recEvents) do
+        if ev.k == "place" and not ev.uid then
+            local target = CFrame.new(unpack(ev.cf)).Position
+            local best, bestD
+            for _, u in ipairs(units) do
+                if u.pos and not recPreIds[u.id] and not assigned[u.id] then
+                    local dd = (u.pos - target).Magnitude
+                    if not bestD or dd < bestD then best, bestD = u, dd end
+                end
             end
-        end
-    end
-    for _, step in ipairs(recSteps) do
-        if step and step.cf and not step._id then
-            local pos = CFrame.new(unpack(step.cf)).Position
-            local u = findUnitNearPos(pos, 5, used)
-            if u then
-                used[u.id]    = true
-                step._id      = u.id
-                step.asset    = u.asset
-                step.priority = u.priority
-            end
-        end
-    end
-    -- ⭐ บันทึกจาก "สิ่งที่ผู้เล่นสั่งจริง" (hook) เท่านั้น — ไม่อ่านระดับ upgrade จาก replica
-    --    เพราะถ้าเปิด "ออโต้อัพเกรด" เกมจะอัพเลขให้เองจากออโต้ ไม่ใช่จากมือ →
-    --    ถ้าอัดระดับนั้นมา เล่นซ้ำจะไปกดอัพมือผิดๆ (ทั้งที่ควรปล่อยให้ออโต้ทำ)
-    for _, step in ipairs(recSteps) do
-        if step and step._id then
-            if recPrio[step._id] ~= nil then step.priority = recPrio[step._id] end
-            step.upgrade = recUpCount[step._id] or 0   -- เฉพาะจำนวนครั้งที่ "กดอัพด้วยมือ" จริง
-            step.autoUp  = recAutoUp[step._id] or 0     -- จำนวนครั้งกด "ออโต้อัพเกรด" (toggle)
+            if best then ev.uid = best.id; assigned[best.id] = true end
         end
     end
 end
@@ -312,7 +303,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if recording then pcall(captureConfigs) end
+        if recording then pcall(bindPlaceUids) end
     end
 end)
 
@@ -327,55 +318,46 @@ local function startRecord()
         return false
     end
     recKey = info
-    recSteps = {}
+    recEvents = {}
     recPending = {}
-    recUpCount = {}
-    recPrio = {}
-    recAutoUp = {}
-    recLastT = tick()
+    recPreIds = {}
+    for _, u in ipairs(getMyUnits()) do recPreIds[u.id] = true end  -- ยูนิตที่มีอยู่ก่อน = ไม่ใช่ของรอบอัดนี้
+    recStartT = tick()
     recording = true
-    print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย"):format(info.stage, info.act))
+    print(("[Carry ⏺] เริ่มอัด: %s - Act %s | ทำได้เลย — จำ วาง/ปรับการโจมตี/อัพเกรด/ออโต้ ตามเวลา"):format(info.stage, info.act))
     return true
 end
 
 local function stopRecord()
     recording = false
     local t0 = tick()
-    while #recPending > 0 and tick() - t0 < 3 do
-        task.wait(0.2)
-    end
-    task.wait(0.5)
-    -- ⭐ เก็บค่า priority/upgrade "ครั้งสุดท้าย" ให้ชัวร์ (แก้บั๊กจำบ้างไม่จำบ้าง):
-    --    poll ระหว่างอัดอาจยังไม่ทันเก็บค่าที่เพิ่งทำก่อนกดหยุด → อ่าน replica ซ้ำอีกหลายรอบ
-    --    เผื่อยูนิตที่วางท้ายๆ เพิ่งลง registry / อัพเกรดเพิ่งคอมมิตที่เซิร์ฟเวอร์
-    for _ = 1, 5 do
-        pcall(captureConfigs)
-        task.wait(0.4)
-    end
-    if not recKey or #recSteps == 0 then
+    while #recPending > 0 and tick() - t0 < 3 do task.wait(0.2) end
+    task.wait(0.4)
+    for _ = 1, 5 do pcall(bindPlaceUids); task.wait(0.3) end   -- bind uid ให้ครบ (ยูนิตท้ายๆ เพิ่งลง registry)
+    if not recKey or #recEvents == 0 then
         warn("[Carry] ⚠️ ไม่มีข้อมูลอัด — ไม่บันทึก")
         return false
     end
-    -- สรุปสิ่งที่จะบันทึก ให้เห็นชัดว่าจำครบไหม
-    for i, step in ipairs(recSteps) do
-        print(("[Carry 💾] #%d ช่อง %s | priority %s | upgrade %d | auto %d")
-            :format(i, tostring(step.slot),
-                    tostring(step.priority ~= nil and step.priority ~= "" and step.priority or "None"),
-                    tonumber(step.upgrade) or 0, tonumber(step.autoUp) or 0))
+    local nPlace = 0
+    for _, ev in ipairs(recEvents) do if ev.k == "place" then nPlace = nPlace + 1 end end
+    print(("[Carry 💾] สรุป timeline %d events (%d วาง):"):format(#recEvents, nPlace))
+    for _, ev in ipairs(recEvents) do
+        if ev.k == "place" then
+            print(("   %.1fs วาง ช่อง %s → id %s"):format(ev.t, tostring(ev.slot), tostring(ev.uid or "?")))
+        else
+            local name = (ev.k == "prio" and ("ปรับการโจมตี " .. tostring(ev.prio)))
+                      or (ev.k == "up" and "อัพเกรดมือ") or "ออโต้อัพเกรด"
+            print(("   %.1fs %s (id %s)"):format(ev.t, name, tostring(ev.uid)))
+        end
     end
     local file = keyToFile(recKey)
     local ok = pcall(function()
         writefile(file, HttpService:JSONEncode({
-            stage = recKey.stage,
-            act = recKey.act,
-            steps = recSteps,
+            stage = recKey.stage, act = recKey.act, events = recEvents,
         }))
     end)
-    if ok then
-        print(("[Carry 💾] บันทึกแล้ว: %s (%d ตัว)"):format(file, #recSteps))
-    else
-        warn("[Carry] ❌ เขียนไฟล์ไม่สำเร็จ")
-    end
+    if ok then print(("[Carry 💾] บันทึกแล้ว: %s"):format(file))
+    else warn("[Carry] ❌ เขียนไฟล์ไม่สำเร็จ") end
     return ok
 end
 
@@ -383,10 +365,10 @@ local function loadRecord(info)
     local ok, data = pcall(function()
         return HttpService:JSONDecode(readfile(keyToFile(info)))
     end)
-    if ok and type(data) == "table" and type(data.steps) == "table" and #data.steps > 0 then
+    if ok and type(data) == "table" and type(data.events) == "table" and #data.events > 0 then
         return data
     end
-    return nil
+    return nil   -- ไฟล์เก่า (steps) = ไม่รองรับ → ต้องอัดใหม่
 end
 
 -- ============================================================
@@ -419,103 +401,110 @@ local function fireRestart()
     print("[Carry] 🔄 Restart (ผ่าน replica)")
 end
 
--- ⭐ ตั้ง priority + อัพเกรดให้ "ยูนิตที่ระบุ" (u = ยูนิตที่เพิ่งวาง resolve มาแล้ว)
-local function applyUnitConfig(u, step, usedIds)
-    if not u then return end   -- playRecord แจ้ง warning เองแล้ว (พร้อมจำนวนยูนิต)
-    usedIds[u.id] = true
-    local hasPri   = step.priority and step.priority ~= "" and step.priority ~= "None"
-    local wantUp   = tonumber(step.upgrade) or 0
-    local wantAuto = tonumber(step.autoUp) or 0
-    if not hasPri and wantUp <= 0 and wantAuto <= 0 then return end
-    if hasPri then
-        replicaFire("ChangeGameUnitPriority", u.id, step.priority)
-        print(("[Carry ▶] 🎚️ priority %s (id %s)"):format(step.priority, u.id))
-        task.wait(0.3)
-    end
-    if wantUp > 0 then
-        local tries = 0
-        while carryOn and tries < wantUp * 4 + 12 do
-            local cur = findUnitById(u.id)
-            if not cur or cur.upgrade >= math.min(wantUp, cur.maxUp) then break end
-            replicaFire("UpgradeGameUnit", u.id)   -- เงินไม่พอ server ปฏิเสธเงียบ → ขั้นไม่เพิ่ม → รอ+ลองใหม่
-            task.wait(1.2)
-            tries = tries + 1
+-- ⭐ resolve "ยูนิตที่เพิ่งวาง" ตอนเล่นซ้ำ = id ใหม่ที่โผล่ (ไม่อยู่ใน beforeIds/usedReplay)
+local function resolveNewUnit(beforeIds, usedReplay, target, stopped)
+    for _ = 1, 25 do   -- รอ replica ~5 วิ
+        if stopped() then return nil end
+        local news = {}
+        for _, u in ipairs(getMyUnits()) do
+            if not beforeIds[u.id] and not usedReplay[u.id] then news[#news + 1] = u end
         end
-        local cur = findUnitById(u.id)
-        print(("[Carry ▶] ⬆️ upgrade → %d (อัดไว้ %d)"):format(cur and cur.upgrade or -1, wantUp))
-    end
-    -- ⭐ ออโต้อัพเกรด: toggle เท่าจำนวนครั้งที่อัด (ยูนิตวางใหม่ = สถานะเริ่มต้น → ยิงเท่าเดิม = ได้สถานะเดิม)
-    if wantAuto > 0 then
-        for _ = 1, wantAuto do
-            if not carryOn then break end
-            replicaFire("ChangeGameUnitAutoUpgradePriority", u.id)
-            task.wait(0.25)
+        if #news == 1 then
+            return news[1]
+        elseif #news > 1 then
+            local best, bestD
+            for _, u in ipairs(news) do
+                if u.pos then
+                    local dd = (u.pos - target).Magnitude
+                    if not bestD or dd < bestD then best, bestD = u, dd end
+                end
+            end
+            return best or news[1]
         end
-        print(("[Carry ▶] 🔁 ออโต้อัพเกรด x%d (id %s)"):format(wantAuto, u.id))
+        task.wait(0.2)
     end
+    return nil
 end
 
--- ⭐ นับรอบเล่น — กัน worker เบื้องหลังของรอบเก่าไปตั้ง config ผิดรอบ
+-- ⭐ นับรอบเล่น — กันงานเบื้องหลังของรอบเก่าทำผิดรอบ
 local playSession = 0
 
--- worker เบื้องหลัง 1 ตัว/การวาง: ยืนยันวางติด → หายูนิตใหม่ → ตั้ง priority/upgrade/auto
---   แยกจากลูปวาง เพื่อไม่ให้เวลา config ไปหน่วงการวางตัวถัดไป (วางตรงจังหวะที่อัด)
-local function placeWorker(i, step, cf, target, beforeIds, usedIds, mySession)
-    local newU
-    for attempt = 1, 3 do                     -- วางไม่ติด (เงินไม่ทัน?) → ลองซ้ำสูงสุด 3 รอบ
-        for _ = 1, 15 do                       -- รอยูนิตใหม่โผล่ (= วางติด) สูงสุด ~3 วิ/รอบ
-            if not carryOn or mySession ~= playSession then return end
-            local news = {}
-            for _, u in ipairs(getMyUnits()) do
-                if not beforeIds[u.id] and not usedIds[u.id] then news[#news + 1] = u end
-            end
-            if #news == 1 then
-                newU = news[1]; break
-            elseif #news > 1 then              -- มีตัวใหม่หลายตัว → เลือกตัวใกล้พิกัดที่อัดสุด
-                local best, bestD
-                for _, u in ipairs(news) do
-                    if u.pos then
-                        local dd = (u.pos - target).Magnitude
-                        if not bestD or dd < bestD then best, bestD = u, dd end
-                    end
-                end
-                newU = best or news[1]; break
-            end
-            task.wait(0.2)
-        end
-        if newU then break end
-        if not carryOn or mySession ~= playSession then return end
-        firePlace(step.slot, cf)               -- ยังไม่เจอ = วางไม่ติด → ยิงวางซ้ำ
-    end
-    if not newU then
-        warn(("[Carry ▶] ⚠️ #%d ช่อง %d วางไม่ติด/ไม่เจอยูนิต — ข้าม config"):format(i, step.slot))
-        return
-    end
-    usedIds[newU.id] = true
-    print(("[Carry ▶] ✅ #%d ช่อง %d (id %s)"):format(i, step.slot, newU.id))
-    pcall(applyUnitConfig, newU, step, usedIds)
-end
-
+-- ▶ เล่นตาม timeline: เล่น event ตามเวลาสัมพัทธ์จริง + map uid(ตอนอัด) → id(ตอนเล่น)
 local function playRecord(data)
-    print(("[Carry ▶] วางตาม record: %s - Act %s (%d ตัว)")
-        :format(data.stage, data.act, #data.steps))
     playSession = playSession + 1
     local mySession = playSession
-    local usedIds = {}   -- ยูนิตที่ผูกกับ step ไปแล้ว (กันตั้ง priority/upgrade ผิดตัว) — แชร์กับ worker
-    for i, step in ipairs(data.steps) do
-        if not carryOn or mySession ~= playSession then return end
-        -- ⭐ วางตามจังหวะ dt ที่อัดไว้เป๊ะ (dt รวมเวลาที่ผู้เล่นอัพเกรดไปแล้ว)
-        task.wait(math.clamp(step.dt or 1, 0.3, MAX_STEP_WAIT))
-        local cf = CFrame.new(unpack(step.cf))
-        local target = cf.Position
-        -- จำ id ยูนิตทั้งหมด "ก่อนวาง" (ตอนนี้ยังในลูปหลัก = ยังไม่ปนกับตัวถัดไป)
-        local beforeIds = {}
-        for _, u in ipairs(getMyUnits()) do beforeIds[u.id] = true end
-        firePlace(step.slot, cf)
-        -- ⭐ ยืนยัน+หายูนิต+ตั้ง config = ทำเบื้องหลัง ไม่บล็อกการวางตัวถัดไป
-        task.spawn(placeWorker, i, step, cf, target, beforeIds, usedIds, mySession)
+    local events = data.events or {}
+    print(("[Carry ▶] เล่น timeline: %s - Act %s (%d events)"):format(data.stage, data.act, #events))
+    local idMap = {}         -- uid(อัด) → id(เล่น)
+    local usedReplay = {}    -- id(เล่น) ที่จองแล้ว
+    local t0 = tick()
+    local baseT = events[1] and events[1].t or 0
+    local lastRepChk, repSeen = 0, false
+    local function stopped()   -- หยุดถ้า: ปิด carry / รอบใหม่ / จบด่าน (ปุ่ม Repeat โผล่)
+        if (not carryOn) or mySession ~= playSession then return true end
+        local now = tick()
+        if now - lastRepChk > 0.5 then lastRepChk = now; repSeen = findRepeatBtn() ~= nil end
+        return repSeen
     end
-    print("[Carry ▶] ✅ สั่งวางครบตาม record แล้ว (config ตั้งเบื้องหลังต่อ)")
+    local function waitReplayId(uid)   -- รอ place ตัวนั้น resolve id เสร็จ (~7 วิ)
+        for _ = 1, 140 do
+            if stopped() then return nil end
+            if idMap[uid] then return idMap[uid] end
+            task.wait(0.05)
+        end
+        return idMap[uid]
+    end
+
+    for _, ev in ipairs(events) do
+        if stopped() then return end
+        -- ⭐ รอจนถึง "เวลาสัมพัทธ์" ของ event นี้ (เล่นตาม timeline จริง)
+        local targetElapsed = (ev.t or 0) - baseT
+        while (tick() - t0) < targetElapsed do
+            if stopped() then return end
+            task.wait(0.03)
+        end
+        if ev.k == "place" then
+            local cf = CFrame.new(unpack(ev.cf))
+            local target = cf.Position
+            local beforeIds = {}
+            for _, u in ipairs(getMyUnits()) do beforeIds[u.id] = true end
+            firePlace(ev.slot, cf)
+            local evUid = ev.uid
+            -- resolve id เบื้องหลัง (ไม่บล็อก timeline) → เก็บลง idMap ให้ event config ตัวหลังใช้
+            task.spawn(function()
+                local newU
+                for _ = 1, 3 do
+                    newU = resolveNewUnit(beforeIds, usedReplay, target, stopped)
+                    if newU then break end
+                    if stopped() then return end
+                    firePlace(ev.slot, cf)   -- วางไม่ติด → ลองซ้ำ
+                end
+                if newU then
+                    usedReplay[newU.id] = true
+                    if evUid then idMap[evUid] = newU.id end
+                    print(("[Carry ▶] ✅ วาง ช่อง %s (id %s)"):format(tostring(ev.slot), newU.id))
+                else
+                    warn(("[Carry ▶] ⚠️ วาง ช่อง %s ไม่ติด/หายูนิตไม่เจอ"):format(tostring(ev.slot)))
+                end
+            end)
+        else
+            -- config event → หา id ตอนเล่นจาก uid(ตอนอัด)
+            local rid = ev.uid and waitReplayId(ev.uid) or nil
+            if not rid then
+                warn(("[Carry ▶] ⚠️ ข้าม %s — ยังไม่รู้ยูนิต (uid %s)"):format(ev.k, tostring(ev.uid)))
+            elseif ev.k == "prio" then
+                replicaFire("ChangeGameUnitPriority", rid, ev.prio)
+                print(("[Carry ▶] 🎚️ ปรับการโจมตี %s (id %s)"):format(tostring(ev.prio), rid))
+            elseif ev.k == "up" then
+                replicaFire("UpgradeGameUnit", rid)
+                print(("[Carry ▶] ⬆️ อัพเกรดมือ (id %s)"):format(rid))
+            elseif ev.k == "auto" then
+                replicaFire("ChangeGameUnitAutoUpgradePriority", rid)
+                print(("[Carry ▶] 🔁 ออโต้อัพเกรด (id %s)"):format(rid))
+            end
+        end
+    end
+    print("[Carry ▶] ✅ เล่นครบ timeline แล้ว")
 end
 
 -- ลูปรีเพล — ⭐ cooldown 10 วิ/ครั้ง กันสแปมยิงจนโดนเตะ
@@ -615,7 +604,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v10"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v11"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -708,4 +697,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v10] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v11] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
