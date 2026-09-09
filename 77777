@@ -1,8 +1,10 @@
 -- ============================================================
--- AE Carry v3 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+-- AE Carry v4 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
 --   ⭐ v3: อัด/เล่นซ้ำ "Priority (First/Boss/..) + ระดับอัพเกรด" ต่อยูนิต
 --          — อ่านจาก replica (TargetPriority/Upgrade) ไม่ hook เพิ่ม (กันแครช)
 --          — replay: วาง → หายูนิตที่เพิ่งวาง (ตำแหน่ง) → ยิง ChangeGameUnitPriority + UpgradeGameUnit
+--   ⭐ v4: แก้ "จำ priority/upgrade บ้างไม่จำบ้าง" — เก็บค่าครั้งสุดท้ายให้ชัวร์ตอนกดหยุดอัด
+--          (poll ระหว่างอัดแข่งกับตอนกดหยุด) + จับคู่ยูนิต 2 รอบกันผูกผิดตัวตอนวางใกล้กัน
 --
 -- ⏺ อัด: ดักคำสั่ง PlaceGameUnit ของตัวเอง (ได้ "เลขช่องจริง + พิกัดเป๊ะ")
 --    - hook ติดตั้งครั้งแรกที่กดอัดเท่านั้น และในนั้นทำแค่ "จดใส่คิว" (เบาสุด)
@@ -246,30 +248,41 @@ task.spawn(function()
     end
 end)
 
--- ⭐ ตอนอัด: poll replica เก็บ priority/upgrade ต่อ step (จับคู่ยูนิตด้วยตำแหน่ง) — ไม่ hook
+-- ⭐ ตอนอัด: อ่าน priority/upgrade ปัจจุบันของทุก step จาก replica (จับคู่ยูนิตด้วย id/ตำแหน่ง) — ไม่ hook
+--    จับคู่ 2 รอบ: (1) step ที่ผูก id แล้วยึดยูนิตของตัวเองก่อน (กันวางใกล้กันแล้วแย่งยูนิตผิดตัว)
+--                 (2) step ที่ยังไม่ผูก → จับด้วยตำแหน่งจากยูนิตที่เหลือ
+local function captureConfigs()
+    local used = {}
+    for _, step in ipairs(recSteps) do
+        if step and step._id then
+            local u = findUnitById(step._id)
+            if u then
+                used[u.id]    = true
+                step.asset    = u.asset
+                step.priority = u.priority   -- "First"/"Boss"/... หรือ "None"
+                step.upgrade  = u.upgrade     -- ระดับอัพล่าสุดที่ผู้เล่นทำ
+            end
+        end
+    end
+    for _, step in ipairs(recSteps) do
+        if step and step.cf and not step._id then
+            local pos = CFrame.new(unpack(step.cf)).Position
+            local u = findUnitNearPos(pos, 5, used)
+            if u then
+                used[u.id]    = true
+                step._id      = u.id
+                step.asset    = u.asset
+                step.priority = u.priority
+                step.upgrade  = u.upgrade
+            end
+        end
+    end
+end
+
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if recording then
-            local used = {}
-            for _, step in ipairs(recSteps) do
-                if step and step.cf then
-                    local u
-                    if step._id then u = findUnitById(step._id) end
-                    if not u then
-                        local pos = CFrame.new(unpack(step.cf)).Position
-                        u = findUnitNearPos(pos, 6, used)
-                    end
-                    if u then
-                        used[u.id] = true
-                        step._id      = u.id
-                        step.asset    = u.asset
-                        step.priority = u.priority   -- "First"/"Boss"/... หรือ "None"
-                        step.upgrade  = u.upgrade     -- ระดับอัพล่าสุดที่ผู้เล่นทำ
-                    end
-                end
-            end
-        end
+        if recording then pcall(captureConfigs) end
     end
 end)
 
@@ -299,9 +312,23 @@ local function stopRecord()
         task.wait(0.2)
     end
     task.wait(0.5)
+    -- ⭐ เก็บค่า priority/upgrade "ครั้งสุดท้าย" ให้ชัวร์ (แก้บั๊กจำบ้างไม่จำบ้าง):
+    --    poll ระหว่างอัดอาจยังไม่ทันเก็บค่าที่เพิ่งทำก่อนกดหยุด → อ่าน replica ซ้ำอีกหลายรอบ
+    --    เผื่อยูนิตที่วางท้ายๆ เพิ่งลง registry / อัพเกรดเพิ่งคอมมิตที่เซิร์ฟเวอร์
+    for _ = 1, 5 do
+        pcall(captureConfigs)
+        task.wait(0.4)
+    end
     if not recKey or #recSteps == 0 then
         warn("[Carry] ⚠️ ไม่มีข้อมูลอัด — ไม่บันทึก")
         return false
+    end
+    -- สรุปสิ่งที่จะบันทึก ให้เห็นชัดว่าจำครบไหม
+    for i, step in ipairs(recSteps) do
+        print(("[Carry 💾] #%d ช่อง %s | priority %s | upgrade %d")
+            :format(i, tostring(step.slot),
+                    tostring(step.priority ~= nil and step.priority ~= "" and step.priority or "None"),
+                    tonumber(step.upgrade) or 0))
     end
     local file = keyToFile(recKey)
     local ok = pcall(function()
@@ -522,7 +549,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v2"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v4"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -615,4 +642,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v2] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v4] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
