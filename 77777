@@ -1,5 +1,8 @@
 -- ============================================================
--- AE Carry v9 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+-- AE Carry v10 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+--   ⭐ v10: upgrade อัด "เฉพาะที่กดอัพด้วยมือจริง" (recUpCount) — ไม่อ่านระดับจาก replica
+--           (เปิดออโต้อัพเกรด → เกมอัพเลขเองจากออโต้ ไม่ใช่มือ → เดิมอัดเลขนั้นมา เล่นซ้ำเลยกดอัพมือผิด+แย่งเงิน)
+--           ใช้ออโต้อัพเกรด = กดมือ 0 = upgrade 0 → เล่นซ้ำแค่ toggle ออโต้ + ตั้ง priority (เกมอัพเอง)
 --   ⭐ v9: เล่นซ้ำ "วางตรงจังหวะ dt ที่อัด" — ยืนยัน+หายูนิต+ตั้ง config ทำเบื้องหลัง (ขนาน) ไม่หน่วงตัวถัดไป
 --          (เดิม config/upgrade บล็อกก่อนวางตัวถัดไป → วางช้ากว่าที่อัด; dt รวมเวลาอัพเกรดอยู่แล้ว) + session guard กันงานค้างข้ามรอบ
 --   ⭐ v8: อัด/เล่นซ้ำ "ออโต้อัพเกรด" ด้วย (recon ยืนยัน remote = ChangeGameUnitAutoUpgradePriority(id) แบบ toggle)
@@ -278,8 +281,7 @@ local function captureConfigs()
             if u then
                 used[u.id]    = true
                 step.asset    = u.asset
-                step.priority = u.priority   -- "First"/"Boss"/... หรือ "None"
-                step.upgrade  = u.upgrade     -- ระดับอัพล่าสุดที่ผู้เล่นทำ
+                step.priority = u.priority   -- อ่าน priority จาก replica (default; recPrio ทับทีหลัง)
             end
         end
     end
@@ -292,20 +294,17 @@ local function captureConfigs()
                 step._id      = u.id
                 step.asset    = u.asset
                 step.priority = u.priority
-                step.upgrade  = u.upgrade
             end
         end
     end
-    -- ⭐ ทับด้วย "สิ่งที่ผู้เล่นสั่งจริง" จาก hook (แม่นกว่าอ่าน replica ที่แข่งกับจังหวะเซิร์ฟเวอร์)
-    --    - priority: ใช้ค่าที่กดเปลี่ยนจริง (ถ้ามี)
-    --    - upgrade : ถ้าอ่าน replica ได้ 0 แต่กดอัพจริง → ใช้จำนวนครั้งที่กด (จะถูก clamp ด้วย maxUp ตอนเล่นซ้ำ)
+    -- ⭐ บันทึกจาก "สิ่งที่ผู้เล่นสั่งจริง" (hook) เท่านั้น — ไม่อ่านระดับ upgrade จาก replica
+    --    เพราะถ้าเปิด "ออโต้อัพเกรด" เกมจะอัพเลขให้เองจากออโต้ ไม่ใช่จากมือ →
+    --    ถ้าอัดระดับนั้นมา เล่นซ้ำจะไปกดอัพมือผิดๆ (ทั้งที่ควรปล่อยให้ออโต้ทำ)
     for _, step in ipairs(recSteps) do
         if step and step._id then
             if recPrio[step._id] ~= nil then step.priority = recPrio[step._id] end
-            local lvl    = tonumber(step.upgrade) or 0
-            local clicks = recUpCount[step._id] or 0
-            if lvl == 0 and clicks > 0 then step.upgrade = clicks end
-            step.autoUp = recAutoUp[step._id] or step.autoUp or 0   -- ⭐ ออโต้อัพเกรด (จำนวนครั้ง toggle)
+            step.upgrade = recUpCount[step._id] or 0   -- เฉพาะจำนวนครั้งที่ "กดอัพด้วยมือ" จริง
+            step.autoUp  = recAutoUp[step._id] or 0     -- จำนวนครั้งกด "ออโต้อัพเกรด" (toggle)
         end
     end
 end
@@ -616,7 +615,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v9"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v10"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -709,4 +708,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v9] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v10] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
