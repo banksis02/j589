@@ -1,5 +1,7 @@
 -- ============================================================
--- AE Carry v7 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด)
+-- AE Carry v8 — ตัวแบก (อัดด้วย hook แบบเบา + เล่นซ้ำ + Priority/อัพเกรด/ออโต้อัพเกรด)
+--   ⭐ v8: อัด/เล่นซ้ำ "ออโต้อัพเกรด" ด้วย (recon ยืนยัน remote = ChangeGameUnitAutoUpgradePriority(id) แบบ toggle)
+--          — ดักจาก hook นับครั้ง toggle ต่อยูนิต → เล่นซ้ำ toggle เท่าเดิม
 --   ⭐ v7: เล่นซ้ำ — resolve ยูนิตที่เพิ่งวางด้วย "id ใหม่ที่โผล่" ล้วนๆ (ไม่พึ่งรัศมี — ยูนิตอาจสแนปไกล)
 --          + รอ replica สูงสุด ~5 วิ + log จำนวนยูนิตตอนหาไม่เจอ (v6 ยังติดเงื่อนไขรัศมี 8)
 --   ⭐ v6: เล่นซ้ำ — resolve "ยูนิตที่เพิ่งวาง" ด้วย id ใหม่ที่โผล่ (diff ก่อน/หลังวาง) + รอ replica ~3 วิ
@@ -213,6 +215,7 @@ local recKey = nil
 local recPending = {}
 local recUpCount = {}   -- ⭐ [unitId] = จำนวนครั้งที่กด Upgrade (ดักจาก hook ตรงๆ)
 local recPrio    = {}   -- ⭐ [unitId] = priority ล่าสุดที่ตั้ง (ดักจาก hook ตรงๆ)
+local recAutoUp  = {}   -- ⭐ [unitId] = จำนวนครั้งกด "ออโต้อัพเกรด" (toggle) ดักจาก hook ตรงๆ
 local hookInstalled = false
 
 local function installHook()
@@ -232,6 +235,8 @@ local function installHook()
                     recUpCount[a3] = (recUpCount[a3] or 0) + 1   -- นับครั้งกดอัพต่อ id
                 elseif a2 == "ChangeGameUnitPriority" and type(a3) == "string" then
                     recPrio[a3] = a4                              -- จำ priority ล่าสุดต่อ id
+                elseif a2 == "ChangeGameUnitAutoUpgradePriority" and type(a3) == "string" then
+                    recAutoUp[a3] = (recAutoUp[a3] or 0) + 1      -- นับครั้งกดออโต้อัพเกรดต่อ id
                 end
             end
             return oldNC(self, ...)
@@ -298,6 +303,7 @@ local function captureConfigs()
             local lvl    = tonumber(step.upgrade) or 0
             local clicks = recUpCount[step._id] or 0
             if lvl == 0 and clicks > 0 then step.upgrade = clicks end
+            step.autoUp = recAutoUp[step._id] or step.autoUp or 0   -- ⭐ ออโต้อัพเกรด (จำนวนครั้ง toggle)
         end
     end
 end
@@ -324,6 +330,7 @@ local function startRecord()
     recPending = {}
     recUpCount = {}
     recPrio = {}
+    recAutoUp = {}
     recLastT = tick()
     recording = true
     print(("[Carry ⏺] เริ่มอัด: %s - Act %s | วางตัวได้เลย"):format(info.stage, info.act))
@@ -350,10 +357,10 @@ local function stopRecord()
     end
     -- สรุปสิ่งที่จะบันทึก ให้เห็นชัดว่าจำครบไหม
     for i, step in ipairs(recSteps) do
-        print(("[Carry 💾] #%d ช่อง %s | priority %s | upgrade %d")
+        print(("[Carry 💾] #%d ช่อง %s | priority %s | upgrade %d | auto %d")
             :format(i, tostring(step.slot),
                     tostring(step.priority ~= nil and step.priority ~= "" and step.priority or "None"),
-                    tonumber(step.upgrade) or 0))
+                    tonumber(step.upgrade) or 0, tonumber(step.autoUp) or 0))
     end
     local file = keyToFile(recKey)
     local ok = pcall(function()
@@ -415,9 +422,10 @@ end
 local function applyUnitConfig(u, step, usedIds)
     if not u then return end   -- playRecord แจ้ง warning เองแล้ว (พร้อมจำนวนยูนิต)
     usedIds[u.id] = true
-    local hasPri = step.priority and step.priority ~= "" and step.priority ~= "None"
-    local wantUp = tonumber(step.upgrade) or 0
-    if not hasPri and wantUp <= 0 then return end
+    local hasPri   = step.priority and step.priority ~= "" and step.priority ~= "None"
+    local wantUp   = tonumber(step.upgrade) or 0
+    local wantAuto = tonumber(step.autoUp) or 0
+    if not hasPri and wantUp <= 0 and wantAuto <= 0 then return end
     if hasPri then
         replicaFire("ChangeGameUnitPriority", u.id, step.priority)
         print(("[Carry ▶] 🎚️ priority %s (id %s)"):format(step.priority, u.id))
@@ -434,6 +442,15 @@ local function applyUnitConfig(u, step, usedIds)
         end
         local cur = findUnitById(u.id)
         print(("[Carry ▶] ⬆️ upgrade → %d (อัดไว้ %d)"):format(cur and cur.upgrade or -1, wantUp))
+    end
+    -- ⭐ ออโต้อัพเกรด: toggle เท่าจำนวนครั้งที่อัด (ยูนิตวางใหม่ = สถานะเริ่มต้น → ยิงเท่าเดิม = ได้สถานะเดิม)
+    if wantAuto > 0 then
+        for _ = 1, wantAuto do
+            if not carryOn then break end
+            replicaFire("ChangeGameUnitAutoUpgradePriority", u.id)
+            task.wait(0.25)
+        end
+        print(("[Carry ▶] 🔁 ออโต้อัพเกรด x%d (id %s)"):format(wantAuto, u.id))
     end
 end
 
@@ -603,7 +620,7 @@ ms.Color = Color3.fromRGB(80, 220, 120); ms.Thickness = 2
 
 local dragBar = Instance.new("TextButton", frame)
 dragBar.Size = UDim2.new(1, 0, 0, 22); dragBar.BackgroundTransparency = 1
-dragBar.Text = "💪 AE Carry v7"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
+dragBar.Text = "💪 AE Carry v8"; dragBar.TextColor3 = Color3.fromRGB(80, 220, 120)
 dragBar.TextSize = 12; dragBar.Font = Enum.Font.GothamBold
 
 local status = Instance.new("TextLabel", frame)
@@ -696,4 +713,4 @@ _G.AECARRY_STOP = function()
     print("[Carry] ⏹ หยุดทั้งหมด")
 end
 
-print("[Carry v7] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
+print("[Carry v8] ✅ พร้อมใช้ | ⏺ อัดในด่าน → ▶ เปิดโหมดแบก")
