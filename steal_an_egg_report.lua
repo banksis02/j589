@@ -325,7 +325,7 @@ ENV.SAE_REPORT_DIAGNOSTICS=function()
         for k,v in pairs(value) do count=count+1;if count>30 then out._truncated=true;break end;out[tostring(k)]=safe(v,depth+1) end
         return out
     end
-    local data={version="1.2",status=state.lastStatus,tools={},eggRecords={},lastCollected=safe(state.lastCollectedRecord)}
+    local data={version="1.3",status=state.lastStatus,tools={},eggRecords={},lastCollected=safe(state.lastCollectedRecord)}
     for uid,tool in pairs(getTools()) do
         if tool:GetAttribute("ItemType")=="AssetEgg" and #data.tools<3 then data.tools[#data.tools+1]={id=uid,name=tool.Name,attrs=safe(tool:GetAttributes())} end
     end
@@ -353,7 +353,7 @@ ENV.SAE_REPORT_DIAGNOSTICS=function()
         print("[SAE REPORT] Diagnostics copied. Paste into Codex.")
     else print("[SAE REPORT] Diagnostics failed: "..tostring(text)) end
 end
-log("v1.2 loaded. Egg weights from game EggRecords.WeightLabel; existing notifier and farming continue.")
+log("v1.3 loaded. Server player count enabled. Egg weights from game EggRecords.WeightLabel; existing notifier and farming continue.")
 task.spawn(function()
     task.wait(3)
     while active do send(); for _=1,15 do if not active then break end; task.wait(1) end end

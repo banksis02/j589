@@ -25,7 +25,7 @@ end
 
 if pid == 107778070777162 then
     task.spawn(function()
-        local ok, err = pcall(run, "steal_an_egg_report.lua?v=1.2")
+        local ok, err = pcall(run, "steal_an_egg_report.lua?v=1.3")
         if not ok then warn("[LOADER] report failed: " .. tostring(err)) end
     end)
     -- Independent tasks: a long-running notifier must not block population checks.
