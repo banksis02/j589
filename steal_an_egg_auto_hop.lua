@@ -6,14 +6,14 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId and previous.version == 3 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 4 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 3, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 4, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -22,7 +22,24 @@ return function(context)
     end
     local function alive() return state.active and env.SAE_AUTO_HOP == state end
     local function populationReady()
-        log("[SAE HOP] population <=3; staying (external script auto-load disabled)")
+        if not alive() or state.pending or #players:GetPlayers() > 3 then return end
+        if env.SAE_ZEROIN_JOB == host.JobId then
+            log("[SAE HOP] Zeroin already requested this server; no duplicate load")
+            return
+        end
+        env.SAE_ZEROIN_JOB = host.JobId
+        log("[SAE HOP] population <=3; loading Zeroin ONLY; click its button manually")
+        local ok, err = pcall(function()
+            if ctx.startVendor then ctx.startVendor(); return end
+            local source = host:HttpGet("https://zeroinhub.com/api/script")
+            local chunk, compileError = loadstring(source)
+            assert(chunk, compileError)
+            chunk()
+        end)
+        if not ok then
+            -- Do not repeatedly execute a third-party chunk after a partial failure.
+            log("[SAE HOP] Zeroin load failed: " .. tostring(err))
+        end
     end
     local function fetch(url)
         if ctx.fetch then return ctx.fetch(url) end
