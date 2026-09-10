@@ -6,14 +6,14 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId and previous.version == 5 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 6 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 5, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 6, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -26,6 +26,17 @@ return function(context)
         if env.SAE_ZEROIN_JOB == host.JobId then
             log("[SAE HOP] Zeroin already requested this server; no duplicate load")
             return
+        end
+        if not ctx.startVendor then
+            scheduler.spawn(function()
+                local ok, err = pcall(function()
+                    local src = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_performance.lua?v=1")
+                    local chunk, compileError = loadstring(src)
+                    assert(chunk, compileError)
+                    chunk()()
+                end)
+                if not ok then log("[SAE PERFORMANCE] load failed: " .. tostring(err)) end
+            end)
         end
         env.SAE_ZEROIN_JOB = host.JobId
         log("[SAE HOP] population <=3; loading Zeroin ONLY; click its button manually")
