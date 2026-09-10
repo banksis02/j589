@@ -6,14 +6,14 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId and previous.version == 4 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 5 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 4, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 5, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -52,6 +52,35 @@ return function(context)
         end
         return http:JSONDecode(host:HttpGet(url))
     end
+    local checked = {}
+    local function needsHop()
+        if #players:GetPlayers() > 3 then return true end
+        for _, other in ipairs(players:GetPlayers()) do
+            if other ~= players.LocalPlayer then
+                local name = other.Name
+                if checked[name] == nil then
+                    local result = fetch("https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"
+                        .. http:UrlEncode(name) .. "?game=steal_an_egg")
+                    assert(type(result)=="table" and type(result.status)=="string", "invalid customer check")
+                    checked[name] = result.status ~= "idle"
+                end
+                if checked[name] then
+                    log("[SAE HOP] another active shop customer found; changing server")
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    local function safeNeedsHop()
+        while alive() do
+            local ok, value = pcall(needsHop)
+            if ok then return value end
+            log("[SAE HOP] customer check unavailable; retrying in 15s")
+            scheduler.wait(15)
+        end
+        return true
+    end
     scheduler.spawn(function()
         local ok, err = pcall(function()
             while alive() and (not host:IsLoaded() or not players.LocalPlayer) do scheduler.wait(1) end
@@ -60,7 +89,7 @@ return function(context)
             if not alive() then return end
             -- Only check on load, not every time someone joins later.
             log("[SAE HOP] players=" .. #players:GetPlayers() .. "; hop when >3")
-            if #players:GetPlayers() <= 3 then populationReady(); state.stop(); return end
+            if not safeNeedsHop() then populationReady(); state.stop(); return end
             local player = players.LocalPlayer
             connection = teleport.TeleportInitFailed:Connect(function(who, result, message, place, options)
                 local pending = state.pending
@@ -71,7 +100,7 @@ return function(context)
                 pending.failure = tostring(result) .. ": " .. tostring(message)
             end)
             while alive() do
-                if #players:GetPlayers() <= 3 then populationReady(); break end
+                if not safeNeedsHop() then populationReady(); break end
                 local candidates, seen, cursors = {}, {}, {}
                 local success, listError = pcall(function()
                     local cursor
@@ -101,7 +130,7 @@ return function(context)
                     return a.playing < b.playing
                 end)
                 for _, room in ipairs(candidates) do
-                    if not alive() or #players:GetPlayers() <= 3 then break end
+                    if not alive() or not safeNeedsHop() then break end
                     state.tried[room.id] = true
                     local pending = {id = room.id}
                     state.pending = pending
