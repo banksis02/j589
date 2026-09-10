@@ -6,14 +6,14 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 2 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 2, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -21,6 +21,52 @@ return function(context)
         if connection then connection:Disconnect(); connection = nil end
     end
     local function alive() return state.active and env.SAE_AUTO_HOP == state end
+    local function startVendor()
+        if not alive() or state.pending or #players:GetPlayers() > 3 then return end
+        if ctx.startVendor then ctx.startVendor(); return end
+        if env.SAE_ZEROIN_JOB == host.JobId then return end
+        env.SAE_ZEROIN_JOB = host.JobId
+        log("[SAE HOP] population <=3; loading Zeroin")
+        -- Independently watch for the gate: third-party chunks may not return.
+        scheduler.spawn(function()
+            local core = host:GetService("CoreGui")
+            local input = host:GetService("VirtualInputManager")
+            local function visible(button)
+                local node = button
+                while node and node ~= host do
+                    if node:IsA("GuiObject") and not node.Visible then return false end
+                    if node:IsA("ScreenGui") and not node.Enabled then return false end
+                    node = node.Parent
+                end
+                return button.AbsoluteSize.X > 0 and button.AbsoluteSize.Y > 0
+            end
+            for _ = 1, 90 do
+                if env.SAE_AUTO_HOP ~= state then return end
+                for _, root in ipairs({core, players.LocalPlayer:FindFirstChildOfClass("PlayerGui")}) do
+                    for _, object in ipairs(root:GetDescendants()) do
+                        if object:IsA("TextButton") and object.Text == "Join Discord & Open UI" and visible(object) then
+                            local point = object.AbsolutePosition + object.AbsoluteSize / 2
+                            input:SendMouseButtonEvent(point.X, point.Y, 0, true, host, 0)
+                            input:SendMouseButtonEvent(point.X, point.Y, 0, false, host, 0)
+                            log("[SAE HOP] clicked Join Discord & Open UI; verify Zeroin UI")
+                            return
+                        end
+                    end
+                end
+                scheduler.wait(1)
+            end
+            log("[SAE HOP] Zeroin gate not found within 90s; send UI screenshot/log")
+        end)
+        local ok, err = pcall(function()
+            local chunk, compileError = loadstring(host:HttpGet("https://zeroinhub.com/api/script"))
+            assert(chunk, compileError)
+            chunk()
+        end)
+        if not ok then
+            env.SAE_ZEROIN_JOB = nil
+            log("[SAE HOP] Zeroin load failed: " .. tostring(err))
+        end
+    end
     local function fetch(url)
         if ctx.fetch then return ctx.fetch(url) end
         local send = env.request or env.http_request or request or http_request
@@ -39,7 +85,8 @@ return function(context)
             scheduler.wait(5)
             if not alive() then return end
             -- Only check on load, not every time someone joins later.
-            if #players:GetPlayers() <= 4 then state.stop(); return end
+            log("[SAE HOP] players=" .. #players:GetPlayers() .. "; hop when >3")
+            if #players:GetPlayers() <= 3 then startVendor(); state.stop(); return end
             local player = players.LocalPlayer
             connection = teleport.TeleportInitFailed:Connect(function(who, result, message, place, options)
                 local pending = state.pending
@@ -50,7 +97,7 @@ return function(context)
                 pending.failure = tostring(result) .. ": " .. tostring(message)
             end)
             while alive() do
-                if #players:GetPlayers() <= 4 then break end
+                if #players:GetPlayers() <= 3 then startVendor(); break end
                 local candidates, seen, cursors = {}, {}, {}
                 local success, listError = pcall(function()
                     local cursor
@@ -63,7 +110,7 @@ return function(context)
                         for _, room in ipairs(page.data) do
                             local count, maximum = tonumber(room.playing), tonumber(room.maxPlayers)
                             if type(room.id) == "string" and room.id ~= "" and room.id ~= host.JobId
-                                and count and count >= 0 and count <= 3 and maximum and count < maximum
+                                and count and count >= 0 and count <= 2 and maximum and count < maximum
                                 and not seen[room.id] and not state.tried[room.id] then
                                 seen[room.id] = true
                                 table.insert(candidates, {id = room.id, playing = count})
@@ -80,7 +127,7 @@ return function(context)
                     return a.playing < b.playing
                 end)
                 for _, room in ipairs(candidates) do
-                    if not alive() or #players:GetPlayers() <= 4 then break end
+                    if not alive() or #players:GetPlayers() <= 3 then break end
                     state.tried[room.id] = true
                     local pending = {id = room.id}
                     state.pending = pending
