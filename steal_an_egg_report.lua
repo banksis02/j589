@@ -1,4 +1,3 @@
--- SAE REPORT v1: bundled collector
 local Core=(function()
 -- Pure report logic; runtime adapter supplies game values and transport.
 local Core = {}
@@ -287,7 +286,7 @@ local function send()
         local money,speed=hud("Money"),hud("Speed")
         local payload={username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
             currentStats={money=money,speed=speed},stealReport=report,
-            matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0}}
+            matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
         for _,kind in ipairs({"pets","eggs"}) do if report[kind] and #report[kind]==0 then report[kind]="__SAE_EMPTY_ARRAY__" end end
         local body=HTTP:JSONEncode(payload):gsub('"__SAE_EMPTY_ARRAY__"','[]')
