@@ -58,7 +58,7 @@ pcall(function()
     c.autoUpgradeBasePen     = false
     c.autoFeedParasiteEnabled= false
     c.speedBypassOnAutoFarm  = false   -- ใช้ tween ไม่ใช่ SpeedBypass (พัง tween)
-    c.tweenSpeed             = 900     -- ★ เร็วขึ้น (ไข่ไกล X>4000 ต้องอุ้มถึงบ้านใน ~8วิ ก่อนเด้ง); tween=humanoid clone ปลอดภัย
+    c.tweenSpeed             = 500     -- คงที่ 500 (ไม่เพิ่ม — ไข่เด้งกลางทางโดนยาม ช่างมัน โฟกัสจุดฝาก)
     -- ★ หยุดให้ "ลึกในโซน" เป๊ะ: สำเร็จเมื่อจบตรง(440,-362); เฟลเมื่อเบี้ยวออก X>450 (นอกเขต)
     c.standbyArriveRadius    = 3       -- แคบลง (เดิม 6 → หยุดนอกโซนบ้าง)
     c.standbyStartRadius     = 3
