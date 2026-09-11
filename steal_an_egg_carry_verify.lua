@@ -68,12 +68,31 @@ local function findWeldToChar(eggModel)
     return nil
 end
 
+-- ★ ฟังผลฝากจาก server (RedeemVerdict) — แยกสำเร็จ/เฟล
+local redeemAt, redeemInfo = nil, nil
+pcall(function()
+    local NET=RS:FindFirstChild("Packages"); NET=NET and NET:FindFirstChild("Networking")
+    local rv=NET and NET:FindFirstChild("RE/EggWorld/FieldEggRedeemVerdict")
+    if rv and rv.OnClientEvent then
+        rv.OnClientEvent:Connect(function(info)
+            redeemAt=os.clock()
+            local d={} if type(info)=="table" then for k,v in pairs(info) do d[#d+1]=tostring(k).."="..tostring(v) end end
+            redeemInfo=table.concat(d,", ")
+            push("   🎉 REDEEM-VERDICT (ฝากสำเร็จ!): "..redeemInfo.."  @"..ppos())
+            save()
+        end)
+    end
+end)
+-- lastUid ล่าสุดที่อุ้ม (ไว้เช็คหลังปล่อย)
+local lastUid=nil
+
 -- ฟัง CarryChanged (client บอกว่าเริ่ม/เลิกอุ้ม)
 pcall(function()
     local ES=require(RS:WaitForChild("Client"):WaitForChild("EggState"))
     if ES.CarryChanged and ES.CarryChanged.Connect then
         ES.CarryChanged:Connect(function(cs)
             if cs and cs.IsCarrying then
+                lastUid=cs.Uid
                 push("\n════════ 🥚 CLIENT บอกว่าเริ่มอุ้ม uid="..tostring(cs.Uid).." @"..ppos().." ════════")
                 local egg=findEgg(cs.Uid)
                 if not egg then push("❌ หาโมเดลไข่ไม่เจอ (อาจเป็นชื่ออื่น) — server อาจไม่ได้สร้าง = น่าสงสัย DESYNC"); save(); return end
@@ -112,7 +131,27 @@ pcall(function()
                 end)
             else
                 watching=false
-                push("════════ 📦 CLIENT บอกว่าเลิกอุ้ม @"..ppos().." (ฝากเสร็จ/คืนรัง) ════════")
+                local ps=ppos()
+                -- ★ ตัดสินผล: ถ้า RedeemVerdict เพิ่งยิง(<2วิ) = สำเร็จ; ไม่งั้น = เฟล(คืนรัง)
+                local ok = redeemAt and (os.clock()-redeemAt)<2
+                push(("════════ 📦 เลิกอุ้ม @%s → %s ════════"):format(ps,
+                    ok and ("✅✅ ฝากสำเร็จ! ("..(redeemInfo or "").." )") or "❌❌ เฟล! (ไม่มี RedeemVerdict = ไข่คืนรัง/โดนแย่ง)"))
+                -- เช็คว่าไข่กลับไปไหน (นับจาก lastUid)
+                task.spawn(function()
+                    task.wait(0.4)
+                    if lastUid then
+                        local egg=findEgg(lastUid)
+                        if egg then
+                            local ep=eggPos(egg); local h=hrp()
+                            local d=(ep and h) and (ep-h.Position).Magnitude or -1
+                            push(("   🔎 หลังปล่อย: ไข่ยังอยู่ %s | ห่างตัวเรา %.0f studs %s"):format(
+                                egg:GetFullName(), d, d>50 and "(=ไข่เด้งไปไกล/คืนรัง)" or "(=อยู่แถวนี้)"))
+                        else
+                            push("   🔎 หลังปล่อย: ไข่หายจาก workspace (=ฝากเข้าระบบแล้ว/หมดอายุ)")
+                        end
+                        save()
+                    end
+                end)
                 save()
             end
         end)
