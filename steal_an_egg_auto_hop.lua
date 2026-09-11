@@ -6,14 +6,14 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId and previous.version == 6 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 8 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 6, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 8, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -23,34 +23,26 @@ return function(context)
     local function alive() return state.active and env.SAE_AUTO_HOP == state end
     local function populationReady()
         if not alive() or state.pending or #players:GetPlayers() > 3 then return end
-        if env.SAE_ZEROIN_JOB == host.JobId then
-            log("[SAE HOP] Zeroin already requested this server; no duplicate load")
-            return
-        end
-        if not ctx.startVendor then
-            scheduler.spawn(function()
-                local ok, err = pcall(function()
-                    local src = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_performance.lua?v=1")
-                    local chunk, compileError = loadstring(src)
-                    assert(chunk, compileError)
-                    chunk()()
-                end)
-                if not ok then log("[SAE PERFORMANCE] load failed: " .. tostring(err)) end
+        scheduler.spawn(function()
+            local ok, err = pcall(function()
+                local src = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_performance.lua?v=1")
+                local chunk, compileError = loadstring(src)
+                assert(chunk, compileError)
+                chunk()()
             end)
-        end
-        env.SAE_ZEROIN_JOB = host.JobId
-        log("[SAE HOP] population <=3; loading Zeroin ONLY; click its button manually")
+            if not ok then log("[SAE PERFORMANCE] load failed: " .. tostring(err)) end
+        end)
+        if env.SAE_SENA_JOB == host.JobId then return end
+        -- Latch before invoking vendor code: a partial run must not start twice.
+        env.SAE_SENA_JOB = host.JobId
+        log("[SAE HOP] population ready; loading Sena")
         local ok, err = pcall(function()
-            if ctx.startVendor then ctx.startVendor(); return end
-            local source = host:HttpGet("https://zeroinhub.com/api/script")
+            local source = host:HttpGet("https://raw.githubusercontent.com/senarblx/sena/refs/heads/main/loader")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
         end)
-        if not ok then
-            -- Do not repeatedly execute a third-party chunk after a partial failure.
-            log("[SAE HOP] Zeroin load failed: " .. tostring(err))
-        end
+        if not ok then log("[SAE SENA] load failed: " .. tostring(err)) end
     end
     local function fetch(url)
         if ctx.fetch then return ctx.fetch(url) end

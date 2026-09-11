@@ -1,6 +1,6 @@
 -- ============================================================
 -- GGx LOADER — เลือกโหลดสคริปต์ตามเกม (กัน BAC ของ Steal An Egg)
---   Steal An Egg = notify names + auto-hop/Zeroin — ไม่โหลด s789 ตัวใหญ่
+--   Steal An Egg = notify names + auto-hop — ไม่โหลด s789 ตัวใหญ่
 --   เกมอื่นๆ      = โหลด s789 ปกติ
 --   *** เปลี่ยน autoexec ของบอทให้ loadstring ตัวนี้ แทน s789 ***
 --     loadstring(game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/loader.lua"))()
@@ -40,7 +40,7 @@ if pid == 107778070777162 then
     end)
     -- Independent tasks: a long-running notifier must not block population checks.
     task.spawn(function()
-        local ok, err = pcall(run, "steal_an_egg_auto_hop.lua", true)
+        local ok, err = pcall(run, "steal_an_egg_auto_hop.lua?v=8", true)
         if not ok then warn("[LOADER] auto-hop failed: " .. tostring(err)) end
     end)
     -- Steal An Egg → ตัว notify มีชื่อไข่ (invoke cache, ไม่มี VirtualUser — รอด BAC)
