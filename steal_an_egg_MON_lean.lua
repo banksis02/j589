@@ -75,8 +75,20 @@ pcall(function()
     end
 end)
 
--- standby = ตำแหน่งที่ยืน (ยืนบนฐาน/plot ตัวเองก่อนรัน)
-pcall(function() API.SetStandbyFromPlayer() end)
+-- ★★ จุดฝาก (standby) = ต้องอยู่ "บนฐานเรา" (เขตฝากไข่) ไม่งั้นฝากไม่ได้ ไข่เด้งคืนรัง!
+--   จาก probe: ฐานเราอยู่ ~(440,-362); จุดที่เคยตั้ง (538) ห่างฐาน 80+ = พลาด
+--   ปรับเอง: getgenv().SAE_HOME = Vector3.new(x,y,z)  หรือยืนตรงจุดฝากแล้วสั่ง SAE_SETHOME_HERE()
+local HOME = getgenv().SAE_HOME or Vector3.new(440, 70, -362)
+pcall(function() API.GetConfig().Runtime.standbyPosition = HOME end)
+print("[LEAN] จุดฝาก(standby) = "..tostring(HOME).."  (ปรับ: SAE_SETHOME_HERE() ตอนยืนบนฐาน)")
+getgenv().SAE_SETHOME_HERE = function()
+    local c=player.Character; local h=c and c:FindFirstChild("HumanoidRootPart")
+    if h then
+        getgenv().SAE_HOME = h.Position
+        pcall(function() API.GetConfig().Runtime.standbyPosition = h.Position end)
+        print("[LEAN] ✅ ตั้งจุดฝากใหม่ = "..tostring(h.Position))
+    end
+end
 
 -- ⭐ รัน Controller เต็ม (2 loop เหมือน full hub → movement ลื่น ไม่เด้ง + deposit ทำงาน)
 --   แต่ ESP ไม่วาดอะไร (DataCollector ว่าง) = เบา
