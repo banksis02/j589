@@ -4,7 +4,7 @@
 --   3) แล้วค่อยไปเก็บไข่เป้าหมาย(ตาม tier) → วาง(ฝาก)  → วน
 -- ขยับ "ตัวจริง" (CFrame ทุกเฟรม) = server เห็นการข้ามเส้น SeparationLine = ฝากได้จริง
 -- ============================================================
-local SCRIPT_VERSION = "v2.0"
+local SCRIPT_VERSION = "v2.1"
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
 local WS         = game:GetService("Workspace")
@@ -149,17 +149,12 @@ local function grab(egg)
     end
     return carrying
 end
-local function deposit()
-    -- บินกลับฝั่งเซฟ (ข้ามเส้นระหว่างทาง = ฝาก)
-    flyTo(HOME)
-    local t=os.clock(); while alive() and carrying and os.clock()-t<2 do RunService.Heartbeat:Wait() end
-    -- ยังไม่ฝาก → ข้าม explicit ซ้ำ
-    local tries=0
-    while carrying and ENV.SAE_ALIVE and tries<5 do
-        tries=tries+1
-        crossOnce()
-    end
-    return not carrying
+-- "วาง" = ปล่อย/ทิ้งไข่ตรงนั้นเลย (ไม่อุ้มกลับบ้าน ไม่ข้ามเส้น)
+local function dropHere()
+    local ok=false
+    pcall(function() if EggState and EggState.DropFieldEgg then EggState.DropFieldEgg() ok=true end end)
+    local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end   -- รอปล่อยจริง
+    return not carrying, ok
 end
 
 -- ===== COMMANDS =====
@@ -173,23 +168,24 @@ ENV.SAE_LIST=function()
     for i=1,math.min(#e,12) do local x=e[i] print(("  #%d [%s t%d] %s @dist %.0f"):format(i,x.rarity,x.tier,x.cat,x.dist)) end
 end
 ENV.SAE_START=function()
-    if not line then log("❌ ไม่เจอ SeparationLine — ฝากไม่ได้"); return end
-    ENV.SAE_RUN=true; log("▶️ START — ยืนเซฟโซน→อุ้มใบแรกวาง→เก็บเป้าหมาย (หยุด SAE_STOP)")
+    ENV.SAE_RUN=true; log("▶️ START — ยืนเซฟโซน→วาปเก็บใบแรกปล่อย→วาปเก็บเป้าหมายปล่อย (หยุด SAE_STOP)")
     task.spawn(function()
         while ENV.SAE_RUN and ENV.SAE_ALIVE and alive() do
             -- 1) ยืนหน้าจุดเซฟโซน
             flyTo(HOME); task.wait(0.15)
-            -- 2) ไปกองไข่จุดแรก (ใกล้สุด) อุ้มอะไรก็ได้ 1 ใบ → วาง
+            -- 2) วาปไปไข่จุดแรก (ใกล้สุด) อุ้มอะไรก็ได้ 1 ใบ → ปล่อยตรงนั้น
             local first=nearestEgg()
             if first then
-                log("① เก็บไข่จุดแรก: "..first.cat.." (dist "..math.floor(first.dist)..")")
-                if grab(first) then log(deposit() and "  ✅ วางใบแรกสำเร็จ" or "  ⚠️ วางใบแรกไม่ผ่าน") end
+                log("① วาปเก็บไข่จุดแรก: "..first.cat.." (dist "..math.floor(first.dist)..")")
+                if grab(first) then log(dropHere() and "  ✅ ปล่อยไข่แล้ว" or "  ⚠️ ปล่อยไม่สำเร็จ")
+                else log("  ⚠️ อุ้มไม่ติด") end
             end
-            -- 3) ไปเก็บไข่เป้าหมาย(tier) → วาง
+            -- 3) วาปไปไข่เป้าหมาย(tier) → ปล่อยตรงนั้น
             local tgt=targetEgg()
             if tgt then
-                log("② เก็บเป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."]")
-                if grab(tgt) then log(deposit() and "  ✅ วางเป้าหมายสำเร็จ!" or "  ⚠️ วางเป้าหมายไม่ผ่าน") end
+                log("② วาปเก็บเป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."]")
+                if grab(tgt) then log(dropHere() and "  ✅ ปล่อยไข่เป้าหมายแล้ว" or "  ⚠️ ปล่อยไม่สำเร็จ")
+                else log("  ⚠️ อุ้มไม่ติด") end
             else
                 log("ไม่มีไข่ตรง tier — รอรอบใหม่"); task.wait(1)
             end
