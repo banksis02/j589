@@ -86,7 +86,7 @@ local function discSig()
 end
 local function applyBypass()
     pcall(function() WS:SetAttribute("ClientObbyAntiTp", false) end)
-    installHook(); neuter(); discSig()
+    neuter(); discSig()   -- ❌ ตัด installHook (__namecall hook = เสี่ยง BAC ตาม memory)
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
 end
 pcall(applyBypass)
@@ -218,4 +218,14 @@ ENV.SAE_START   = function()
     end)
 end
 
+-- ★ bind แบบ global ธรรมดาด้วย (บาง executor เรียก getgenv ตรงๆ ไม่ได้ ต้อง global)
+SAE_SETHOME = ENV.SAE_SETHOME
+SAE_TIER    = ENV.SAE_TIER
+SAE_LIST    = ENV.SAE_LIST
+SAE_STOP    = ENV.SAE_STOP
+SAE_KILL    = ENV.SAE_KILL
+SAE_START   = ENV.SAE_START
+pcall(function() _G.SAE_SETHOME=ENV.SAE_SETHOME _G.SAE_TIER=ENV.SAE_TIER _G.SAE_LIST=ENV.SAE_LIST _G.SAE_STOP=ENV.SAE_STOP _G.SAE_KILL=ENV.SAE_KILL _G.SAE_START=ENV.SAE_START end)
+
 log("✅ พร้อม! ยืนกลางเซฟโซน → SAE_SETHOME() → SAE_TIER(\"Mythic\") → SAE_START()   (ดูไข่: SAE_LIST())")
+log("ถ้าพิมพ์คำสั่งแล้ว nil → ลองใส่ getgenv(). ข้างหน้า เช่น getgenv().SAE_START()")
