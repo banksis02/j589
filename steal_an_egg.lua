@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.2"
+local SCRIPT_VERSION = "v1.3"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -88,67 +88,55 @@ local function applyBypass()
     installHook(); neuter(); discSig()
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
 end
--- ⭐ MOVE-SAFE: noclip (ทะลุ ไม่สะดุดกำแพง/รั้ว) + anchor HRP (physics ดันไม่ได้ = ไม่ตกแมพ/ไม่โดนตีปลิว)
---   ขยับด้วย CFrame ล้วน — anchored ก็ set CFrame ได้ = ลื่นเร็ว ไม่ร่วง ไม่สะดุด
---   ปิด: ENV.SAE_STOP() (จะ unanchor คืน)
+-- ============================================================
+-- ⭐ FLIGHT CONTROLLER (ลูปเดียว คุมตำแหน่งทั้งหมด)
+--   • set CFrame ทุกเฟรมไปหา MOVE_GOAL (ลื่น เร็วจริง FLY_SPEED)
+--   • ถือ CFrame แม้ตอนนิ่ง = ไม่ร่วงตกแมพ (ไม่ต้อง anchor)
+--   • noclip (ทะลุ ไม่สะดุดรั้ว) — ❌ ไม่ anchor (anchor ทำ server รีตำแหน่ง=หยุด/สะดุด)
+--   สั่งบิน: ตั้งค่า MOVE_GOAL (flyTo ทำให้)
+-- ============================================================
+local MOVE_GOAL=nil     -- Vector3 เป้าหมาย (รวม STAND_Y แล้ว); nil = ยึดตำแหน่งปัจจุบัน
 ENV.SAE_MOVESAFE=true
 task.spawn(function()
     local ST=Enum.HumanoidStateType
     while alive() and ENV.SAE_MOVESAFE do
+        local dt=RunService.Heartbeat:Wait()
         local ch=player.Character
-        if ch then
+        local r=ch and ch:FindFirstChild("HumanoidRootPart")
+        local h=ch and ch:FindFirstChildOfClass("Humanoid")
+        if r then
             for _,p in ipairs(ch:GetDescendants()) do
                 if p:IsA("BasePart") and p.CanCollide then pcall(function() p.CanCollide=false end) end
             end
-            local h=ch:FindFirstChildOfClass("Humanoid")
-            local r=ch:FindFirstChild("HumanoidRootPart")
-            if r and not r.Anchored then pcall(function() r.Anchored=true end) end   -- anchor = ไม่ร่วง/ไม่โดนดัน
             if h then pcall(function()
                 h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
                 h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
             end) end
+            if MOVE_GOAL==nil then MOVE_GOAL=r.Position end
+            local cur=r.Position
+            local d=(MOVE_GOAL-cur).Magnitude
+            local np
+            if d<=CFG.FLY_SPEED*dt or d<1 then np=MOVE_GOAL
+            else np=cur+(MOVE_GOAL-cur).Unit*(CFG.FLY_SPEED*dt) end
+            pcall(function() r.CFrame=CFrame.new(np) end)   -- ทุกเฟรม = ลื่น + ไม่ร่วง
         end
-        RunService.Stepped:Wait()
     end
 end)
--- คืนสภาพตัวละคร (เดินเองได้ปกติ)
-ENV.SAE_UNSAFE=function()
-    ENV.SAE_MOVESAFE=false
-    local r=hrp(); if r then pcall(function() r.Anchored=false end) end
-end
+ENV.SAE_UNSAFE=function() ENV.SAE_MOVESAFE=false end   -- คืนสภาพ (เดินเองได้)
 
--- ============================================================
--- MOVEMENT: บิน (ขยับ CFrame ทีละ step, ObbyAntiTP ปิด = ไม่เด้ง)
---   flyTo(pos): บินตรงไปจุด (ระดับ Y ของ pos)
---   flyHighTo(pos): บินขึ้นสูง → ข้าม → ลง (เหนือ guard)
--- ============================================================
-local function step(target, deadline)
+-- flyTo(pos): ตั้งเป้า แล้วรอจนถึง
+local function flyTo(pos)
+    MOVE_GOAL=Vector3.new(pos.X, pos.Y+CFG.STAND_Y, pos.Z)
+    local dl=os.clock()+20
     while alive() do
         local r=hrp(); if not r then return false end
-        local d=(target-r.Position).Magnitude
-        if d<3 then pcall(function() r.CFrame=CFrame.new(target) end) return true end
-        local dt=RunService.Heartbeat:Wait()               -- ★ ใช้ FLY_SPEED จริง (studs/วิ) ไม่ขึ้นกับ fps
-        r=hrp(); if not r then return false end
-        local mv=math.min(d, CFG.FLY_SPEED*dt)
-        pcall(function() r.CFrame=CFrame.new(r.Position+(target-r.Position).Unit*mv) end)
-        if os.clock()>deadline then return false end
+        if (MOVE_GOAL-r.Position).Magnitude<3 then return true end
+        if os.clock()>dl then return false end
+        RunService.Heartbeat:Wait()
     end
     return false
 end
-local function flyTo(pos)
-    local dl=os.clock()+15
-    return step(Vector3.new(pos.X,pos.Y+CFG.STAND_Y,pos.Z),dl)
-end
--- ⭐ บินกลับ: ถ้า FLY_HEIGHT>0 บินสูงข้าม guard (ขึ้น→ข้าม→ลง); ถ้า 0 บินราบปกติ
-local function flyHighTo(pos)
-    if (CFG.FLY_HEIGHT or 0) <= 0 then return flyTo(pos) end
-    local dl=os.clock()+20
-    local r=hrp(); if not r then return false end
-    local hi=math.max(r.Position.Y,pos.Y)+CFG.FLY_HEIGHT
-    if not step(Vector3.new(r.Position.X,hi,r.Position.Z),dl) then return false end   -- ขึ้น
-    if not step(Vector3.new(pos.X,hi,pos.Z),dl) then return false end                 -- ข้ามด้านบน
-    return step(Vector3.new(pos.X,pos.Y+CFG.STAND_Y,pos.Z),dl)                        -- ลง
-end
+local function flyHighTo(pos) return flyTo(pos) end   -- เลิกบินสูง (ยามจับ XZ ไม่สน Y)
 
 -- ยิง prompt เก็บ (เฉพาะใกล้ไข่)
 local function firePrompts(pos)
@@ -209,20 +197,13 @@ local function carryOne(e)
         local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
     end
 
-    -- ★ DRIVE-BY: บินเข้าหาไข่พร้อมกด E ทุกเฟรม (ไม่หยุดยืน)
-    --   ยามตื่นช้า 0.63 วิ หลังขโมยสำเร็จ → ต้องออกให้ไว ห้ามแช่
-    local egPos=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)
+    -- ★ DRIVE-BY: ตั้งเป้าไปไข่ (controller บินให้) + กด E ทุกเฟรม (ไม่หยุดยืน)
+    --   ยามตื่นช้า 0.63 วิ หลังขโมยสำเร็จ → ติดปุ๊บ controller พาหนีทันที
+    MOVE_GOAL=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)
     local t0=os.clock()
     while alive() and not carrying and os.clock()-t0<CFG.COLLECT_T do
-        local r=hrp(); if not r then break end
-        local d=(egPos-r.Position).Magnitude
-        if d>3 then
-            local dt=RunService.Heartbeat:Wait()
-            r=hrp(); if r then pcall(function() r.CFrame=CFrame.new(r.Position+(egPos-r.Position).Unit*math.min(d,CFG.FLY_SPEED*dt)) end) end
-        else
-            RunService.Heartbeat:Wait()
-        end
-        tryGrab(e)   -- กด E ตั้งแต่เข้าใกล้ → ติดปุ๊บออกทันทีในเฟรมถัดไป
+        tryGrab(e)                       -- กด E ทุกเฟรม (controller บินเข้าหาไข่ให้เอง)
+        RunService.Heartbeat:Wait()
     end
     if not carrying then return false end   -- เก็บไม่ติดในเวลา → ข้ามลูกนี้
 
