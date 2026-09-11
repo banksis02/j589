@@ -52,11 +52,13 @@ end)
 pcall(function() if API.Modules and API.Modules.DataCollector then API.Modules.DataCollector.Collect=function() return {} end end)
 
 -- ===== ตัวช่วยของเรา =====
-local Move   = API.Modules and API.Modules.Movement
-local ES     = nil pcall(function() ES = require(RS:WaitForChild("Client"):WaitForChild("EggState")) end)
-local Assets = nil pcall(function() Assets = require(RS:WaitForChild("Data"):WaitForChild("Assets")) end)
-if not Move then warn("[SEQ] ไม่เจอ Movement API") return end
-if not ES   then warn("[SEQ] ไม่เจอ EggState") return end
+local Move = API.Modules and API.Modules.Movement
+local ES, Assets
+pcall(function() ES = require(RS:WaitForChild("Client"):WaitForChild("EggState")) end)
+pcall(function() Assets = require(RS:WaitForChild("Data"):WaitForChild("Assets")) end)
+print("[SEQ] Move="..tostring(Move~=nil).." ES="..tostring(ES~=nil).." Assets="..tostring(Assets~=nil))
+if not Move then warn("[SEQ] ❌ ไม่เจอ Movement API — หยุด") return end
+if not ES   then warn("[SEQ] ❌ ไม่เจอ EggState — หยุด") return end
 
 local function log(t) print("[SEQ] "..tostring(t)) end
 local function rootPart() return (Move.GetRootPart and Move.GetRootPart()) or (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) end
