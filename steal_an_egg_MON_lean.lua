@@ -1,15 +1,17 @@
 -- ============================================================
--- monthonsova/Steal-An-Egg — รันแบบ LEAN (ฟามทำงาน แต่ปิด ESP = ไม่แลค)
--- ต่อแค่ Heartbeat(AutoFarm.Tick) ไม่ต่อ RenderStepped(วาด ESP)
--- ยืนบน "ฐาน/plot ของตัวเอง" ก่อนรัน (จะตั้ง standby = จุดนั้น)
--- ★ เวอร์ชันนี้: เอา noclip(ทะลุกำแพง)ออก + เก็บไข่แล้วออกทันที (ลด settle กันยามตี)
+-- monthonsova/Steal-An-Egg — โหลดเพื่อใช้ "Movement" (ขยับลื่น จัดการ lagback)
+-- ★ ไม่รัน AutoFarm เดิม — ใช้ลำดับของเราแทน:
+--   1) ยืนหน้าจุดเซฟโซน  2) วาปไปไข่จุดแรก อุ้ม 1 ใบ → ปล่อยตรงนั้น
+--   3) วาปไปไข่เป้าหมาย(tier) อุ้ม → ปล่อยตรงนั้น  → วน
 -- ============================================================
-
 local BASE = "https://raw.githubusercontent.com/monthonsova/Steal-An-Egg/HEAD/"
 local ROOT = "Steal-An-Egg/"
 local RunService = game:GetService("RunService")
 local Players    = game:GetService("Players")
+local RS         = game:GetService("ReplicatedStorage")
+local WS         = game:GetService("Workspace")
 local player     = Players.LocalPlayer
+local ENV = (type(getgenv)=="function" and getgenv()) or _G
 
 assert(type(writefile)=="function" and type(readfile)=="function", "executor ต้องมี writefile/readfile")
 
@@ -22,99 +24,163 @@ local FILES = {
     "EggESP/ui/FarmFilterUI.lua","EggESP/ui/Hub.lua","EggESP/ui/VoidUI.lua","EggESP/ui/VoidUIHub.lua","EggESP/ui/void_build.lua",
 }
 local DIRS = { "Steal-An-Egg","Steal-An-Egg/EggESP","Steal-An-Egg/EggESP/core","Steal-An-Egg/EggESP/automation","Steal-An-Egg/EggESP/esp","Steal-An-Egg/EggESP/navigation","Steal-An-Egg/EggESP/ui" }
-
 for _, d in ipairs(DIRS) do pcall(function() if makefolder then makefolder(d) end end) end
 
--- โหลดไฟล์ (ข้ามถ้ามีแล้ว เพื่อความเร็ว; ใส่ true บรรทัดล่างเพื่อโหลดใหม่ทั้งหมด)
-local FORCE = false
 local ok,fail = 0,0
 for _, f in ipairs(FILES) do
     local exists = type(isfile)=="function" and isfile(ROOT..f)
-    if FORCE or not exists then
+    if not exists then
         local o, body = pcall(function() return game:HttpGet(BASE..f) end)
         if o and type(body)=="string" and #body>0 then pcall(function() writefile(ROOT..f, body) end); ok=ok+1
         else fail=fail+1; warn("โหลดพลาด: "..f) end
     else ok=ok+1 end
 end
-print(("[LEAN] ไฟล์พร้อม %d พลาด %d"):format(ok,fail))
-if fail>0 then warn("[LEAN] มีไฟล์พลาด — รันซ้ำอีกรอบ"); return end
+print(("[SEQ] ไฟล์พร้อม %d พลาด %d"):format(ok,fail))
+if fail>0 then warn("[SEQ] มีไฟล์พลาด — รันซ้ำอีกรอบ"); return end
 
-getgenv().__HUB_FORCE_DRAWING = true   -- ไม่ใช้ VoidUI (กัน HttpGet/plugin)
-pcall(function() if setthreadidentity then setthreadidentity(8) end end)  -- เหมือน hub_loader (ให้ clone/bypass ทำงาน)
+ENV.__HUB_FORCE_DRAWING = true
+pcall(function() if setthreadidentity then setthreadidentity(8) end end)
 
 local API = loadstring(readfile(ROOT.."EggESP.lua"), "@EggESP")()
-if type(API) ~= "table" then warn("[LEAN] init ไม่คืน API") return end
+if type(API) ~= "table" then warn("[SEQ] init ไม่คืน API") return end
 
--- ⭐ ปิด automation อื่นทั้งหมด — เก็บไข่อย่างเดียว (กัน "เอาไข่ในกระเป๋ามาวาง" ฯลฯ)
+-- ปิด automation อื่น + ESP (เบา) — เราจะขับเอง ไม่รัน AutoFarm
 pcall(function()
     local c = API.GetConfig().Runtime
-    c.autoPlaceEnabled       = false   -- ห้ามเอาไข่ในกระเป๋ามาวาง
-    c.autoSellEnabled        = false
-    c.autoDumpWorstEggsEnabled = false
-    c.autoPetCareEnabled     = false
-    c.autoHatchEnabled       = false
-    c.autoEquipBest          = false
-    c.autoFuseEnabled        = false
-    c.autoUpgradeBasePen     = false
-    c.autoFeedParasiteEnabled= false
-    c.speedBypassOnAutoFarm  = false   -- ใช้ tween ไม่ใช่ SpeedBypass (พัง tween)
-    c.tweenSpeed             = 500     -- คงที่ 500 (ไม่เพิ่ม — ไข่เด้งกลางทางโดนยาม ช่างมัน โฟกัสจุดฝาก)
-    -- ★ หยุดให้ "ลึกในโซน" เป๊ะ: สำเร็จเมื่อจบตรง(440,-362); เฟลเมื่อเบี้ยวออก X>450 (นอกเขต)
-    c.standbyArriveRadius    = 3       -- แคบลง (เดิม 6 → หยุดนอกโซนบ้าง)
-    c.standbyStartRadius     = 3
-
-    -- ★★ เก็บไข่แล้วออกทันที (กันยามตี) — ยามตื่นใช้ 0.63 วิ ต้องขโมยเสร็จ+ออกให้ไว
-    --   settle เดิม 4 ticks (~0.4 วิ นิ่งตรงไข่) → ลดเหลือ 1 (sync แว้บเดียวพอ ไม่แช่)
-    c.pickupSyncSettleTicks  = 1
-    c.autoFarmWalkPickupSync = true    -- คงไว้ (จำเป็นให้ขโมยติดชัวร์ ไม่ desync)
-    c.guardZoneForceWalk     = false   -- ห้ามชะลอเดินในเขตยาม (บินผ่านเต็มสปีด)
+    c.speedBypassOnAutoFarm=false; c.tweenSpeed=500
 end)
+pcall(function() if API.Modules and API.Modules.DataCollector then API.Modules.DataCollector.Collect=function() return {} end end)
 
--- ปิด ESP visual + ตัดแลค: ให้ DataCollector คืนว่าง = ไม่มีอะไรให้วาด (render loop เบา)
-pcall(function() API.SetShowTreadmill(false); API.SetShowTraps(false) end)
+-- ===== ตัวช่วยของเรา =====
+local Move   = API.Modules and API.Modules.Movement
+local ES     = nil pcall(function() ES = require(RS:WaitForChild("Client"):WaitForChild("EggState")) end)
+local Assets = nil pcall(function() Assets = require(RS:WaitForChild("Data"):WaitForChild("Assets")) end)
+if not Move then warn("[SEQ] ไม่เจอ Movement API") return end
+if not ES   then warn("[SEQ] ไม่เจอ EggState") return end
+
+local function log(t) print("[SEQ] "..tostring(t)) end
+local function rootPart() return (Move.GetRootPart and Move.GetRootPart()) or (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) end
+
+-- rarity map
+local rarityOf = {}
 pcall(function()
-    if API.Modules and API.Modules.DataCollector then
-        API.Modules.DataCollector.Collect = function() return {} end
+    if Assets and Assets.Directory then
+        for k,e in pairs(Assets.Directory) do local r=e and e.Rarity
+            if type(r)=="table" then local info={name=r.DisplayName or "?",tier=r.RarityNumber or 0}
+                rarityOf[tostring(k)]=info; if e.Name then rarityOf[tostring(e.Name)]=info end end end
     end
 end)
+local function rarityFor(cat) return rarityOf[tostring(cat)] or {name="?",tier=0} end
 
--- ★★ จุดฝาก (standby) = ต้องอยู่ "บนฐานเรา" (เขตฝากไข่) ไม่งั้นฝากไม่ได้ ไข่เด้งคืนรัง!
---   จาก probe: ฐานเราอยู่ ~(440,-362); จุดที่เคยตั้ง (538) ห่างฐาน 80+ = พลาด
---   ปรับเอง: getgenv().SAE_HOME = Vector3.new(x,y,z)  หรือยืนตรงจุดฝากแล้วสั่ง SAE_SETHOME_HERE()
-local HOME = getgenv().SAE_HOME or Vector3.new(425, 70, -362)  -- ★ ลึกเข้าในโซน (เดิม 440=ขอบ เฟลบ่อย)
-pcall(function() API.GetConfig().Runtime.standbyPosition = HOME end)
-print("[LEAN] จุดฝาก(standby) = "..tostring(HOME).."  (ปรับ: SAE_SETHOME_HERE() ตอนยืนบนฐาน)")
-getgenv().SAE_SETHOME_HERE = function()
-    local c=player.Character; local h=c and c:FindFirstChild("HumanoidRootPart")
-    if h then
-        getgenv().SAE_HOME = h.Position
-        pcall(function() API.GetConfig().Runtime.standbyPosition = h.Position end)
-        print("[LEAN] ✅ ตั้งจุดฝากใหม่ = "..tostring(h.Position))
+-- carry state
+local carrying=false
+pcall(function() if ES.CarryChanged then ES.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
+
+-- config เป้าหมาย
+local CFG = { RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6 }
+local HOME = ENV.SAE_HOME or Vector3.new(425,70,-362)
+
+-- อ่านไข่ในสนาม (ไม่ยิง remote — ใช้ cache)
+local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
+local function fieldEggs()
+    local out={}
+    local ok2,data=pcall(function() return ES.ReadFieldEggs() end)
+    if ok2 and type(data)=="table" and type(data.Records)=="table" then
+        local rp=rootPart(); local myPos=(rp and rp.Position) or Vector3.new()
+        for _,rec in pairs(data.Records) do
+            if type(rec)=="table" and rec.Uid then
+                local pos=(typeof(rec.BoundsCFrame)=="CFrame") and rec.BoundsCFrame.Position or myPos
+                local rr=rarityFor(rec.AssetCategory)
+                out[#out+1]={uid=rec.Uid,pos=pos,cat=tostring(rec.AssetCategory),rarity=rr.name,tier=rr.tier,slotKey=slotKey(rec),dist=(pos-myPos).Magnitude}
+            end
+        end
     end
+    return out
+end
+local function nearestEgg() local e=fieldEggs(); table.sort(e,function(a,b) return a.dist<b.dist end); return e[1] end
+local function wantTier(x)
+    if CFG.MIN_TIER>0 and x.tier<CFG.MIN_TIER then return false end
+    local w=(CFG.RARITY or ""):lower(); if w=="" then return true end
+    for name in w:gmatch("[^,]+") do if x.rarity:lower()==name:gsub("%s","") then return true end end
+    return false
+end
+local function targetEgg()
+    local e=fieldEggs(); local o={}
+    for _,x in ipairs(e) do if wantTier(x) then o[#o+1]=x end end
+    table.sort(o,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
+    return o[1]
 end
 
--- ⭐ รัน Controller เต็ม (2 loop เหมือน full hub → movement ลื่น ไม่เด้ง + deposit ทำงาน)
---   แต่ ESP ไม่วาดอะไร (DataCollector ว่าง) = เบา
-pcall(function() API.Start() end)
-pcall(function() API.StartAutoFarm() end)
-
--- ❌ เอา NOCLIP (ทะลุกำแพง) ออกแล้ว — มันทำให้ไม่มีพื้น โดนตีร่วงตกแมพ
--- ⭐ แทนด้วย ANTI-ล้ม อย่างเดียว: กันสะดุด/ล้ม ไข่หลุด (ไม่ทะลุกำแพง มีพื้นยืนปกติ)
-getgenv().__SAE_ANTIRAGDOLL = true
-task.spawn(function()
-    local ST = Enum.HumanoidStateType
-    while getgenv().__SAE_ANTIRAGDOLL do
-        local ch = player.Character
-        local h  = ch and ch:FindFirstChildOfClass("Humanoid")
-        if h then pcall(function()
-            h:SetStateEnabled(ST.FallingDown, false)
-            h:SetStateEnabled(ST.Ragdoll, false)
-            h:SetStateEnabled(ST.PlatformStanding, false)
-            h.PlatformStand = false
-        end) end
-        RunService.Stepped:Wait()
+-- ขยับด้วย monthonsova Movement (ลื่น จัดการ lagback) แล้วรอถึง
+local function gotoPos(pos, radius, timeout)
+    radius=radius or CFG.ARRIVE; timeout=timeout or 15
+    local target=Vector3.new(pos.X,pos.Y,pos.Z)
+    Move.TweenTo(target)
+    local t=os.clock()
+    while ENV.SAE_ALIVE~=false and os.clock()-t<timeout do
+        local r=rootPart()
+        if r and Move.IsNear(r.Position, target, radius) then return true end
+        if Move.IsTweening and not Move.IsTweening() then Move.TweenTo(target) end
+        RunService.Heartbeat:Wait()
     end
-end)
+    return false
+end
 
-print("[LEAN] ✅ รันแล้ว — เก็บไข่อย่างเดียว + ANTI-ล้ม(ไม่ทะลุกำแพง) + settle=1(ออกไว) + ESP ปิด")
-print("[LEAN] หยุด: getgenv().EggESP.StopAutoFarm()  /  ปิด anti-ล้ม: getgenv().__SAE_ANTIRAGDOLL=false")
+-- ยิง prompt เก็บ (กด E)
+local function firePrompts(pos)
+    if typeof(fireproximityprompt)~="function" then return end
+    for _,c in ipairs(WS:GetChildren()) do
+        if c.Name=="SmartPromptPart" and c:IsA("BasePart") and (c.Position-pos).Magnitude<=22 then
+            for _,p in ipairs(c:GetChildren()) do if p:IsA("ProximityPrompt") then pcall(function() p.Enabled=true p.HoldDuration=0 p.MaxActivationDistance=math.max(p.MaxActivationDistance or 0,60) p.RequiresLineOfSight=false fireproximityprompt(p) end) end end
+        end
+    end
+end
+local function grab(egg)
+    if carrying then return true end
+    gotoPos(egg.pos, CFG.ARRIVE)
+    local t=os.clock()
+    while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
+        pcall(function() if ES.CarryFieldEgg then ES.CarryFieldEgg(egg.uid, egg.slotKey) end end)
+        firePrompts(egg.pos)
+        RunService.Heartbeat:Wait()
+    end
+    return carrying
+end
+-- "วาง" = ปล่อยไข่ตรงนั้นเลย
+local function dropHere()
+    pcall(function() if ES.DropFieldEgg then ES.DropFieldEgg() end end)
+    local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
+    return not carrying
+end
+
+-- ===== COMMANDS =====
+ENV.SAE_SETHOME=function() local r=rootPart(); if r then ENV.SAE_HOME=r.Position; HOME=r.Position; log("ตั้ง HOME(เซฟโซน)="..tostring(r.Position)) end end
+ENV.SAE_TIER=function(x) CFG.RARITY=x or ""; log("target tier = "..(CFG.RARITY=="" and "ทุกระดับ" or CFG.RARITY)) end
+ENV.SAE_LIST=function()
+    local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
+    log("ไข่ในสนาม "..#e.." ใบ:")
+    for i=1,math.min(#e,12) do local x=e[i] print(("  #%d [%s t%d] %s @%.0f"):format(i,x.rarity,x.tier,x.cat,x.dist)) end
+end
+ENV.SAE_STOP=function() ENV.SAE_RUN=false log("หยุด") end
+ENV.SAE_START=function()
+    ENV.SAE_RUN=true; log("▶️ START — ยืนเซฟโซน→วาปเก็บใบแรกปล่อย→วาปเก็บเป้าหมายปล่อย (หยุด SAE_STOP)")
+    task.spawn(function()
+        while ENV.SAE_RUN do
+            gotoPos(HOME, CFG.ARRIVE)                       -- ① ยืนหน้าจุดเซฟโซน
+            local first=nearestEgg()                        -- ② วาปเก็บไข่จุดแรก → ปล่อย
+            if first then
+                log("① วาปเก็บใบแรก: "..first.cat.." @"..math.floor(first.dist))
+                if grab(first) then log(dropHere() and "  ✅ ปล่อยแล้ว" or "  ⚠️ ปล่อยไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
+            end
+            local tgt=targetEgg()                           -- ③ วาปเก็บเป้าหมาย → ปล่อย
+            if tgt then
+                log("② วาปเก็บเป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."]")
+                if grab(tgt) then log(dropHere() and "  ✅ ปล่อยเป้าหมายแล้ว" or "  ⚠️ ปล่อยไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
+            else log("ไม่มีไข่ตรง tier"); task.wait(1) end
+            task.wait(0.2)
+        end
+        log("⏹️ หยุดลูป")
+    end)
+end
+
+log("✅ พร้อม — ยืนกลางเซฟโซน → SAE_SETHOME() → SAE_TIER(\"Mythic\") → SAE_START()   (ดูไข่: SAE_LIST())")
