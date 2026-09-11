@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v0.9"
+local SCRIPT_VERSION = "v1.0"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -101,9 +101,11 @@ local function step(target, deadline)
     while alive() do
         local r=hrp(); if not r then return false end
         local d=(target-r.Position).Magnitude
-        if d<4 then pcall(function() r.CFrame=CFrame.new(target) end) return true end
-        pcall(function() r.CFrame=CFrame.new(r.Position+(target-r.Position).Unit*math.min(d,CFG.FLY_STEP)) end)
-        RunService.Heartbeat:Wait()
+        if d<3 then pcall(function() r.CFrame=CFrame.new(target) end) return true end
+        local dt=RunService.Heartbeat:Wait()               -- ★ ใช้ FLY_SPEED จริง (studs/วิ) ไม่ขึ้นกับ fps
+        r=hrp(); if not r then return false end
+        local mv=math.min(d, CFG.FLY_SPEED*dt)
+        pcall(function() r.CFrame=CFrame.new(r.Position+(target-r.Position).Unit*mv) end)
         if os.clock()>deadline then return false end
     end
     return false
@@ -182,18 +184,24 @@ local function carryOne(e)
         local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
     end
 
-    -- บินตรงไปไข่
-    flyTo(e.pos)
-
-    -- กด E เก็บ: ยิงทุกเฟรม → ติดปุ๊บออกทันที (เช็ค carrying ทุกเฟรม ไม่ re-pin)
+    -- ★ DRIVE-BY: บินเข้าหาไข่พร้อมกด E ทุกเฟรม (ไม่หยุดยืน)
+    --   ยามตื่นช้า 0.63 วิ หลังขโมยสำเร็จ → ต้องออกให้ไว ห้ามแช่
+    local egPos=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)
     local t0=os.clock()
     while alive() and not carrying and os.clock()-t0<CFG.COLLECT_T do
-        tryGrab(e)
-        RunService.Heartbeat:Wait()   -- เช็คทุกเฟรม = พอ carrying=true หลุดทันที
+        local r=hrp(); if not r then break end
+        local d=(egPos-r.Position).Magnitude
+        if d>3 then
+            local dt=RunService.Heartbeat:Wait()
+            r=hrp(); if r then pcall(function() r.CFrame=CFrame.new(r.Position+(egPos-r.Position).Unit*math.min(d,CFG.FLY_SPEED*dt)) end) end
+        else
+            RunService.Heartbeat:Wait()
+        end
+        tryGrab(e)   -- กด E ตั้งแต่เข้าใกล้ → ติดปุ๊บออกทันทีในเฟรมถัดไป
     end
     if not carrying then return false end   -- เก็บไม่ติดในเวลา → ข้ามลูกนี้
 
-    -- ★ ไข่ติดแล้ว → ออกจากกองไข่ "ทันที" กลับ safe zone (ไม่รออะไรตรงนี้)
+    -- ★ ไข่ติดแล้ว → หนีกลับ safe zone "ทันที" ความเร็ว 500 (ยามไล่สุด ~120 ตามไม่ทัน)
     if HOME then
         flyTo(HOME)
         local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
