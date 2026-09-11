@@ -2,7 +2,7 @@
 -- STEAL AN EGG — FARM v0.8  placeId 107778070777162
 -- รวมทุกอย่างที่เรียนมา + บินสูงข้าม Guard (เก็บไข่ระดับสูงโซนไกลได้)
 --   1) ปิด ObbyAntiTP (bypass lagback) — from monthonsova SpeedBypass
---   2) noclip (ไม่ชน/ไม่ล้ม)
+--   2) anti-fall กันโดนตีปลิว (ไม่ใช้ noclip แล้ว = มีพื้นยืน ไม่ตกแมพ)
 --   3) บินไปไข่ → EggState.CarryFieldEgg + fireproximityprompt เก็บ
 --   4) ⭐ บินสูง (เหนือ guard) กลับ safe zone → ฝาก (guard จับไม่ได้)
 --   5) กรอง rarity (Mythic+) จาก Data.Assets/Rarity
@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.0"
+local SCRIPT_VERSION = "v1.1"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -88,9 +88,23 @@ local function applyBypass()
     installHook(); neuter(); discSig()
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
 end
--- noclip
-ENV.SAE_NOCLIP=true
-task.spawn(function() while alive() and ENV.SAE_NOCLIP do local ch=player.Character if ch then for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then pcall(function() p.CanCollide=false end) end end end RunService.Stepped:Wait() end end)
+-- ❌ ไม่ใช้ noclip แล้ว (ทะลุกำแพง = ไม่มีพื้น → โดนตีร่วงตกแมพ) — เอาออกตามที่ user สั่ง
+-- ⭐ ANTI-FALL อย่างเดียว: กันโดนตี/knockback ปลิว + กัน ragdoll (มีพื้นยืนปกติ ไม่ตกแมพ)
+ENV.SAE_ANTIFALL=true
+task.spawn(function()
+    local ST=Enum.HumanoidStateType
+    while alive() and ENV.SAE_ANTIFALL do
+        local ch=player.Character
+        local h=ch and ch:FindFirstChildOfClass("Humanoid")
+        local r=ch and ch:FindFirstChild("HumanoidRootPart")
+        if h and r then pcall(function()
+            h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
+            h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
+            r.AssemblyAngularVelocity=Vector3.zero    -- กันหมุน/ปลิว (ไม่ล้าง linear เพื่อให้ตกลงพื้นได้ปกติ)
+        end) end
+        RunService.Stepped:Wait()
+    end
+end)
 
 -- ============================================================
 -- MOVEMENT: บิน (ขยับ CFrame ทีละ step, ObbyAntiTP ปิด = ไม่เด้ง)
