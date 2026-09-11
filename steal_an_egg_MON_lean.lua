@@ -58,7 +58,10 @@ pcall(function()
     c.autoUpgradeBasePen     = false
     c.autoFeedParasiteEnabled= false
     c.speedBypassOnAutoFarm  = false   -- ใช้ tween ไม่ใช่ SpeedBypass (พัง tween)
-    c.tweenSpeed             = 500     -- ความเร็วบิน (tween ใช้ humanoid clone = ปลอดภัย)
+    c.tweenSpeed             = 900     -- ★ เร็วขึ้น (ไข่ไกล X>4000 ต้องอุ้มถึงบ้านใน ~8วิ ก่อนเด้ง); tween=humanoid clone ปลอดภัย
+    -- ★ หยุดให้ "ลึกในโซน" เป๊ะ: สำเร็จเมื่อจบตรง(440,-362); เฟลเมื่อเบี้ยวออก X>450 (นอกเขต)
+    c.standbyArriveRadius    = 3       -- แคบลง (เดิม 6 → หยุดนอกโซนบ้าง)
+    c.standbyStartRadius     = 3
 
     -- ★★ เก็บไข่แล้วออกทันที (กันยามตี) — ยามตื่นใช้ 0.63 วิ ต้องขโมยเสร็จ+ออกให้ไว
     --   settle เดิม 4 ticks (~0.4 วิ นิ่งตรงไข่) → ลดเหลือ 1 (sync แว้บเดียวพอ ไม่แช่)
@@ -78,7 +81,7 @@ end)
 -- ★★ จุดฝาก (standby) = ต้องอยู่ "บนฐานเรา" (เขตฝากไข่) ไม่งั้นฝากไม่ได้ ไข่เด้งคืนรัง!
 --   จาก probe: ฐานเราอยู่ ~(440,-362); จุดที่เคยตั้ง (538) ห่างฐาน 80+ = พลาด
 --   ปรับเอง: getgenv().SAE_HOME = Vector3.new(x,y,z)  หรือยืนตรงจุดฝากแล้วสั่ง SAE_SETHOME_HERE()
-local HOME = getgenv().SAE_HOME or Vector3.new(440, 70, -362)
+local HOME = getgenv().SAE_HOME or Vector3.new(425, 70, -362)  -- ★ ลึกเข้าในโซน (เดิม 440=ขอบ เฟลบ่อย)
 pcall(function() API.GetConfig().Runtime.standbyPosition = HOME end)
 print("[LEAN] จุดฝาก(standby) = "..tostring(HOME).."  (ปรับ: SAE_SETHOME_HERE() ตอนยืนบนฐาน)")
 getgenv().SAE_SETHOME_HERE = function()
