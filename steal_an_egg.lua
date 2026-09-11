@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.1"
+local SCRIPT_VERSION = "v1.2"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -88,23 +88,34 @@ local function applyBypass()
     installHook(); neuter(); discSig()
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
 end
--- ❌ ไม่ใช้ noclip แล้ว (ทะลุกำแพง = ไม่มีพื้น → โดนตีร่วงตกแมพ) — เอาออกตามที่ user สั่ง
--- ⭐ ANTI-FALL อย่างเดียว: กันโดนตี/knockback ปลิว + กัน ragdoll (มีพื้นยืนปกติ ไม่ตกแมพ)
-ENV.SAE_ANTIFALL=true
+-- ⭐ MOVE-SAFE: noclip (ทะลุ ไม่สะดุดกำแพง/รั้ว) + anchor HRP (physics ดันไม่ได้ = ไม่ตกแมพ/ไม่โดนตีปลิว)
+--   ขยับด้วย CFrame ล้วน — anchored ก็ set CFrame ได้ = ลื่นเร็ว ไม่ร่วง ไม่สะดุด
+--   ปิด: ENV.SAE_STOP() (จะ unanchor คืน)
+ENV.SAE_MOVESAFE=true
 task.spawn(function()
     local ST=Enum.HumanoidStateType
-    while alive() and ENV.SAE_ANTIFALL do
+    while alive() and ENV.SAE_MOVESAFE do
         local ch=player.Character
-        local h=ch and ch:FindFirstChildOfClass("Humanoid")
-        local r=ch and ch:FindFirstChild("HumanoidRootPart")
-        if h and r then pcall(function()
-            h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
-            h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
-            r.AssemblyAngularVelocity=Vector3.zero    -- กันหมุน/ปลิว (ไม่ล้าง linear เพื่อให้ตกลงพื้นได้ปกติ)
-        end) end
+        if ch then
+            for _,p in ipairs(ch:GetDescendants()) do
+                if p:IsA("BasePart") and p.CanCollide then pcall(function() p.CanCollide=false end) end
+            end
+            local h=ch:FindFirstChildOfClass("Humanoid")
+            local r=ch:FindFirstChild("HumanoidRootPart")
+            if r and not r.Anchored then pcall(function() r.Anchored=true end) end   -- anchor = ไม่ร่วง/ไม่โดนดัน
+            if h then pcall(function()
+                h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
+                h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
+            end) end
+        end
         RunService.Stepped:Wait()
     end
 end)
+-- คืนสภาพตัวละคร (เดินเองได้ปกติ)
+ENV.SAE_UNSAFE=function()
+    ENV.SAE_MOVESAFE=false
+    local r=hrp(); if r then pcall(function() r.Anchored=false end) end
+end
 
 -- ============================================================
 -- MOVEMENT: บิน (ขยับ CFrame ทีละ step, ObbyAntiTP ปิด = ไม่เด้ง)
@@ -244,7 +255,7 @@ ENV.SAE_STEAL=function()
         log("⏹️ หยุด")
     end)
 end
-ENV.SAE_STOP=function() ENV.SAE_RUNNING=false log("หยุด") end
+ENV.SAE_STOP=function() ENV.SAE_RUNNING=false if ENV.SAE_UNSAFE then ENV.SAE_UNSAFE() end log("หยุด (คืน anchor แล้ว เดินเองได้)") end
 
 applyBypass()
 player.CharacterAdded:Connect(function() task.wait(0.6) if alive() then applyBypass() end end)
