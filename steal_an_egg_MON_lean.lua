@@ -2,11 +2,14 @@
 -- monthonsova/Steal-An-Egg — รันแบบ LEAN (ฟามทำงาน แต่ปิด ESP = ไม่แลค)
 -- ต่อแค่ Heartbeat(AutoFarm.Tick) ไม่ต่อ RenderStepped(วาด ESP)
 -- ยืนบน "ฐาน/plot ของตัวเอง" ก่อนรัน (จะตั้ง standby = จุดนั้น)
+-- ★ เวอร์ชันนี้: เอา noclip(ทะลุกำแพง)ออก + เก็บไข่แล้วออกทันที (ลด settle กันยามตี)
 -- ============================================================
 
 local BASE = "https://raw.githubusercontent.com/monthonsova/Steal-An-Egg/HEAD/"
 local ROOT = "Steal-An-Egg/"
 local RunService = game:GetService("RunService")
+local Players    = game:GetService("Players")
+local player     = Players.LocalPlayer
 
 assert(type(writefile)=="function" and type(readfile)=="function", "executor ต้องมี writefile/readfile")
 
@@ -55,7 +58,13 @@ pcall(function()
     c.autoUpgradeBasePen     = false
     c.autoFeedParasiteEnabled= false
     c.speedBypassOnAutoFarm  = false   -- ใช้ tween ไม่ใช่ SpeedBypass (พัง tween)
-    c.tweenSpeed             = 500     -- ลดจาก 1000 (ไวไปอาจกระตุก AC → เด้ง)
+    c.tweenSpeed             = 500     -- ความเร็วบิน (tween ใช้ humanoid clone = ปลอดภัย)
+
+    -- ★★ เก็บไข่แล้วออกทันที (กันยามตี) — ยามตื่นใช้ 0.63 วิ ต้องขโมยเสร็จ+ออกให้ไว
+    --   settle เดิม 4 ticks (~0.4 วิ นิ่งตรงไข่) → ลดเหลือ 1 (sync แว้บเดียวพอ ไม่แช่)
+    c.pickupSyncSettleTicks  = 1
+    c.autoFarmWalkPickupSync = true    -- คงไว้ (จำเป็นให้ขโมยติดชัวร์ ไม่ desync)
+    c.guardZoneForceWalk     = false   -- ห้ามชะลอเดินในเขตยาม (บินผ่านเต็มสปีด)
 end)
 
 -- ปิด ESP visual + ตัดแลค: ให้ DataCollector คืนว่าง = ไม่มีอะไรให้วาด (render loop เบา)
@@ -74,44 +83,23 @@ pcall(function() API.SetStandbyFromPlayer() end)
 pcall(function() API.Start() end)
 pcall(function() API.StartAutoFarm() end)
 
--- ⭐ NOCLIP — ทะลุทุกอย่าง (ไม่ชน/ไม่ล้ม/มอนตีไม่ล้ม) แก้ "วิ่งกลับแล้วล้ม ไข่หลุด"
-getgenv().__SAE_NOCLIP = true
-task.spawn(function()
-    while getgenv().__SAE_NOCLIP do
-        local ch = player.Character
-        if ch then
-            for _, p in ipairs(ch:GetDescendants()) do
-                if p:IsA("BasePart") and p.CanCollide then
-                    pcall(function() p.CanCollide = false end)
-                end
-            end
-        end
-        RunService.Stepped:Wait()
-    end
-end)
-
--- ⭐ ANTI-KNOCKBACK / ANTI-FALL — กัน guard(มอน)ตีแล้วปลิว/ตกแมพ
---   noclip = ไม่มีพื้น → โดนแรงกระแทกจาก guard แล้วร่วงทะลุแมพ
---   บล็อก ragdoll/ล้ม + ล้างความเร็วทุกเฟรม (tween ยังคุมตำแหน่งได้ปกติ)
-getgenv().__SAE_ANTIFALL = true
+-- ❌ เอา NOCLIP (ทะลุกำแพง) ออกแล้ว — มันทำให้ไม่มีพื้น โดนตีร่วงตกแมพ
+-- ⭐ แทนด้วย ANTI-ล้ม อย่างเดียว: กันสะดุด/ล้ม ไข่หลุด (ไม่ทะลุกำแพง มีพื้นยืนปกติ)
+getgenv().__SAE_ANTIRAGDOLL = true
 task.spawn(function()
     local ST = Enum.HumanoidStateType
-    local block = { ST.FallingDown, ST.Ragdoll, ST.PlatformStanding, ST.Physics, ST.GettingUp, ST.Seated }
-    while getgenv().__SAE_ANTIFALL do
-        local ch  = player.Character
-        local h   = ch and ch:FindFirstChildOfClass("Humanoid")
-        local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-        if h and hrp then
-            pcall(function()
-                for _, s in ipairs(block) do h:SetStateEnabled(s, false) end
-                h.PlatformStand = false
-                hrp.AssemblyLinearVelocity  = Vector3.zero   -- ล้าง knockback (กันปลิว)
-                hrp.AssemblyAngularVelocity = Vector3.zero
-            end)
-        end
+    while getgenv().__SAE_ANTIRAGDOLL do
+        local ch = player.Character
+        local h  = ch and ch:FindFirstChildOfClass("Humanoid")
+        if h then pcall(function()
+            h:SetStateEnabled(ST.FallingDown, false)
+            h:SetStateEnabled(ST.Ragdoll, false)
+            h:SetStateEnabled(ST.PlatformStanding, false)
+            h.PlatformStand = false
+        end) end
         RunService.Stepped:Wait()
     end
 end)
 
-print("[LEAN] ✅ รันแล้ว — เก็บไข่อย่างเดียว + NOCLIP + ANTI-FALL(กันตกแมพ) + ESP ปิด (เบา)")
-print("[LEAN] หยุด: getgenv().EggESP.StopAutoFarm()  /  noclip: getgenv().__SAE_NOCLIP=false  /  antifall: getgenv().__SAE_ANTIFALL=false")
+print("[LEAN] ✅ รันแล้ว — เก็บไข่อย่างเดียว + ANTI-ล้ม(ไม่ทะลุกำแพง) + settle=1(ออกไว) + ESP ปิด")
+print("[LEAN] หยุด: getgenv().EggESP.StopAutoFarm()  /  ปิด anti-ล้ม: getgenv().__SAE_ANTIRAGDOLL=false")
