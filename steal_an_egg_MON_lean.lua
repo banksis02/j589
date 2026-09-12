@@ -96,7 +96,7 @@ end) end end)
 
 local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true,
     USE_RIDE=false, RIDE_SPEED=545,
-    SYNC_SPEED=24, SETTLE_TICKS=6, DEPOSIT_APPROACH=24 }  -- ★ walk-sync settle ที่บ้าน (สูตร monthonsova approachForServerSync)
+    RETURN_STEP=7 }  -- ★ ขากลับ set CFrame ตัวจริง ทีละ 7 studs/เฟรม (~420/s) = ท่า MIRANDA egg sync
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -227,28 +227,34 @@ local function rideTo(pos, timeout)
     rideCleanup()
     return true
 end
--- ★★ ฝากจริง = "walk-sync settle ที่ standby" (สูตร monthonsova approachForServerSync)
---   เดิน Move.WalkTo(HOME, 24) เข้าใกล้ → ย่ำอยู่กับที่ settle ticks → server egg ตามทัน → เกมฝากเอง
-local function depositAtHome(claimBefore)
-    local settle=0
+-- ★★★ ขากลับ = set HRP.CFrame "ตัวจริง" ทีละสเต็ป (ท่า MIRANDA จาก deposit_spy: vel=0 ตำแหน่งขยับ ~400/s)
+--   CFrame ตัวจริง (ไม่ใช่ tween-clone) → server เห็นตำแหน่งจริงตลอด → egg sync ตามมา → ฝากที่จุดฝากได้
+--   step ~7 studs/เฟรม (~420/s) ต่ำกว่า threshold AC = ไม่โดนดึง (ตรง log MIRANDA)
+local function cframeReturn(pos, timeout)
+    local target=Vector3.new(pos.X, pos.Y, pos.Z)
     local t=os.clock()
-    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<15 do
+    while ENV.SAE_RUN and os.clock()-t<(timeout or 25) do
         local h=hrp(); if not h then break end
-        local d=(Vector3.new(h.Position.X,HOME.Y,h.Position.Z)-Vector3.new(HOME.X,HOME.Y,HOME.Z)).Magnitude
-        pcall(function() if Move.WalkTo then Move.WalkTo(Vector3.new(HOME.X,HOME.Y,HOME.Z), 1, CFG.SYNC_SPEED) end end)  -- เดิน sync 24
-        if d<=6 then settle=settle+1 else settle=0 end
-        if settle==1 then log("   ⏳ settle ที่บ้าน (ให้ server egg ตามทัน)...") end
+        local cur=h.Position
+        local d=Vector3.new(target.X-cur.X, target.Y-cur.Y, target.Z-cur.Z)
+        local m=d.Magnitude
+        if m<CFG.ARRIVE then break end
+        local step=math.min(CFG.RETURN_STEP or 7, m)
+        pcall(function() h.CFrame=CFrame.new(cur + d.Unit*step) end)   -- ★ CFrame ตัวจริง = egg sync
         RunService.Heartbeat:Wait()
     end
 end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    -- ① กลับบ้านเร็ว (ride หรือ tween)
-    if CFG.USE_RIDE then rideMake(); rideTo(HOME, 25); rideCleanup()
-    else gotoPos(HOME, CFG.ARRIVE, 40) end   -- ★ tween เข้าถึง HOME เลย (ในเซฟโซน = ยามตามเข้าไม่ได้) แล้วค่อย settle
+    -- ★ ขากลับ = CFrame ตัวจริงทีละสเต็ป (ท่า MIRANDA) — egg sync ตลอด → ฝากที่จุดฝาก
+    cframeReturn(HOME, 25)
     local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
-    -- ② walk-sync settle ที่บ้าน = ให้ server egg ตามทัน → เกมฝากเอง (สูตร monthonsova)
-    if lastClaim<=claimBefore and carrying then depositAtHome(claimBefore) end
+    -- ★ ค้างที่จุดฝาก (CFrame ย่ำ) รอ server claim (egg auto-claim ที่จุดฝาก เหมือน MIRANDA)
+    local t=os.clock()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<6 do
+        local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(HOME.X,HOME.Y,HOME.Z) end) end  -- ค้างที่จุดฝากจริง
+        RunService.Heartbeat:Wait()
+    end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
