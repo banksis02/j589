@@ -254,12 +254,20 @@ local function carryHome()
             end
         end
     else
+        local sp=hrp(); log(("   เดินกลับ(baseline)... carrying=%s pos=%s"):format(tostring(carrying), sp and ("(%.0f,%.0f,%.0f)"):format(sp.Position.X,sp.Position.Y,sp.Position.Z) or "?"))
         gotoPos(HOME, CFG.ARRIVE)                  -- baseline: วาปกลับบ้าน (tween)
+        local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s (false=ไข่หลุดกลางทาง)"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
         local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
         local t=os.clock()
         while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
             pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
             RunService.Heartbeat:Wait()
+        end
+        -- ★ fallback ฝาก: crossOnce ถ้ายังถือไข่แต่ยังไม่ redeem
+        for i=1,4 do
+            if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+            log("   ↻ ฝาก crossOnce รอบ "..i); crossOnce()
+            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<1.5 do RunService.Heartbeat:Wait() end
         end
     end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
