@@ -11,7 +11,17 @@ local RS         = game:GetService("ReplicatedStorage")
 local WS         = game:GetService("Workspace")
 local player     = Players.LocalPlayer
 local ENV = (type(getgenv)=="function" and getgenv()) or _G
-local function log(t) print("[SEQ] "..tostring(t)) end
+-- ★ log + auto-copy คลิปบอร์ด (log เด้งเร็ว ดูไม่ทัน → ก๊อปวางมาได้เลย)
+local LOGBUF, lastCopy = {}, 0
+local function log(t)
+    local s="[SEQ] "..tostring(t); print(s)
+    LOGBUF[#LOGBUF+1]=s; if #LOGBUF>500 then table.remove(LOGBUF,1) end
+    if os.clock()-lastCopy>0.4 then lastCopy=os.clock()
+        local txt=table.concat(LOGBUF,"\n")
+        for _,fn in ipairs({setclipboard,toclipboard,writeclipboard}) do if type(fn)=="function" and pcall(fn,txt) then break end end
+        if type(writefile)=="function" then pcall(writefile,"sae_log.txt",txt) end
+    end
+end
 
 assert(type(writefile)=="function", "executor ต้องมี writefile")
 local FILES = {
@@ -77,7 +87,7 @@ end)
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -146,11 +156,14 @@ local function grab(egg)
     local h=hrp(); local dleft=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
     if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
     log(("   grab: %s [%s] dist=%.0f slotKey=%s"):format(egg.cat, egg.rarity, dleft, tostring(egg.slotKey)))
+    local eggV=Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)
     local t=os.clock(); local lastReason
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
+        -- ★ เดินจริงช้าๆ ที่ไข่ = ให้ server เห็นตำแหน่งเราจริง (แก้ "Get closer to the egg" = desync จาก tween)
+        pcall(function() if Move.WalkTo then Move.WalkTo(eggV, 1, 30) end end)
         local okc, reason = nil, nil
         pcall(function() if EggState.CarryFieldEgg then okc, reason = EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
-        if reason~=nil and reason~=lastReason then log("     ↳ server ตอบ: ok="..tostring(okc).." reason="..tostring(reason)); lastReason=reason end
+        if reason~=nil and reason~=lastReason then log("     ↳ server: ok="..tostring(okc).." reason="..tostring(reason)); lastReason=reason end
         firePrompts(egg.pos)
         RunService.Heartbeat:Wait()
     end
