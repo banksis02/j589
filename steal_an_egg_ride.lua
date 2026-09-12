@@ -18,16 +18,16 @@ local EggState; pcall(function() EggState=require(RS:WaitForChild("Client",10):W
 local carrying=false
 pcall(function() if EggState and EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
-local function nearestFieldEgg()
+local function pickEgg(farthest)
     if not EggState then return nil end
-    local best,bd=nil,1e9
+    local best,bd=nil, farthest and -1 or 1e9
     local ok,data=pcall(function() EggState.SyncFieldEggs(); return EggState.ReadFieldEggs() end)
     if ok and type(data)=="table" and type(data.Records)=="table" then
         local h=hrp(); local myPos=(h and h.Position) or Vector3.new()
         for _,rec in pairs(data.Records) do
             if type(rec)=="table" and typeof(rec.BoundsCFrame)=="CFrame" then
                 local d=(rec.BoundsCFrame.Position-myPos).Magnitude
-                if d<bd then bd=d; best={uid=rec.Uid,pos=rec.BoundsCFrame.Position,slotKey=slotKey(rec)} end
+                if (farthest and d>bd) or (not farthest and d<bd) then bd=d; best={uid=rec.Uid,pos=rec.BoundsCFrame.Position,slotKey=slotKey(rec),dist=d} end
             end
         end
     end
@@ -109,12 +109,12 @@ local function firePrompts(pos)
 end
 ENV.SAE_AUTORIDE=function()
     ENV.SAE_UNRIDE()
-    local egg=nearestFieldEgg()
+    local egg=pickEgg(true)   -- ★ ไข่ไกลสุด (ที่ปัญหาอยู่จริง)
     if not egg then log("❌ ไม่เจอไข่"); return end
-    log("① วาปไปเก็บไข่ใกล้สุด @"..P(egg.pos).." (ล่อยาม)")
+    log("① วาปไปเก็บไข่ไกลสุด @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0).." — ล่อยาม)")
     -- วาปไป + spam เก็บ (แค่ให้ยามตื่น พอ)
     local t=os.clock()
-    while not carrying and os.clock()-t<6 do
+    while not carrying and os.clock()-t<8 do
         local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(egg.pos.X, egg.pos.Y+3, egg.pos.Z) end) end
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
         firePrompts(egg.pos)
