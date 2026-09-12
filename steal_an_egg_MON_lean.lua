@@ -47,33 +47,28 @@ pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(fun
 
 -- ===== บินด้วย BodyVelocity (ฟิสิกส์ = ไม่ lagback) =====
 ENV.SAE_ALIVE=true
-local flyBV
-local function stopFly() if flyBV and flyBV.Parent then pcall(function() flyBV.Velocity=Vector3.new(0,0,0) end) end end
-local function killFly() if flyBV then pcall(function() flyBV:Destroy() end) end flyBV=nil local h=hrp() if h then pcall(function() h.AssemblyLinearVelocity=Vector3.new(0,0,0) end) end end
+local function stopFly() end
+local function killFly() end
+-- ★★ วาปแบบ Humanoid-swap: ถอด Humanoid ออก → set CFrame → ใส่คืน
+--    ObbyAntiTP เช็ค velocity ผ่าน Humanoid → ไม่มี Humanoid = เช็คไม่ได้ = วาปไกลไม่โดนดึงกลับ
+--    (เทคนิคจากสคริปที่ใช้ได้จริง: teleport 4000+ studs/tick, Humanoid oscillate 0↔1)
 local function flyTo(target, timeout, radius)
-    timeout=timeout or 30; radius=radius or CFG.ARRIVE
-    local h=hrp(); local hu=hum(); if not(h and hu) then return false end
-    pcall(function() hu.PlatformStand=false end)
-    if not (flyBV and flyBV.Parent) then
-        flyBV=Instance.new("BodyVelocity"); flyBV.Name="SAE_Fly"; flyBV.MaxForce=Vector3.new(1e7,1e7,1e7); flyBV.P=12500; flyBV.Velocity=Vector3.new(0,0,0); flyBV.Parent=h
+    local c=player.Character
+    local hum=c and c:FindFirstChildOfClass("Humanoid")
+    local root=c and c:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local dest=CFrame.new(target.X, target.Y+CFG.STAND_Y, target.Z)
+    -- วาปเป็นสเต็ปใหญ่ (ถอด humanoid ระหว่างวาป) — ทำ 2-3 ครั้งให้ server รับตำแหน่งชัวร์
+    for i=1,2 do
+        c=player.Character; hum=c and c:FindFirstChildOfClass("Humanoid"); root=c and c:FindFirstChild("HumanoidRootPart")
+        if not root then break end
+        local par = hum and hum.Parent
+        if hum then pcall(function() hum.Parent=nil end) end
+        pcall(function() root.CFrame=dest end)
+        if hum and par then pcall(function() hum.Parent=par end) end
+        RunService.Heartbeat:Wait()
     end
-    local t0=tick(); local lastPos,lastCheck=h.Position,tick()
-    while ENV.SAE_ALIVE and ENV.SAE_RUN~=false and alive() and tick()-t0<timeout do
-        local cur=hrp(); if not cur then break end
-        if not (flyBV and flyBV.Parent) then flyBV=Instance.new("BodyVelocity") flyBV.Name="SAE_Fly" flyBV.MaxForce=Vector3.new(1e7,1e7,1e7) flyBV.P=12500 flyBV.Parent=cur end
-        local flat=Vector3.new(target.X-cur.Position.X,0,target.Z-cur.Position.Z)
-        local dy=target.Y-cur.Position.Y
-        if flat.Magnitude<radius and math.abs(dy)<10 then break end
-        local dir=(flat.Magnitude>0.1) and flat.Unit or Vector3.new(0,0,0)
-        local vy=0; if math.abs(dy)>8 then vy=math.clamp(dy,-18,18) end
-        pcall(function() flyBV.Velocity=Vector3.new(dir.X*CFG.SPEED, vy, dir.Z*CFG.SPEED) end)
-        if tick()-lastCheck>2 then   -- anti-stuck: ขยับน้อยกว่า 6 ใน 2 วิ → ดันขึ้นข้ามสิ่งกีดขวาง
-            if (cur.Position-lastPos).Magnitude<6 then pcall(function() flyBV.Velocity=Vector3.new(dir.X*CFG.SPEED,16,dir.Z*CFG.SPEED) end) end
-            lastPos,lastCheck=cur.Position,tick()
-        end
-        task.wait(0.06)
-    end
-    stopFly()
+    task.wait(0.1)   -- ให้ server รับตำแหน่งใหม่
     return true
 end
 
