@@ -52,7 +52,7 @@ end
 
 -- ───────── CARRIER (แพลตฟอร์มเลื่อน: anchored + weld + ตัวละครลอยอิสระ) ─────────
 local TweenService=game:GetService("TweenService")
-local carrier, carWeld
+local carrier, carWeld, curPos, goalPos, rideConn
 local savedCollide={}   -- เก็บ CanCollide เดิมของตัวละคร
 local function setNoclip(on)
     local c=player.Character; if not c then return end
@@ -68,39 +68,59 @@ local function setPlatform(on)
     if hum then pcall(function() hum.PlatformStand=on end) end
 end
 ENV.SAE_UNRIDE=function()
+    if rideConn then pcall(function() rideConn:Disconnect() end) rideConn=nil end
     if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
     if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
+    curPos=nil; goalPos=nil
     setPlatform(false); setNoclip(false)
     log("ลงจาก carrier แล้ว (คืน collision/platform)")
+end
+-- ★ ขาไป: tween ตัวละครตรงๆ (เหมือนเวอร์ชันก่อนที่ไปถึงไข่ได้ — ไม่ต้อง carrier)
+local function tweenTo(pos, speed)
+    speed=speed or CFG.SPEED
+    local h=hrp(); if not h then return false end
+    local dest=CFrame.new(pos.X, pos.Y+3, pos.Z)
+    local d=(dest.Position-h.Position).Magnitude
+    if d<CFG.ARRIVE then return true end
+    local tw=TweenService:Create(h, TweenInfo.new(d/speed, Enum.EasingStyle.Linear), {CFrame=dest})
+    tw:Play(); tw.Completed:Wait()
+    return true
+end
+-- ★ driver ถาวร: track ตำแหน่งเป้า (curPos) เอง ไม่อิงตำแหน่งที่ร่วง → ไม่ตกแมพ + ตอนหยุดก็ค้างลอย
+local function startDriver()
+    if rideConn then pcall(function() rideConn:Disconnect() end) end
+    rideConn=RunService.Heartbeat:Connect(function()
+        if not carrier or not carrier.Parent or not curPos then return end
+        local g=goalPos or curPos
+        local delta=g-curPos
+        local dist=delta.Magnitude
+        local step=CFG.SPEED/60
+        if dist<=step then curPos=g else curPos=curPos+delta.Unit*step end
+        carrier.CFrame=CFrame.new(curPos)   -- ตั้ง Y คงที่เอง = ไม่ร่วง
+    end)
 end
 local function makeCarrier()
     ENV.SAE_UNRIDE()
     local h=hrp(); if not h then return false end
-    -- ตัวละครลอยอิสระ (ไม่งั้น Humanoid ยืนพื้น+ขา collision ฝืน carrier = ยืนเฉย)
-    setPlatform(true); setNoclip(true)
+    setPlatform(true); setNoclip(true)      -- ตัวลอยอิสระ ไม่ฝืน carrier
+    curPos=h.Position; goalPos=curPos
     local p=Instance.new("Part")
     p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
-    p.Transparency=1; p.CanCollide=false; p.Anchored=false   -- unanchored = set CFrame แล้วทั้ง assembly (รวมตัวเรา) ขยับ
-    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))      -- ใต้ตัวเรา
+    p.Transparency=1; p.CanCollide=false; p.Anchored=false
+    p.CFrame=CFrame.new(curPos)
     p.Parent=WS
     local w=Instance.new("WeldConstraint"); w.Part0=h; w.Part1=p; w.Parent=p
     carrier,carWeld=p,w
+    startDriver()
     return true
 end
--- ★ ขับ carrier ทีละเฟรม (lerp) → ตั้ง carrier.CFrame เอง = ทั้ง assembly (ตัวเรา) ขยับตาม (ฟิสิกส์ weld ไม่ใช่ set CFrame ตัวละคร)
-local function driveTo(pos, tag)
+-- ขากลับ: ขี่ carrier (ตั้ง goalPos แล้ว driver พาไปเอง ไม่ตก)
+local function driveCarrierTo(pos, tag)
     if not carrier then if not makeCarrier() then return false end end
-    local target=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
+    goalPos=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
     local h0=hrp(); local startChar=h0 and h0.Position
     local t0=os.clock()
-    while carrier and carrier.Parent do
-        local h=hrp(); if not h then break end
-        local cur=carrier.Position
-        local delta=target-cur
-        local dist=delta.Magnitude
-        if dist<CFG.ARRIVE then break end
-        local step=math.min(CFG.SPEED/60, dist)          -- ต่อเฟรม (~500/60 = 8 studs/เฟรม ต่ำกว่า threshold AC)
-        carrier.CFrame=CFrame.new(cur + delta.Unit*step)  -- ตั้ง CFrame carrier → assembly ตามมา
+    while carrier and carrier.Parent and curPos and (curPos-goalPos).Magnitude>CFG.ARRIVE do
         if os.clock()-t0>25 then log("⚠️ "..(tag or "").." timeout"); break end
         RunService.Heartbeat:Wait()
     end
@@ -129,9 +149,8 @@ ENV.SAE_RIDEOUT=function(far)
     if far==nil then far=true end
     local egg=pickEgg(far)
     if not egg then log("❌ ไม่เจอไข่"); return nil end
-    log("① ขี่ carrier ไปไข่"..(far and "ไกลสุด" or "ใกล้สุด").." @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
-    makeCarrier()
-    driveTo(egg.pos,"ไป")
+    log("① tween ไปไข่"..(far and "ไกลสุด" or "ใกล้สุด").." @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
+    tweenTo(egg.pos, CFG.SPEED)   -- ขาไป = tween ตรงๆ (เหมือนเดิม ไม่ carrier)
     log("② ถึงไข่ → spam เก็บ")
     local t=os.clock()
     while not carrying and os.clock()-t<CFG.GRAB_T do
@@ -146,8 +165,8 @@ ENV.SAE_RIDEHOME=function()
     local home=CFG.HOME
     if not home then log("❌ ยังไม่ตั้งบ้าน — SAE_SETHOME() ตอนยืนจุดฝากก่อน"); return end
     log("④ ขี่ carrier กลับบ้าน @"..P(home))
-    if not carrier then makeCarrier() end
-    driveTo(home,"กลับ")
+    makeCarrier()
+    driveCarrierTo(home,"กลับ")
     log("⑤ ถึงบ้าน → ลงจาก carrier (ฝากไข่)")
     task.wait(0.2)
     ENV.SAE_UNRIDE()
