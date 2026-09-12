@@ -86,7 +86,7 @@ local function discSig()
 end
 local function applyBypass()
     pcall(function() WS:SetAttribute("ClientObbyAntiTp", false) end)
-    neuter(); discSig()   -- ❌ ตัด installHook (__namecall hook = เสี่ยง BAC ตาม memory)
+    installHook(); neuter(); discSig()   -- installHook บล็อก PivotTo = กันลากกลับตอนวาปไกล
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
 end
 pcall(applyBypass)
@@ -177,7 +177,11 @@ local function firePrompts(pos)
 end
 local function grab(egg)
     if carrying then return true end
-    flyTo(egg.pos, CFG.ARRIVE)
+    local reached=flyTo(egg.pos, CFG.ARRIVE)
+    if not reached then
+        local h=hrp(); local d=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
+        log("  (ไปไม่ถึง! เหลือ "..math.floor(d).." studs — น่าจะโดนดึงกลับ)")
+    end
     local t=os.clock()
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
         pcall(function() if EggState and EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
