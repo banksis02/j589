@@ -3,7 +3,8 @@
 -- สูตรจริง (ไม่ใช่ยาม AI / ไม่ teleport / ไม่ tween CFrame):
 --   1) สร้าง CARRIER = Part ล่องหน (Massless, CanCollide=false, Transparency=1) ไม่มี Humanoid
 --   2) weld ตัวเรา (HRP) นั่งบน carrier
---   3) ลาก carrier ด้วย BodyVelocity (ฟิสิกส์ ~500) → anti-cheat มองเป็นเคลื่อนที่ปกติ ไม่จับ ไม่ desync
+--   3) tween CFrame ของ carrier (object แยก Linear) → ตัวละครไหลตาม weld
+--      = การขยับมาจากฟิสิกส์ของ weld ไม่ใช่ set CFrame ตัวละคร → ObbyAntiTP ไม่จับ ไม่ desync
 --   ตัวเรา = ผู้โดยสารน้ำหนักตาย → ไม่มี AI ไล่ ไม่โดนตี
 -- cmd: SAE_SETHOME() จำจุดฝาก | SAE_AUTORIDE() ไป-เก็บ-กลับ-ฝาก อัตโนมัติ
 --      SAE_RIDEOUT(far) ไปไข่ | SAE_RIDEHOME() กลับ | SAE_UNRIDE() ลง
@@ -49,10 +50,10 @@ local function pickEgg(farthest)
     return best
 end
 
--- ───────── CARRIER (พาหนะล่องหน + BodyVelocity) ─────────
-local carrier, carWeld, carBV
+-- ───────── CARRIER (พาหนะล่องหน + TWEEN CFrame แบบท่าจริง) ─────────
+local TweenService=game:GetService("TweenService")
+local carrier, carWeld
 ENV.SAE_UNRIDE=function()
-    if carBV then pcall(function() carBV:Destroy() end) carBV=nil end
     if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
     if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
     log("ลงจาก carrier แล้ว")
@@ -63,37 +64,31 @@ local function makeCarrier()
     local p=Instance.new("Part")
     p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
     p.Transparency=1; p.CanCollide=false; p.Massless=true; p.Anchored=false
-    p.CFrame=CFrame.new(h.Position)   -- ใต้ตัวเรา
+    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))   -- ใต้ตัวเรา (ตัวเรานั่งบน)
     p.Parent=WS
-    -- weld ตัวเรานั่งบน carrier
+    -- weld ตัวเรานั่งบน carrier (ตัวละครขยับตามฟิสิกส์ของ weld ไม่ใช่ set CFrame ตรงๆ = AC ไม่จับ)
     local w=Instance.new("WeldConstraint"); w.Part0=h; w.Part1=p; w.Parent=p
-    -- BodyVelocity ลากทั้งชุด (ฟิสิกส์ ไม่ teleport)
-    local bv=Instance.new("BodyVelocity")
-    bv.MaxForce=Vector3.new(1e9,1e9,1e9); bv.P=1e4; bv.Velocity=Vector3.zero; bv.Parent=p
-    carrier,carWeld,carBV=p,w,bv
+    carrier,carWeld=p,w
     return true
 end
--- ลาก carrier ไปจุดหมายด้วยความเร็วคงที่ (ฟิสิกส์) จนถึง
+-- ★ tween ที่ตัว "carrier" (object แยก) ไม่ใช่ตัวละคร → ตัวละครไหลตาม weld = ไม่โดนดึง
 local function driveTo(pos, tag)
-    if not carrier or not carBV then if not makeCarrier() then return false end end
+    if not carrier then if not makeCarrier() then return false end end
     local target=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
-    local t0=os.clock(); local stuckT=os.clock(); local lastP
-    while carrier and carrier.Parent do
-        local h=hrp(); if not h then break end
-        local cur=h.Position
-        local delta=target-cur
-        local dist=delta.Magnitude
-        if dist<CFG.ARRIVE then break end
-        carBV.Velocity = delta.Unit*CFG.SPEED
-        -- anti-stuck: ถ้าไม่ขยับ 2 วิ ดันขึ้น
-        if lastP and (cur-lastP).Magnitude<2 then
-            if os.clock()-stuckT>2 then carBV.Velocity=carBV.Velocity+Vector3.new(0,CFG.SPEED*0.6,0); stuckT=os.clock() end
-        else stuckT=os.clock() end
-        lastP=cur
-        if os.clock()-t0>20 then log("⚠️ "..(tag or "").." timeout"); break end
+    local startPos=carrier.Position
+    local dist=(target-startPos).Magnitude
+    if dist<CFG.ARRIVE then return true end
+    local dur=dist/CFG.SPEED               -- Linear = ความเร็วคงที่ (เหมือนของจริง vel~545 นิ่ง)
+    local dest=CFrame.new(target)          -- flat (ไม่หมุน) = ตัวละครตั้งตรง
+    local tw=TweenService:Create(carrier, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame=dest})
+    tw:Play()
+    -- รอจบ (หรือ carrier หาย)
+    local t0=os.clock()
+    while carrier and carrier.Parent and os.clock()-t0 < dur+2 do
+        if (carrier.Position-target).Magnitude<CFG.ARRIVE then break end
         RunService.Heartbeat:Wait()
     end
-    if carBV then carBV.Velocity=Vector3.zero end
+    pcall(function() tw:Cancel() end)
     return true
 end
 
