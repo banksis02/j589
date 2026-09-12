@@ -94,8 +94,7 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
     log("   🎉🎉 ได้ไข่จริง #"..totalGot..": "..lastClaimInfo)
 end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true,
-    RIDE_SPEED=545, DEPOSIT_T=6, USE_RIDE=true }  -- ★ ขากลับขี่ carrier (server-physics ยามจับไม่ได้ + ฝากผ่าน)
+local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -131,22 +130,22 @@ local function targetEgg()
     return o[1]
 end
 
--- ===== MOVE (monthonsova tween ลื่น = ไม่ lagback) — restore จาก f4e2a00 ที่ใช้ได้ =====
+-- ===== MOVE (monthonsova tween = ไม่ lagback) =====
 local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 40
+    radius=radius or CFG.ARRIVE; timeout=timeout or 30
     local target=Vector3.new(pos.X,pos.Y,pos.Z)
     -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
     pcall(function() Move.TweenTo(target) end)
     local t=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
-        if (r.Position-target).Magnitude<radius then return true end
-        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam = ลื่น ไม่ช้า)
+        if Move.IsNear(r.Position, target, radius) then return true end
+        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
         local tweening = Move.IsTweening and Move.IsTweening()
         if not tweening then pcall(function() Move.TweenTo(target) end) end
         RunService.Heartbeat:Wait()
     end
-    local r=hrp(); return r and (r.Position-target).Magnitude<radius+3 or false
+    return false
 end
 
 -- ===== GRAB / DROP / CARRY-HOME =====
@@ -201,81 +200,15 @@ local function crossOnce()
     stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
     noclipTemp=false
 end
--- ===== ⭐ CARRIER RIDE (ขี่ยาม) = ท่าจริงจากสคริปที่ใช้ได้ (carrier_probe ยืนยัน) =====
---   weld ตัวติด Part ล่องหน (Massless/nocollide) → driver ตั้ง CFrame ทีละเฟรม (track curPos เอง=ไม่ตก)
---   ตัวละคร=ผู้โดยสาร ขยับด้วยฟิสิกส์ weld → ยาม/RigSync ไม่จับ → ฝากผ่าน
-local carrier, carWeld, curPos, goalPos, rideConn
-local function rideCleanup()
-    if rideConn then pcall(function() rideConn:Disconnect() end) rideConn=nil end
-    if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
-    if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
-    curPos=nil; goalPos=nil
-    local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h.PlatformStand=false end) end
-    noclipTemp=false
-end
-local function rideMake()
-    rideCleanup()
-    local r=hrp(); if not r then return false end
-    local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h.PlatformStand=true end) end   -- ลอยอิสระ ไม่ฝืน carrier
-    noclipTemp=true                                            -- ใช้ noclip loop เดิมของ MON_lean
-    curPos=r.Position; goalPos=curPos
-    local p=Instance.new("Part")
-    p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
-    p.Transparency=1; p.CanCollide=false; p.Anchored=false
-    p.CFrame=CFrame.new(curPos); p.Parent=WS
-    local w=Instance.new("WeldConstraint"); w.Part0=r; w.Part1=p; w.Parent=p
-    carrier,carWeld=p,w
-    rideConn=RunService.Heartbeat:Connect(function()
-        if not carrier or not carrier.Parent or not curPos then return end
-        local g=goalPos or curPos
-        local delta=g-curPos; local dist=delta.Magnitude; local step=CFG.RIDE_SPEED/60
-        if dist<=step then curPos=g else curPos=curPos+delta.Unit*step end
-        pcall(function() carrier.CFrame=CFrame.new(curPos) end)   -- ตั้ง Y เอง = ไม่ร่วง
-    end)
-    return true
-end
-local function rideTo(pos, timeout)
-    if not carrier then if not rideMake() then return false end end
-    goalPos=Vector3.new(pos.X, pos.Y+3, pos.Z)
-    local t=os.clock()
-    while ENV.SAE_RUN and carrier and curPos and (curPos-goalPos).Magnitude>4 do
-        if os.clock()-t>(timeout or 25) then break end
-        RunService.Heartbeat:Wait()
-    end
-    return true
-end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    if CFG.USE_RIDE then
-        -- ★★ ขี่ carrier กลับ safe zone (server-physics = ยามจับไม่ได้ + RigSync เชื่อ = ฝากผ่าน)
-        log("   🐴 ขี่ carrier กลับบ้าน...")
-        rideMake()
-        rideTo(HOME, 25)                          -- carrier พากลับข้ามเส้นเข้าเซฟโซน
-        -- ขี่เลยเข้าเซฟโซนอีกหน่อย (ให้แน่ใจว่าข้ามเส้น)
-        if line and carrying then
-            local n=lineNormal(); local safeDir=n*SAFE_SIGN; local h=hrp()
-            if h then local foot=h.Position - signedSide(h.Position)*n
-                rideTo(Vector3.new((foot+safeDir*45).X, HOME.Y, (foot+safeDir*45).Z), 10) end
-        end
-        rideCleanup()
-        local t=os.clock()
-        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<CFG.DEPOSIT_T do RunService.Heartbeat:Wait() end
-        -- fallback: ยังไม่ฝาก → crossOnce (CFrame ข้ามเส้น)
-        if lastClaim<=claimBefore and carrying then
-            log("   ↻ ยังไม่ฝาก → crossOnce")
-            crossOnce()
-            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<3 do RunService.Heartbeat:Wait() end
-        end
-    else
-        gotoPos(HOME, CFG.ARRIVE)                 -- โหมดเดิม: วาป+เดินเข้า safe zone
-        local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
-        local t=os.clock()
-        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
-            pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
-            RunService.Heartbeat:Wait()
-        end
+    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween)
+    local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
+    -- ★ เดินจริงเข้า safe zone (server เห็นการข้ามเส้นจริง = ฝากได้) — เหมือน walk-sync ตอน grab ที่เวิร์ก
+    local t=os.clock()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
+        pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
+        RunService.Heartbeat:Wait()
     end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
@@ -285,7 +218,6 @@ local function bind(name, fn) ENV[name]=fn; pcall(function() _G[name]=fn end) en
 bind("SAE_SETHOME", function() local h=hrp(); if h then ENV.SAE_HOME=h.Position; HOME=h.Position; if line then SAFE_SIGN=(signedSide(HOME)>=0) and 1 or -1 end log("ตั้ง HOME="..tostring(h.Position)) end end)
 bind("SAE_TIER", function(x) CFG.RARITY=x or ""; log("target tier = "..(CFG.RARITY=="" and "ทุกระดับ(สูงสุดก่อน)" or CFG.RARITY)) end)
 bind("SAE_PRIME", function(b) CFG.PRIME=(b==true); log("ยกไข่มั่วหน้าเซฟโซนก่อน = "..tostring(CFG.PRIME)) end)
-bind("SAE_RIDE", function(b) if b==nil then b=not CFG.USE_RIDE end CFG.USE_RIDE=(b==true); log("ขากลับ = "..(CFG.USE_RIDE and "ขี่ carrier (ยามจับไม่ได้)" or "เดิน/วาปเข้าเซฟโซน (เดิม)")) end)
 bind("SAE_LIST", function()
     local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
     log("ไข่ในสนาม "..#e.." ใบ:")
