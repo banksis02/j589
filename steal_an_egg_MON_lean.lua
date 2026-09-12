@@ -77,7 +77,7 @@ end)
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2 }
+local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=false }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -183,6 +183,7 @@ end
 local function bind(name, fn) ENV[name]=fn; pcall(function() _G[name]=fn end) end
 bind("SAE_SETHOME", function() local h=hrp(); if h then ENV.SAE_HOME=h.Position; HOME=h.Position; if line then SAFE_SIGN=(signedSide(HOME)>=0) and 1 or -1 end log("ตั้ง HOME="..tostring(h.Position)) end end)
 bind("SAE_TIER", function(x) CFG.RARITY=x or ""; log("target tier = "..(CFG.RARITY=="" and "ทุกระดับ(สูงสุดก่อน)" or CFG.RARITY)) end)
+bind("SAE_PRIME", function(b) CFG.PRIME=(b==true); log("ยกไข่มั่วหน้าเซฟโซนก่อน = "..tostring(CFG.PRIME)) end)
 bind("SAE_LIST", function()
     local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
     log("ไข่ในสนาม "..#e.." ใบ:")
@@ -195,12 +196,11 @@ bind("SAE_START", function()
     task.spawn(function()
         while ENV.SAE_RUN and ENV.SAE_ALIVE do
             gotoPos(HOME, CFG.ARRIVE)                 -- ① ยืนเซฟโซน
-            local first=frontEgg()                    -- ② กองแรกหน้าเซฟโซน ยก→ปล่อย
-            if first then
-                log("① กองแรกหน้าเซฟโซน: "..first.cat)
-                if grab(first) then dropHere() end
+            if CFG.PRIME then                         -- ② (ปิดไว้) ยกไข่มั่ว 1 ใบหน้าเซฟโซนแล้ววาง — SAE_PRIME(true) เปิด
+                local first=frontEgg()
+                if first then log("① กองแรกหน้าเซฟโซน: "..first.cat); if grab(first) then dropHere() end end
             end
-            local tgt=targetEgg()                     -- ③ เป้าหมาย tier → อุ้มกลับบ้าน(ฝาก)
+            local tgt=targetEgg()                     -- ③ ไข่ไกลระดับสูงสุด → อุ้มกลับบ้าน(ฝาก)
             if tgt then
                 log("② เป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."] @"..math.floor(tgt.dist))
                 if grab(tgt) then log(carryHome() and "  ✅ ฝากเข้าบ้านแล้ว!" or "  ⚠️ ฝากไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด/ไปไม่ถึง") end
