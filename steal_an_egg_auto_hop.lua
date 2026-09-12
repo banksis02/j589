@@ -7,26 +7,26 @@ return function(context)
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
     -- Once farming was admitted, later joins or loader revisions must not restart hopping.
-    if env.SAE_FARM_READY_JOB == host.JobId or env.SAE_SENA_JOB == host.JobId then
+    if env.SAE_FARM_READY_JOB == host.JobId or env.SAE_VENDOR_JOB == host.JobId or env.SAE_SENA_JOB == host.JobId then
         if previous and previous.stop then previous.stop() end
         env.SAE_FARM_READY_JOB = host.JobId
         return previous
     end
-    if previous and previous.jobId == host.JobId and previous.version == 9 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 10 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 9, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 10, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
         state.active = false
         if connection then connection:Disconnect(); connection = nil end
     end
-    local function alive() return state.active and env.SAE_AUTO_HOP == state and env.SAE_FARM_READY_JOB ~= host.JobId and env.SAE_SENA_JOB ~= host.JobId end
+    local function alive() return state.active and env.SAE_AUTO_HOP == state and env.SAE_FARM_READY_JOB ~= host.JobId and env.SAE_VENDOR_JOB ~= host.JobId end
     local function populationReady()
         if not alive() or state.pending or #players:GetPlayers() > 3 then return end
         env.SAE_FARM_READY_JOB = host.JobId
@@ -41,17 +41,17 @@ return function(context)
             end)
             if not ok then log("[SAE PERFORMANCE] load failed: " .. tostring(err)) end
         end)
-        if env.SAE_SENA_JOB == host.JobId then return end
+        if env.SAE_VENDOR_JOB == host.JobId then return end
         -- Latch before invoking vendor code: a partial run must not start twice.
-        env.SAE_SENA_JOB = host.JobId
-        log("[SAE HOP] population ready; loading Sena")
+        env.SAE_VENDOR_JOB = host.JobId
+        log("[SAE HOP] population ready; loading Luarmor loader")
         local ok, err = pcall(function()
-            local source = host:HttpGet("https://raw.githubusercontent.com/senarblx/sena/refs/heads/main/loader")
+            local source = host:HttpGet("https://api.luarmor.net/files/v4/loaders/36107afd3107e8d841f9d1a69e2465d4.lua")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
         end)
-        if not ok then log("[SAE SENA] load failed: " .. tostring(err)) end
+        if not ok then log("[SAE VENDOR] load failed: " .. tostring(err)) end
     end
     local function fetch(url)
         if ctx.fetch then return ctx.fetch(url) end
