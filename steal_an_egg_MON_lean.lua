@@ -201,13 +201,13 @@ local function crossOnce()
     stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
     noclipTemp=false
 end
--- ===== ⭐ CARRIER RIDE (opt-in) = ขี่พาหนะล่องหนกลับ (server-physics ยามจับไม่ได้) — แตะแค่ carryHome =====
-local carrier, carWeld, curPos, goalPos, rideConn
+-- ===== ⭐ CARRIER RIDE (opt-in) = ท่าจริงจาก recon (TeleguiadoGuard): unanchored massless + BodyVelocity ฟิสิกส์ =====
+--   carrier ลอยได้ (Massless) + ลากด้วย BodyVelocity (vel~545 physics) → anti-cheat/ยาม มองเป็นเคลื่อนที่ปกติ = ไม่จับ ไม่ตี
+local carrier, carWeld, carBV
 local function rideCleanup()
-    if rideConn then pcall(function() rideConn:Disconnect() end) rideConn=nil end
+    if carBV then pcall(function() carBV:Destroy() end) carBV=nil end
     if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
     if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
-    curPos=nil; goalPos=nil
     local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if h then pcall(function() h.PlatformStand=false end) end
     noclipTemp=false
@@ -216,29 +216,31 @@ local function rideMake()
     rideCleanup()
     local r=hrp(); if not r then return false end
     local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h.PlatformStand=true end) end
+    if h then pcall(function() h.PlatformStand=true end) end   -- ผู้โดยสาร ไม่ฝืน
     noclipTemp=true
-    curPos=r.Position; goalPos=curPos
-    local p=Instance.new("Part"); p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
-    p.Transparency=1; p.CanCollide=false; p.Anchored=false; p.CFrame=CFrame.new(curPos); p.Parent=WS
+    local p=Instance.new("Part"); p.Name="GGXCarrier"; p.Size=Vector3.new(8,1,8)
+    p.Transparency=1; p.CanCollide=false; p.Massless=true; p.Anchored=false   -- ★ recon: anch=false + massless
+    p.CFrame=CFrame.new(r.Position); p.Parent=WS
     local w=Instance.new("WeldConstraint"); w.Part0=r; w.Part1=p; w.Parent=p
-    carrier,carWeld=p,w
-    rideConn=RunService.Heartbeat:Connect(function()
-        if not carrier or not carrier.Parent or not curPos then return end
-        local g=goalPos or curPos; local delta=g-curPos; local dist=delta.Magnitude; local step=CFG.RIDE_SPEED/60
-        if dist<=step then curPos=g else curPos=curPos+delta.Unit*step end
-        pcall(function() carrier.CFrame=CFrame.new(curPos) end)
-    end)
+    -- ★ BodyVelocity = ขยับด้วยฟิสิกส์ (recon: vel~545) ไม่ใช่ tween/anchored → AC/ยาม ไม่จับ ไม่ตี
+    local bv=Instance.new("BodyVelocity"); bv.MaxForce=Vector3.new(1e9,1e9,1e9); bv.P=1e4; bv.Velocity=Vector3.zero; bv.Parent=p
+    carrier,carWeld,carBV=p,w,bv
     return true
 end
 local function rideTo(pos, timeout)
     if not carrier then if not rideMake() then return false end end
-    goalPos=Vector3.new(pos.X, pos.Y+3, pos.Z)
+    local target=Vector3.new(pos.X, pos.Y+5, pos.Z)
     local t=os.clock()
-    while ENV.SAE_RUN and carrier and curPos and (curPos-goalPos).Magnitude>4 do
+    while ENV.SAE_RUN and carrier and carrier.Parent and carBV do
+        local r=hrp(); if not r then break end
+        local delta=target - r.Position
+        local dist=delta.Magnitude
+        if dist<6 then break end
+        carBV.Velocity = delta.Unit * CFG.RIDE_SPEED   -- ลากด้วยฟิสิกส์ตรงไปเป้า (รวม Y = ไม่ร่วง)
         if os.clock()-t>(timeout or 25) then break end
         RunService.Heartbeat:Wait()
     end
+    if carBV then pcall(function() carBV.Velocity=Vector3.zero end) end
     return true
 end
 local function carryHome()
