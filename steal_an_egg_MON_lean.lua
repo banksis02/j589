@@ -83,24 +83,6 @@ task.spawn(function()
     end
 end)
 
--- ★★★ ปิด ObbyAntiTP (จาก decompile: ตัวดึงกลับ) — 3 วิธีรวมกัน = ปิดสนิท → วาป CFrame ไม่โดนดึง
-local function killAntiTP()
-    pcall(function() WS:SetAttribute("ClientObbyAntiTp", false) end)   -- สวิตช์ปิดในตัว (check อ่าน local)
-    if type(getconnections)=="function" and type(debug)=="table" and type(debug.info)=="function" then
-        pcall(function()
-            for _,c in ipairs(getconnections(RunService.Heartbeat)) do
-                local ok,src=pcall(function() return debug.info(c.Function,"s") end)
-                if ok and type(src)=="string" and src:lower():find("obbyantitp") then pcall(function() c:Disconnect() end) end
-            end
-        end)
-    end
-    local ps=player:FindFirstChild("PlayerScripts")
-    if ps then for _,d in ipairs(ps:GetDescendants()) do if d.Name=="ObbyAntiTPClient" then pcall(function() d.Disabled=true; d:Destroy() end) end end end
-end
-killAntiTP()
-task.spawn(function() while ENV.SAE_ALIVE do killAntiTP(); task.wait(2) end end)   -- re-arm กันมันกลับมา
-player.CharacterAdded:Connect(function() task.wait(1); killAntiTP() end)
-
 -- carry state
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
@@ -112,7 +94,7 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
     log("   🎉🎉 ได้ไข่จริง #"..totalGot..": "..lastClaimInfo)
 end) end end)
 
-local CFG={ STAND_Y=3, RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -148,18 +130,22 @@ local function targetEgg()
     return o[1]
 end
 
--- ===== MOVE = วาป CFrame ตรงๆ (ObbyAntiTP ปิดแล้ว = ไม่ดึงกลับ + server เห็นตำแหน่งจริง) =====
+-- ===== MOVE (monthonsova tween = ไม่ lagback) =====
 local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 8
-    local target=Vector3.new(pos.X, pos.Y+CFG.STAND_Y, pos.Z)
+    radius=radius or CFG.ARRIVE; timeout=timeout or 30
+    local target=Vector3.new(pos.X,pos.Y,pos.Z)
+    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
+    pcall(function() Move.TweenTo(target) end)
     local t=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
-        if (r.Position-target).Magnitude<radius then return true end
-        pcall(function() r.CFrame=CFrame.new(target) end)   -- วาปทันที
+        if Move.IsNear(r.Position, target, radius) then return true end
+        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
+        local tweening = Move.IsTweening and Move.IsTweening()
+        if not tweening then pcall(function() Move.TweenTo(target) end) end
         RunService.Heartbeat:Wait()
     end
-    local r=hrp(); return r and (r.Position-target).Magnitude<radius+3 or false
+    return false
 end
 
 -- ===== GRAB / DROP / CARRY-HOME =====
@@ -177,12 +163,14 @@ local function grab(egg)
     local h=hrp(); local dleft=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
     if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
     log(("   grab: %s [%s] dist=%.0f slotKey=%s"):format(egg.cat, egg.rarity, dleft, tostring(egg.slotKey)))
-    local eggV=Vector3.new(egg.pos.X, egg.pos.Y+CFG.STAND_Y, egg.pos.Z)
-    local t=os.clock(); local lastReason
+    local eggV=Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)
+    local t=os.clock(); local lastReason; local lastReTween=0
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
-        local cur=hrp()
-        -- ★ ถ้าเพี้ยน/ไกล → วาป CFrame กลับไปที่ไข่ (ObbyAntiTP ปิดแล้ว = ไม่ดึง, server เห็นจริง)
-        if cur and (eggV-cur.Position).Magnitude>CFG.ARRIVE then pcall(function() cur.CFrame=CFrame.new(eggV) end) end
+        local cur=hrp(); local d=cur and (eggV-cur.Position).Magnitude or 999
+        -- ★ ถ้าตำแหน่งเพี้ยน/ไกล → tween กลับไปที่ไข่ใหม่ (แก้ dist โต 4-5 = "Get closer")
+        if d>CFG.ARRIVE and os.clock()-lastReTween>0.8 then lastReTween=os.clock(); pcall(function() Move.TweenTo(eggV) end) end
+        -- ★ เดินจริงช้าๆ ที่ไข่ = ให้ server เห็นตำแหน่งจริง (แก้ desync)
+        pcall(function() if Move.WalkTo then Move.WalkTo(eggV, 1, 30) end end)
         local okc, reason = nil, nil
         pcall(function() if EggState.CarryFieldEgg then okc, reason = EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
         if reason~=nil and reason~=lastReason then log("     ↳ server: "..tostring(reason)); lastReason=reason end
@@ -197,24 +185,31 @@ local function dropHere()
     local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
     return not carrying
 end
+-- ข้ามเส้นด้วย CFrame สั้นๆ (near home = ไม่ lagback) → ฝาก
+local function stepCF(target, per)
+    local g=0
+    while g<200 and carrying do g=g+1 local h=hrp() if not h then return end local d=target-h.Position local m=d.Magnitude if m<2 then return end pcall(function() h.CFrame=CFrame.new(h.Position+d.Unit*math.min(m,per)) end) RunService.Heartbeat:Wait() end
+end
+local function crossOnce()
+    if not line then return end
+    local h=hrp(); if not h then return end
+    local y=h.Position.Y; local n=lineNormal(); local safeDir=n*SAFE_SIGN
+    local foot=h.Position - signedSide(h.Position)*n
+    noclipTemp=true
+    stepCF(Vector3.new((foot-safeDir*18).X,y,(foot-safeDir*18).Z), 7)
+    stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
+    noclipTemp=false
+end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    if not line then gotoPos(HOME, CFG.ARRIVE); local t=os.clock() while carrying and lastClaim<=claimBefore and os.clock()-t<2 do RunService.Heartbeat:Wait() end return lastClaim>claimBefore end
-    local n=lineNormal(); local safeDir=n*SAFE_SIGN
-    local foot=HOME - signedSide(HOME)*n
-    local fieldNear=Vector3.new((foot-safeDir*22).X, HOME.Y, (foot-safeDir*22).Z)  -- ฝั่งสนาม ใกล้เส้น
-    local safeDeep =Vector3.new((foot+safeDir*34).X, HOME.Y, (foot+safeDir*34).Z)  -- ฝั่งเซฟ ลึก
-    noclipTemp=true
-    -- วาปฝั่งสนาม → รอ server รับ → วาปข้ามเข้าเซฟ (server เห็น prev=สนาม cur=เซฟ = Separates = ฝาก)
+    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween ลื่น)
+    local t=os.clock(); while carrying and lastClaim<=claimBefore and os.clock()-t<1.2 do RunService.Heartbeat:Wait() end
+    -- ★ ฝาก = CFrame ข้ามเส้นที่บ้าน (นอกเขต MonsterEventMap = ObbyAntiTP ไม่ทำงาน = ไม่ดึงกลับ = ข้ามได้จริง)
     local tries=0
     while carrying and ENV.SAE_RUN and tries<6 and lastClaim<=claimBefore do
-        tries=tries+1
-        local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(fieldNear.X, fieldNear.Y+CFG.STAND_Y, fieldNear.Z) end) end
-        local ta=os.clock(); while os.clock()-ta<0.2 do RunService.Heartbeat:Wait() end   -- ให้ server เห็นเราฝั่งสนาม
-        h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(safeDeep.X, safeDeep.Y+CFG.STAND_Y, safeDeep.Z) end) end
-        local tb=os.clock(); while lastClaim<=claimBefore and carrying and os.clock()-tb<0.6 do RunService.Heartbeat:Wait() end
+        tries=tries+1; crossOnce()
+        local tb=os.clock(); while lastClaim<=claimBefore and carrying and os.clock()-tb<0.5 do RunService.Heartbeat:Wait() end
     end
-    noclipTemp=false
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
