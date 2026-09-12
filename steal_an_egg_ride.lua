@@ -109,19 +109,15 @@ local function firePrompts(pos)
 end
 -- tween ไปจุด (TweenService ลื่น — ไม่วาป)
 local TweenService=game:GetService("TweenService")
-local function tweenTo(pos, speed, timeout)
-    speed=speed or 200; timeout=timeout or 30
+local function tweenTo(pos, speed)
+    speed=speed or 120        -- studs/วิ (ยิ่งน้อยยิ่งลื่นช้า; ไม่ใช่วาป)
     local h=hrp(); if not h then return false end
     local dest=CFrame.new(pos.X, pos.Y+3, pos.Z)
-    local t=os.clock()
-    while os.clock()-t<timeout do
-        h=hrp(); if not h then return false end
-        local d=(dest.Position-h.Position).Magnitude
-        if d<6 then return true end
-        local tw=TweenService:Create(h, TweenInfo.new(math.min(d/speed,0.5), Enum.EasingStyle.Linear), {CFrame=dest})
-        tw:Play(); tw.Completed:Wait()
-    end
-    return false
+    local d=(dest.Position-h.Position).Magnitude
+    if d<6 then return true end
+    local tw=TweenService:Create(h, TweenInfo.new(d/speed, Enum.EasingStyle.Linear), {CFrame=dest})  -- ★ ไม่ cap = ลื่นจริง
+    tw:Play(); tw.Completed:Wait()
+    return true
 end
 -- ★ AUTO: tween ไปไข่ไกลสุด → เก็บ (ล่อยาม) → ขี่ยาม (ไม่วาป)
 ENV.SAE_AUTORIDE=function()
