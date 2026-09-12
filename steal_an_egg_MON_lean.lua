@@ -245,7 +245,7 @@ local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
     -- ① กลับบ้านเร็ว (ride หรือ tween)
     if CFG.USE_RIDE then rideMake(); rideTo(HOME, 25); rideCleanup()
-    else gotoPos(HOME, CFG.DEPOSIT_APPROACH, 40) end   -- tween มาใกล้บ้าน (ในระยะ approach 24)
+    else gotoPos(HOME, CFG.ARRIVE, 40) end   -- ★ tween เข้าถึง HOME เลย (ในเซฟโซน = ยามตามเข้าไม่ได้) แล้วค่อย settle
     local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
     -- ② walk-sync settle ที่บ้าน = ให้ server egg ตามทัน → เกมฝากเอง (สูตร monthonsova)
     if lastClaim<=claimBefore and carrying then depositAtHome(claimBefore) end
