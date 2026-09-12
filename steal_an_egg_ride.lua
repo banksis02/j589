@@ -82,7 +82,9 @@ ENV.SAE_RIDE=function()
     -- วิธี 1: weld HRP ติดยาม (บนหัวยาม) → ยาม(server)ขยับ = เราขยับตาม
     local w=Instance.new("Weld")
     w.Part0=g.root; w.Part1=h
-    w.C0=CFrame.new(0,5,0)   -- นั่งเหนือยาม 5 studs
+    -- ★ "แครอทหน้าจมูกยาม": front ของ Roblox = −Z → offset −14 = อยู่ "ข้างหน้า" ยาม
+    -- ยามเห็นเป้า(เรา)อยู่ข้างหน้าตลอด → วิ่งไล่ไปข้างหน้าเรื่อยๆ พาเราไป + XZ 14>10 ตีไม่ถึง
+    w.C0=CFrame.new(0, 2, -14)
     w.Parent=g.root
     rideWeld=w
     -- log ตำแหน่งทุก 0.5s ดูว่ายามพาไปไหน + Y สูงขึ้น (บนยาม) + ไม่ดึงกลับ
