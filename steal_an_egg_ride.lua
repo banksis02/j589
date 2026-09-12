@@ -50,39 +50,53 @@ local function pickEgg(farthest)
     return best
 end
 
--- ───────── CARRIER (พาหนะล่องหน + TWEEN CFrame แบบท่าจริง) ─────────
+-- ───────── CARRIER (แพลตฟอร์มเลื่อน: anchored + weld + ตัวละครลอยอิสระ) ─────────
 local TweenService=game:GetService("TweenService")
 local carrier, carWeld
+local savedCollide={}   -- เก็บ CanCollide เดิมของตัวละคร
+local function setNoclip(on)
+    local c=player.Character; if not c then return end
+    for _,p in ipairs(c:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if on then if savedCollide[p]==nil then savedCollide[p]=p.CanCollide end p.CanCollide=false
+            else if savedCollide[p]~=nil then p.CanCollide=savedCollide[p]; savedCollide[p]=nil end end
+        end
+    end
+end
+local function setPlatform(on)
+    local c=player.Character; local hum=c and c:FindFirstChildOfClass("Humanoid")
+    if hum then pcall(function() hum.PlatformStand=on end) end
+end
 ENV.SAE_UNRIDE=function()
     if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
     if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
-    log("ลงจาก carrier แล้ว")
+    setPlatform(false); setNoclip(false)
+    log("ลงจาก carrier แล้ว (คืน collision/platform)")
 end
 local function makeCarrier()
     ENV.SAE_UNRIDE()
     local h=hrp(); if not h then return false end
+    -- ตัวละครลอยอิสระ (ไม่งั้น Humanoid ยืนพื้น+ขา collision ฝืน carrier = ยืนเฉย)
+    setPlatform(true); setNoclip(true)
     local p=Instance.new("Part")
     p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
-    p.Transparency=1; p.CanCollide=false; p.Massless=true; p.Anchored=false
-    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))   -- ใต้ตัวเรา (ตัวเรานั่งบน)
+    p.Transparency=1; p.CanCollide=false; p.Anchored=true   -- ★ anchored = tween ขยับชัวร์ (แพลตฟอร์มเลื่อน)
+    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))     -- ใต้ตัวเรา
     p.Parent=WS
-    -- weld ตัวเรานั่งบน carrier (ตัวละครขยับตามฟิสิกส์ของ weld ไม่ใช่ set CFrame ตรงๆ = AC ไม่จับ)
     local w=Instance.new("WeldConstraint"); w.Part0=h; w.Part1=p; w.Parent=p
     carrier,carWeld=p,w
     return true
 end
--- ★ tween ที่ตัว "carrier" (object แยก) ไม่ใช่ตัวละคร → ตัวละครไหลตาม weld = ไม่โดนดึง
+-- ★ tween CFrame ของ carrier (anchored) → ตัวละคร weld ไหลตามแบบยืนบนแพลตฟอร์มเลื่อน = ฟิสิกส์ถูก AC ไม่จับ
 local function driveTo(pos, tag)
     if not carrier then if not makeCarrier() then return false end end
     local target=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
-    local startPos=carrier.Position
-    local dist=(target-startPos).Magnitude
+    local dist=(carrier.Position-target).Magnitude
     if dist<CFG.ARRIVE then return true end
-    local dur=dist/CFG.SPEED               -- Linear = ความเร็วคงที่ (เหมือนของจริง vel~545 นิ่ง)
-    local dest=CFrame.new(target)          -- flat (ไม่หมุน) = ตัวละครตั้งตรง
+    local dur=math.max(dist/CFG.SPEED, 0.1)   -- Linear = ความเร็วคงที่
+    local dest=CFrame.new(target)             -- flat (ไม่หมุน) = ตัวละครตั้งตรง
     local tw=TweenService:Create(carrier, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame=dest})
     tw:Play()
-    -- รอจบ (หรือ carrier หาย)
     local t0=os.clock()
     while carrier and carrier.Parent and os.clock()-t0 < dur+2 do
         if (carrier.Position-target).Magnitude<CFG.ARRIVE then break end
