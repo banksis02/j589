@@ -83,6 +83,29 @@ task.spawn(function()
     end
 end)
 
+-- ★ ปิด ObbyAntiTP (passive: SetAttribute + destroy + disconnect — ไม่ hook = ปลอดภัย)
+--   กัน AC ดึงตอน ride velocity → egg ไม่ desync → server ตามตำแหน่งทัน → redeem ได้
+local function killAntiTP()
+    pcall(function() WS:SetAttribute("ClientObbyAntiTp", false) end)
+    local function nuke(root) if not root then return end pcall(function()
+        for _,d in ipairs(root:GetDescendants()) do
+            if d.Name=="ObbyAntiTPClient" and (d:IsA("LocalScript") or d:IsA("ModuleScript")) then pcall(function() d.Disabled=true; d:Destroy() end) end
+        end
+    end) end
+    nuke(player:FindFirstChild("PlayerScripts")); nuke(player.Character)
+    if type(getconnections)=="function" then
+        for _,ev in ipairs({RunService.Heartbeat, RunService.Stepped}) do
+            pcall(function() for _,c in ipairs(getconnections(ev)) do
+                local ok,s=pcall(function() return c.Function and debug.info(c.Function,"s") end)
+                if ok and type(s)=="string" and (s:find("ObbyAntiTP") or s:find("ObbyAntiTp")) then pcall(function() c:Disable() end); pcall(function() c:Disconnect() end) end
+            end end)
+        end
+    end
+end
+task.spawn(function() while ENV.SAE_ALIVE do killAntiTP(); task.wait(3) end end)
+player.CharacterAdded:Connect(function() task.wait(1); killAntiTP() end)
+killAntiTP()
+
 -- carry state
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
@@ -95,7 +118,7 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
 end) end end)
 
 local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true,
-    USE_RIDE=false, RIDE_SPEED=545 }  -- USE_RIDE=false = baseline (เดินเข้าเซฟโซน). เปิด carrier: SAE_RIDE(true)
+    USE_RIDE=true, RIDE_SPEED=545 }  -- ขากลับ = ride velocity (real physics = egg sync). ปิด: SAE_RIDE(false)
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
