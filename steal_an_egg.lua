@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.5"
+local SCRIPT_VERSION = "v1.6"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -37,7 +37,7 @@ local CFG = {
     RARITY      = "",    -- SAE_TIER
     MIN_TIER    = 0,     -- หรือกรองด้วย tier number
     LOOP_GAP    = 0.15,
-    USE_RIDE    = true,  -- ★ ขากลับ(ถือไข่) ใช้ carrier ride แทนบิน (กันยามจับ/desync ตอนฝาก)
+    USE_RIDE    = false, -- default = ขากลับบิน 500 (v1.3 ที่ใช้ได้). เปิด carrier เทส: SAE_RIDE(true)
 }
 local RIDING = false     -- true = ปิด flight controller ชั่วคราว (ให้ carrier คุมแทน)
 local HOME               -- จุดฝาก (SAE_SETHOME) — ประกาศบนสุดเพื่อให้ carrier/flight เห็น
@@ -94,6 +94,36 @@ local function applyBypass()
     pcall(function() Workspace:SetAttribute("ClientObbyAntiTp",false) end)
     installHook(); neuter(); discSig()
     destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character)
+end
+-- ★ DIAG: เช็คว่าบายพาสแต่ละชั้นติดจริงไหม (ถ้าไม่ติด = AC ยังดึง)
+ENV.SAE_DIAG=function()
+    log("═══ DIAG ObbyAntiTP bypass ═══")
+    log("executor funcs: getrawmetatable="..tostring(typeof(getrawmetatable)=="function")
+        .." hookmetamethod="..tostring(typeof(hookmetamethod)=="function")
+        .." getconnections="..tostring(typeof(getconnections)=="function")
+        .." getgc="..tostring(typeof(getgc)=="function")
+        .." hookfunction="..tostring(typeof(hookfunction)=="function"))
+    log("1) PivotTo hook (metaHook) = "..(metaHook and "✅ ติด" or "❌ ไม่ติด (executor ไม่รองรับ __namecall hook)"))
+    log("   Workspace.ClientObbyAntiTp = "..tostring(Workspace:GetAttribute("ClientObbyAntiTp")))
+    -- 2) นับ ObbyAntiTP connections ที่ยังเปิดอยู่
+    local live,disabled=0,0
+    if typeof(getconnections)=="function" then
+        for _,sig in ipairs({RunService.Heartbeat,RunService.Stepped,RunService.RenderStepped}) do
+            pcall(function() for _,c in ipairs(getconnections(sig)) do
+                local f=c.Function; if f then local ok,s=pcall(debug.info,f,"s")
+                    if ok and srcAnti(s) then if c.Enabled==false then disabled=disabled+1 else live=live+1 end end end
+            end end)
+        end
+        log("2) ObbyAntiTP heartbeat conns: ยังเปิด="..live.." ปิดแล้ว="..disabled..(live>0 and "  ⚠️ ยังมีตัวดึงเหลือ!" or "  ✅"))
+    else log("2) getconnections ไม่มี — ปิด connection ไม่ได้") end
+    -- 3) ObbyAntiTPClient เหลือไหม
+    local left=0
+    for _,root in ipairs({player:FindFirstChild("PlayerScripts"),player.Character}) do
+        if root then pcall(function() for _,i in ipairs(root:GetDescendants()) do if i.Name=="ObbyAntiTPClient" then left=left+1 end end end) end
+    end
+    log("3) ObbyAntiTPClient เหลือ = "..left..(left>0 and "  ⚠️" or "  ✅"))
+    log("4) neutered functions = "..(function() local n=0 for _ in pairs(hookF) do n=n+1 end return n end)())
+    log("═══ ถ้า (1) ❌ หรือ (2) ยังเปิด>0 = สาเหตุที่โดนดึง ═══")
 end
 -- ============================================================
 -- ⭐ FLIGHT CONTROLLER (ลูปเดียว คุมตำแหน่งทั้งหมด)
@@ -280,9 +310,8 @@ local function carryOne(e)
         end
     end
 
-    -- ★ ขาไป: tween เร็ว SPEED_OUT ไปไข่ (ทะลุเขต ไม่ถูกดึงกลับ) แล้วค่อยยึดจุดไข่
-    tweenFlyTo(e.pos, CFG.SPEED_OUT)
-    MOVE_GOAL=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)   -- flight controller ถือจุดไข่
+    -- ★ DRIVE-BY (v1.3 ที่ใช้ได้): ตั้งเป้าไปไข่ (flight controller บินให้ @FLY_SPEED) + กด E ทุกเฟรม
+    MOVE_GOAL=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)
     local t0=os.clock()
     while alive() and not carrying and os.clock()-t0<CFG.COLLECT_T do
         tryGrab(e)                       -- กด E ทุกเฟรม (controller บินเข้าหาไข่ให้เอง)
@@ -331,5 +360,5 @@ player.CharacterAdded:Connect(function() task.wait(0.6) if alive() then applyByp
 task.spawn(function() while alive() do task.wait(3) pcall(applyBypass) end end)
 
 log("โหลดแล้ว ✅ v"..SCRIPT_VERSION.." EggState="..(EggState and"✅"or"❌").." Snapshot="..(SNAP and"✅"or"❌"))
-log("⭐ ขาไป+เก็บ = ของเดิมที่ใช้ได้ | ขากลับ = carrier ride (กันยามจับ) — สลับด้วย SAE_RIDE(false)")
+log("⭐ v1.6 = v1.3 ที่ใช้ได้เป๊ะ (flight controller ไป+กลับ 500). carrier ขากลับ = OFF (เปิดเทส SAE_RIDE(true))")
 log("SAE_SETHOME()(กลาง SAFE ZONE) → SAE_TIER('Mythic') → SAE_TAP(1) → SAE_STEAL()")
