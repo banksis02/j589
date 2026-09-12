@@ -239,9 +239,19 @@ local function carryHome()
                 rideTo(Vector3.new((foot+safeDir*45).X, HOME.Y, (foot+safeDir*45).Z), 10) end
         end
         rideCleanup()
-        local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<6 do RunService.Heartbeat:Wait() end
-        if lastClaim<=claimBefore and carrying then crossOnce()   -- fallback
-            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<3 do RunService.Heartbeat:Wait() end
+        local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<3 do RunService.Heartbeat:Wait() end
+        -- ★ โยนทุกวิธีฝาก: crossOnce (CFrame ข้ามเส้น proven) + walk-sync สลับ retry จนฝากได้
+        for i=1,5 do
+            if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+            log("   ↻ ฝาก crossOnce รอบ "..i)
+            crossOnce()
+            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<1.5 do RunService.Heartbeat:Wait() end
+            if lastClaim>claimBefore then break end
+            -- walk-sync เข้า HOME (real position ให้ server เชื่อ)
+            local hv=Vector3.new(HOME.X,HOME.Y,HOME.Z); local t3=os.clock()
+            while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t3<2 do
+                pcall(function() if Move.WalkTo then Move.WalkTo(hv,1,40) end end); RunService.Heartbeat:Wait()
+            end
         end
     else
         gotoPos(HOME, CFG.ARRIVE)                  -- baseline: วาปกลับบ้าน (tween)
@@ -265,6 +275,21 @@ bind("SAE_LIST", function()
     local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
     log("ไข่ในสนาม "..#e.." ใบ:")
     for i=1,math.min(#e,15) do local x=e[i] print(("  #%d [%s t%d] %s @%.0f"):format(i,x.rarity,x.tier,x.cat,x.dist)) end
+end)
+-- ★ TEST: เก็บไข่ "ใกล้สุด" 1 ใบ → ฝาก (พิสูจน์กลไกฝาก แยกจากปัญหายามไล่ไข่ไกล)
+bind("SAE_ONE", function()
+    if not HOME then log("⚠️ SAE_SETHOME() ก่อน (ยืนในเซฟโซน)") return end
+    ENV.SAE_RUN=true
+    task.spawn(function()
+        local e=fieldEggs(); table.sort(e,function(a,b) return a.dist<b.dist end)
+        local tgt=e[1]
+        if not tgt then log("ไม่มีไข่") ENV.SAE_RUN=false return end
+        log(("🧪 TEST ONE: เก็บใบใกล้สุด %s [%s] @%.0f"):format(tgt.cat, tgt.rarity, tgt.dist))
+        if grab(tgt) then
+            log(carryHome() and "✅✅✅ ฝากได้จริง! (กลไกฝากใช้ได้)" or "❌ ฝากไม่ได้ (ดู log ▶ ถึงบ้าน carrying=)")
+        else log("❌ เก็บไม่ติด") end
+        ENV.SAE_RUN=false
+    end)
 end)
 bind("SAE_STOP", function() ENV.SAE_RUN=false log("หยุด") end)
 bind("SAE_KILL", function() ENV.SAE_RUN=false ENV.SAE_ALIVE=false log("ปิดหมด") end)
