@@ -96,7 +96,7 @@ end) end end)
 
 local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true,
     USE_RIDE=false, RIDE_SPEED=545,
-    RETURN_STEP=7 }  -- ★ ขากลับ set CFrame ตัวจริง ทีละ 7 studs/เฟรม (~420/s) = ท่า MIRANDA egg sync
+    RETURN_STEP=6 }  -- ★ ขากลับ set CFrame ตัวจริง คงที่ 6/เฟรม (~350/s) = เท่า MIRANDA (sync+หนียาม)
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -239,9 +239,8 @@ local function cframeReturn(pos, timeout)
         local d=Vector3.new(target.X-cur.X, target.Y-cur.Y, target.Z-cur.Z)
         local m=d.Magnitude
         if m<CFG.ARRIVE then break end
-        -- ★ เร็วช่วงไกล, "ช้าตอนข้ามเส้น SeparationLine" (ให้ egg cross บน server ทัน = claim ติด) + ช้าช่วงถึงบ้าน
-        local nearLine = line and (math.abs(signedSide(cur)) < 45)   -- ใกล้เส้น ±45 = ช้า
-        local step = (nearLine or m<=30) and 1.2 or (CFG.RETURN_STEP or 7)
+        -- ★ คงที่ ~350/s (6/เฟรม) เท่า MIRANDA เป๊ะ — ไม่ช้าไม่เร็วสุด (sync พอ + หนียามทัน)
+        local step=math.min(CFG.RETURN_STEP or 6, m)
         pcall(function() h.CFrame=CFrame.new(cur + d.Unit*step) end)   -- ★ CFrame ตัวจริง = egg sync
         RunService.Heartbeat:Wait()
     end
