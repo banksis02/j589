@@ -201,46 +201,29 @@ local function crossOnce()
     stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
     noclipTemp=false
 end
--- ===== ⭐ CARRIER RIDE (opt-in) = ท่าจริงจาก recon (TeleguiadoGuard): unanchored massless + BodyVelocity ฟิสิกส์ =====
---   carrier ลอยได้ (Massless) + ลากด้วย BodyVelocity (vel~545 physics) → anti-cheat/ยาม มองเป็นเคลื่อนที่ปกติ = ไม่จับ ไม่ตี
-local carrier, carWeld, carBV
+-- ===== ⭐ RIDE = ตั้ง HumanoidRootPart.AssemblyLinearVelocity ตรงๆ (ท่าจริงจาก ride_how recon) =====
+--   recon: Sit=false, ไม่มี mover/carrier/weld, ตัวละครมี vel จริงเอง (ขาไป~1000 ขากลับ~546)
+--   = velocity ฟิสิกส์จริงของตัวเรา → client เป็นเจ้าของ → server sync → ยามจับไม่ได้ ไม่ desync
+--   TeleguiadoGuard (Cerberus) = แค่เพ็ทโชว์ ไม่เกี่ยวการขยับ
 local function rideCleanup()
-    if carBV then pcall(function() carBV:Destroy() end) carBV=nil end
-    if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
-    if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
-    local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h.PlatformStand=false end) end
-    noclipTemp=false
+    local h=hrp(); if h then pcall(function() h.AssemblyLinearVelocity=Vector3.new(0, h.AssemblyLinearVelocity.Y, 0) end) end
 end
-local function rideMake()
-    rideCleanup()
-    local r=hrp(); if not r then return false end
-    local ch=player.Character; local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h then pcall(function() h.PlatformStand=true end) end   -- ผู้โดยสาร ไม่ฝืน
-    noclipTemp=true
-    local p=Instance.new("Part"); p.Name="GGXCarrier"; p.Size=Vector3.new(8,1,8)
-    p.Transparency=1; p.CanCollide=false; p.Massless=true; p.Anchored=false   -- ★ recon: anch=false + massless
-    p.CFrame=CFrame.new(r.Position); p.Parent=WS
-    local w=Instance.new("WeldConstraint"); w.Part0=r; w.Part1=p; w.Parent=p
-    -- ★ BodyVelocity = ขยับด้วยฟิสิกส์ (recon: vel~545) ไม่ใช่ tween/anchored → AC/ยาม ไม่จับ ไม่ตี
-    local bv=Instance.new("BodyVelocity"); bv.MaxForce=Vector3.new(1e9,1e9,1e9); bv.P=1e4; bv.Velocity=Vector3.zero; bv.Parent=p
-    carrier,carWeld,carBV=p,w,bv
-    return true
-end
+local function rideMake() return true end   -- ไม่ต้องสร้างอะไร (ขยับด้วย velocity ตัวเอง)
 local function rideTo(pos, timeout)
-    if not carrier then if not rideMake() then return false end end
-    local target=Vector3.new(pos.X, pos.Y+5, pos.Z)
     local t=os.clock()
-    while ENV.SAE_RUN and carrier and carrier.Parent and carBV do
-        local r=hrp(); if not r then break end
-        local delta=target - r.Position
-        local dist=delta.Magnitude
+    while ENV.SAE_RUN do
+        local h=hrp(); if not h then break end
+        local cur=h.Position
+        local dx,dz = pos.X-cur.X, pos.Z-cur.Z
+        local dist=math.sqrt(dx*dx+dz*dz)
         if dist<6 then break end
-        carBV.Velocity = delta.Unit * CFG.RIDE_SPEED   -- ลากด้วยฟิสิกส์ตรงไปเป้า (รวม Y = ไม่ร่วง)
+        local inv=1/dist
+        local yv=h.AssemblyLinearVelocity.Y                 -- คง Y เดิม (แรงโน้มถ่วง/humanoid คุมพื้น)
+        pcall(function() h.AssemblyLinearVelocity = Vector3.new(dx*inv*CFG.RIDE_SPEED, yv, dz*inv*CFG.RIDE_SPEED) end)
         if os.clock()-t>(timeout or 25) then break end
         RunService.Heartbeat:Wait()
     end
-    if carBV then pcall(function() carBV.Velocity=Vector3.zero end) end
+    rideCleanup()
     return true
 end
 local function carryHome()
