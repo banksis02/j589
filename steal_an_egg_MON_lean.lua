@@ -132,7 +132,10 @@ end
 local carrying = false
 pcall(function() if EggState and EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
+local lastSync=0
 local function fieldEggs()
+    -- ★ ดึงสนามเต็มจาก server (ReadFieldEggs cache มีแต่ไข่ใกล้ตัว = ไม่เห็นไข่ไกล/Mythic)
+    if os.clock()-lastSync>0.8 then lastSync=os.clock(); pcall(function() EggState.SyncFieldEggs() end) end
     local out={}
     local ok,data = pcall(function() return EggState and EggState.ReadFieldEggs() end)
     if ok and type(data)=="table" and type(data.Records)=="table" then
