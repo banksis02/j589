@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.3"
+local SCRIPT_VERSION = "v1.4"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -34,7 +34,11 @@ local CFG = {
     RARITY      = "",    -- SAE_TIER
     MIN_TIER    = 0,     -- หรือกรองด้วย tier number
     LOOP_GAP    = 0.15,
+    USE_RIDE    = true,  -- ★ ขากลับ(ถือไข่) ใช้ carrier ride แทนบิน (กันยามจับ/desync ตอนฝาก)
 }
+local RIDING = false     -- true = ปิด flight controller ชั่วคราว (ให้ carrier คุมแทน)
+local HOME               -- จุดฝาก (SAE_SETHOME) — ประกาศบนสุดเพื่อให้ carrier/flight เห็น
+local carrying, carryUid = false, nil   -- ประกาศบนสุด (rideHome/carryOne ต้องเห็นตัวเดียวกัน)
 
 local function log(t) print("[SAE " .. SCRIPT_VERSION .. "] " .. tostring(t)) end
 local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
@@ -108,17 +112,19 @@ task.spawn(function()
             for _,p in ipairs(ch:GetDescendants()) do
                 if p:IsA("BasePart") and p.CanCollide then pcall(function() p.CanCollide=false end) end
             end
-            if h then pcall(function()
-                h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
-                h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
-            end) end
-            if MOVE_GOAL==nil then MOVE_GOAL=r.Position end
-            local cur=r.Position
-            local d=(MOVE_GOAL-cur).Magnitude
-            local np
-            if d<=CFG.FLY_SPEED*dt or d<1 then np=MOVE_GOAL
-            else np=cur+(MOVE_GOAL-cur).Unit*(CFG.FLY_SPEED*dt) end
-            pcall(function() r.CFrame=CFrame.new(np) end)   -- ทุกเฟรม = ลื่น + ไม่ร่วง
+            if not RIDING then    -- ★ ตอนขี่ carrier: ปล่อยให้ driver คุม CFrame (ไม่แย่งกัน)
+                if h then pcall(function()
+                    h:SetStateEnabled(ST.FallingDown,false); h:SetStateEnabled(ST.Ragdoll,false)
+                    h:SetStateEnabled(ST.PlatformStanding,false); h.PlatformStand=false
+                end) end
+                if MOVE_GOAL==nil then MOVE_GOAL=r.Position end
+                local cur=r.Position
+                local d=(MOVE_GOAL-cur).Magnitude
+                local np
+                if d<=CFG.FLY_SPEED*dt or d<1 then np=MOVE_GOAL
+                else np=cur+(MOVE_GOAL-cur).Unit*(CFG.FLY_SPEED*dt) end
+                pcall(function() r.CFrame=CFrame.new(np) end)   -- ทุกเฟรม = ลื่น + ไม่ร่วง
+            end
         end
     end
 end)
@@ -137,6 +143,59 @@ local function flyTo(pos)
     return false
 end
 local function flyHighTo(pos) return flyTo(pos) end   -- เลิกบินสูง (ยามจับ XZ ไม่สน Y)
+
+-- ============================================================
+-- ⭐ CARRIER RIDE (ขากลับ) — ท่าจากสคริปที่ใช้ได้ (carrier_probe ยืนยัน)
+--   weld ตัวติด Part ล่องหน (Massless/nocollide) → driver ตั้ง CFrame ทีละเฟรม (track ตำแหน่งเอง=ไม่ตก)
+--   ตัวละคร=ผู้โดยสาร ขยับด้วยฟิสิกส์ weld → RigSync/ObbyAntiTP ไม่จับ → ฝากผ่าน
+-- ============================================================
+local carrier, carWeld, curPos, goalPos, rideConn
+local function cleanupCarrier()
+    if rideConn then pcall(function() rideConn:Disconnect() end) rideConn=nil end
+    if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
+    if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
+    curPos=nil; goalPos=nil
+    local h=hum(); if h then pcall(function() h.PlatformStand=false end) end
+end
+local function makeCarrier()
+    cleanupCarrier()
+    local r=hrp(); if not r then return false end
+    local h=hum(); if h then pcall(function() h.PlatformStand=true end) end   -- ลอยอิสระ ไม่ฝืน
+    curPos=r.Position; goalPos=curPos
+    local p=Instance.new("Part")
+    p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
+    p.Transparency=1; p.CanCollide=false; p.Anchored=false
+    p.CFrame=CFrame.new(curPos)
+    p.Parent=Workspace
+    local w=Instance.new("WeldConstraint"); w.Part0=r; w.Part1=p; w.Parent=p
+    carrier,carWeld=p,w
+    rideConn=RunService.Heartbeat:Connect(function()
+        if not carrier or not carrier.Parent or not curPos then return end
+        local g=goalPos or curPos
+        local delta=g-curPos; local dist=delta.Magnitude; local step=CFG.FLY_SPEED/60
+        if dist<=step then curPos=g else curPos=curPos+delta.Unit*step end
+        pcall(function() carrier.CFrame=CFrame.new(curPos) end)   -- ตั้ง Y เอง = ไม่ร่วง
+    end)
+    return true
+end
+-- ขี่ carrier กลับ HOME แล้วลง (ฝาก)
+local function rideHome()
+    if not HOME then return false end
+    RIDING=true                       -- ปิด flight controller ชั่วคราว
+    if not makeCarrier() then RIDING=false; return false end
+    goalPos=Vector3.new(HOME.X, HOME.Y+CFG.STAND_Y, HOME.Z)
+    local t0=os.clock()
+    while alive() and carrier and curPos and (curPos-goalPos).Magnitude>3 do
+        if os.clock()-t0>25 then break end
+        RunService.Heartbeat:Wait()
+    end
+    task.wait(0.3)
+    cleanupCarrier()
+    RIDING=false
+    MOVE_GOAL=(hrp() and hrp().Position) or MOVE_GOAL   -- flight controller ยึดจุดนี้ต่อ
+    local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
+    return not carrying
+end
 
 -- ยิง prompt เก็บ (เฉพาะใกล้ไข่)
 local function firePrompts(pos)
@@ -177,10 +236,8 @@ local function wantEgg(e)
 end
 local function pickTargets() local o={} for _,e in ipairs(getEggs()) do if wantEgg(e) then o[#o+1]=e end end return o end
 
-local carrying,carryUid=false,nil
 pcall(function() if EggState and EggState.CarryChanged and EggState.CarryChanged.Connect then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true carryUid=cs and cs.Uid end) end end)
 
-local HOME
 -- ยิงเก็บ 1 ครั้ง (กด E + CarryFieldEgg)
 local function tryGrab(e)
     pcall(function() if EggState and EggState.CarryFieldEgg then EggState.CarryFieldEgg(e.uid,e.slotKey) end end)
@@ -193,8 +250,10 @@ end
 local function carryOne(e)
     -- ถ้ายังถือไข่ค้างอยู่ เอาไปฝากก่อน
     if carrying and HOME then
-        flyTo(HOME)
-        local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
+        if CFG.USE_RIDE then rideHome() else
+            flyTo(HOME)
+            local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
+        end
     end
 
     -- ★ DRIVE-BY: ตั้งเป้าไปไข่ (controller บินให้) + กด E ทุกเฟรม (ไม่หยุดยืน)
@@ -207,10 +266,14 @@ local function carryOne(e)
     end
     if not carrying then return false end   -- เก็บไม่ติดในเวลา → ข้ามลูกนี้
 
-    -- ★ ไข่ติดแล้ว → หนีกลับ safe zone "ทันที" ความเร็ว 500 (ยามไล่สุด ~120 ตามไม่ทัน)
+    -- ★ ไข่ติดแล้ว → กลับ safe zone
     if HOME then
-        flyTo(HOME)
-        local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
+        if CFG.USE_RIDE then
+            rideHome()   -- ★ ขี่ carrier กลับ (กันยามจับ/desync ตอนฝาก)
+        else
+            flyTo(HOME)  -- โหมดเดิม: บินกลับ 500
+            local t=os.clock(); while alive() and carrying and os.clock()-t<CFG.DEPOSIT_T do task.wait(0.1) end
+        end
     end
     return not carrying
 end
@@ -220,6 +283,7 @@ end
 -- ============================================================
 ENV.SAE_SETHOME=function() local r=hrp() if not r then log("ไม่มีตัว") return end HOME=r.Position log("✅ จำ SAFE ZONE = "..tostring(r.Position).." (ยืนกลางโซนตอนเรียกนะ)") end
 ENV.SAE_TIER=function(n) CFG.RARITY=tostring(n or "") log("ระดับ = "..(CFG.RARITY==""and"ทุกระดับ"or CFG.RARITY)) end
+ENV.SAE_RIDE=function(on) if on==nil then on=not CFG.USE_RIDE end CFG.USE_RIDE=on and true or false log("ขากลับ = "..(CFG.USE_RIDE and "carrier ride" or "บิน 500 (เดิม)")) end
 ENV.SAE_LIST=function() local eggs=getEggs() log("ไข่ = "..#eggs.." (หายากก่อน)") for i=1,math.min(15,#eggs) do local e=eggs[i] log(("  #%d [%s] %s | %s(t%d) dist=%d"):format(i,e.area,e.cat,e.rarity,e.tier,e.dist)) end end
 ENV.SAE_TAP=function(n) n=tonumber(n) or 1 local e=pickTargets()[n] if not e then log("ไม่มีไข่(ตามตัวกรอง)") return end log(("เก็บ #%d [%s] %s %s"):format(n,e.area,e.cat,e.rarity)) local ok=carryOne(e) log(ok and "✅ ได้ไข่+ฝากแล้ว!" or "⚠️ ไม่สำเร็จ (เก็บไม่ติด/ฝากไม่ผ่าน)") end
 ENV.SAE_STEAL=function()
@@ -243,5 +307,5 @@ player.CharacterAdded:Connect(function() task.wait(0.6) if alive() then applyByp
 task.spawn(function() while alive() do task.wait(3) pcall(applyBypass) end end)
 
 log("โหลดแล้ว ✅ v"..SCRIPT_VERSION.." EggState="..(EggState and"✅"or"❌").." Snapshot="..(SNAP and"✅"or"❌"))
-log("⭐ บินสูงข้าม guard (FLY_HEIGHT=70) เก็บไข่ระดับสูงโซนไกลได้")
+log("⭐ ขาไป+เก็บ = ของเดิมที่ใช้ได้ | ขากลับ = carrier ride (กันยามจับ) — สลับด้วย SAE_RIDE(false)")
 log("SAE_SETHOME()(กลาง SAFE ZONE) → SAE_TIER('Mythic') → SAE_TAP(1) → SAE_STEAL()")
