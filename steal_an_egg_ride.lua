@@ -80,29 +80,32 @@ local function makeCarrier()
     setPlatform(true); setNoclip(true)
     local p=Instance.new("Part")
     p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
-    p.Transparency=1; p.CanCollide=false; p.Anchored=true   -- ★ anchored = tween ขยับชัวร์ (แพลตฟอร์มเลื่อน)
-    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))     -- ใต้ตัวเรา
+    p.Transparency=1; p.CanCollide=false; p.Anchored=false   -- unanchored = set CFrame แล้วทั้ง assembly (รวมตัวเรา) ขยับ
+    p.CFrame=CFrame.new(h.Position - Vector3.new(0,3,0))      -- ใต้ตัวเรา
     p.Parent=WS
     local w=Instance.new("WeldConstraint"); w.Part0=h; w.Part1=p; w.Parent=p
     carrier,carWeld=p,w
     return true
 end
--- ★ tween CFrame ของ carrier (anchored) → ตัวละคร weld ไหลตามแบบยืนบนแพลตฟอร์มเลื่อน = ฟิสิกส์ถูก AC ไม่จับ
+-- ★ ขับ carrier ทีละเฟรม (lerp) → ตั้ง carrier.CFrame เอง = ทั้ง assembly (ตัวเรา) ขยับตาม (ฟิสิกส์ weld ไม่ใช่ set CFrame ตัวละคร)
 local function driveTo(pos, tag)
     if not carrier then if not makeCarrier() then return false end end
     local target=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
-    local dist=(carrier.Position-target).Magnitude
-    if dist<CFG.ARRIVE then return true end
-    local dur=math.max(dist/CFG.SPEED, 0.1)   -- Linear = ความเร็วคงที่
-    local dest=CFrame.new(target)             -- flat (ไม่หมุน) = ตัวละครตั้งตรง
-    local tw=TweenService:Create(carrier, TweenInfo.new(dur, Enum.EasingStyle.Linear), {CFrame=dest})
-    tw:Play()
+    local h0=hrp(); local startChar=h0 and h0.Position
     local t0=os.clock()
-    while carrier and carrier.Parent and os.clock()-t0 < dur+2 do
-        if (carrier.Position-target).Magnitude<CFG.ARRIVE then break end
+    while carrier and carrier.Parent do
+        local h=hrp(); if not h then break end
+        local cur=carrier.Position
+        local delta=target-cur
+        local dist=delta.Magnitude
+        if dist<CFG.ARRIVE then break end
+        local step=math.min(CFG.SPEED/60, dist)          -- ต่อเฟรม (~500/60 = 8 studs/เฟรม ต่ำกว่า threshold AC)
+        carrier.CFrame=CFrame.new(cur + delta.Unit*step)  -- ตั้ง CFrame carrier → assembly ตามมา
+        if os.clock()-t0>25 then log("⚠️ "..(tag or "").." timeout"); break end
         RunService.Heartbeat:Wait()
     end
-    pcall(function() tw:Cancel() end)
+    local h1=hrp(); local endChar=h1 and h1.Position
+    if startChar and endChar then log(("   (ตัวละครขยับ %.0f studs)"):format((endChar-startChar).Magnitude)) end
     return true
 end
 
