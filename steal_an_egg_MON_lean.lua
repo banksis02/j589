@@ -1,59 +1,37 @@
 -- ============================================================
--- STEAL AN EGG — SEQ (ใช้ Movement ของ monthonsova = วาปไกลไม่โดนดึงกลับ)
---   ลำดับ: ยืนเซฟโซน → วาปกองแรกหน้าเซฟโซน ยก1ใบ→วาง(ปล่อย) → ไข่เป้าหมาย(tier) อุ้มกลับบ้าน(ฝาก) → วน
---   ★ ขยับไกล = Move.TweenTo (tween+clone ไม่ lagback) | ฝาก = CFrame สั้นๆ ข้ามเส้นตอนถึงบ้าน
+-- STEAL AN EGG — SEQ (บินด้วย BodyVelocity = ไม่โดน ObbyAntiTP ดึงกลับ)
+--   เทคนิคจาก naharsyaifullah: บินฟิสิกส์ (BodyVelocity) แทน CFrame/tween → server เห็นลื่นปกติ
+--   ลำดับ: ยืนเซฟโซน → (ยกไข่มั่วหน้าเซฟโซน 1 ใบ→วาง) → ไข่ไกลระดับสูง → อุ้มกลับบ้าน(ฝากข้ามเส้น) → วน
 -- ============================================================
-local BASE = "https://raw.githubusercontent.com/monthonsova/Steal-An-Egg/HEAD/"
-local ROOT = "Steal-An-Egg/"
-local RunService = game:GetService("RunService")
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
 local WS         = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
 local player     = Players.LocalPlayer
 local ENV = (type(getgenv)=="function" and getgenv()) or _G
 local function log(t) print("[SEQ] "..tostring(t)) end
+local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
+local function hum() local c=player.Character return c and c:FindFirstChildOfClass("Humanoid") end
+local function alive() local h=hum() return h~=nil and h.Health>0 end
 
-assert(type(writefile)=="function", "executor ต้องมี writefile")
-local FILES = {
-    "EggESP.lua","EggESP/init.lua",
-    "EggESP/core/Loader.lua","EggESP/core/Config.lua","EggESP/core/Util.lua","EggESP/core/Diagnostics.lua","EggESP/core/FarmFilters.lua",
-    "EggESP/automation/AutoFarm.lua","EggESP/automation/BasePenAutomation.lua","EggESP/automation/DayCycle.lua","EggESP/automation/GuardZone.lua","EggESP/automation/InventoryManager.lua","EggESP/automation/Movement.lua","EggESP/automation/Passthrough.lua","EggESP/automation/PetAutomation.lua","EggESP/automation/SpeedBypass.lua",
-    "EggESP/esp/BoundingBoxPool.lua","EggESP/esp/BoundingBoxRenderer.lua","EggESP/esp/Controller.lua","EggESP/esp/DataCollector.lua","EggESP/esp/DrawingPool.lua","EggESP/esp/EggData.lua","EggESP/esp/ObstacleData.lua","EggESP/esp/PathService.lua","EggESP/esp/Renderer.lua","EggESP/esp/StackLayout.lua","EggESP/esp/TextLayout.lua","EggESP/esp/TrapData.lua","EggESP/esp/TreadmillData.lua",
-    "EggESP/navigation/Pathfinder.lua",
-    "EggESP/ui/FarmFilterUI.lua","EggESP/ui/Hub.lua","EggESP/ui/VoidUI.lua","EggESP/ui/VoidUIHub.lua","EggESP/ui/void_build.lua",
-}
-local DIRS = { "Steal-An-Egg","Steal-An-Egg/EggESP","Steal-An-Egg/EggESP/core","Steal-An-Egg/EggESP/automation","Steal-An-Egg/EggESP/esp","Steal-An-Egg/EggESP/navigation","Steal-An-Egg/EggESP/ui" }
-for _,d in ipairs(DIRS) do pcall(function() if makefolder then makefolder(d) end end) end
-local ok,fail=0,0
-for _,f in ipairs(FILES) do
-    if not (type(isfile)=="function" and isfile(ROOT..f)) then
-        local o,body=pcall(function() return game:HttpGet(BASE..f) end)
-        if o and type(body)=="string" and #body>0 then pcall(function() writefile(ROOT..f,body) end); ok=ok+1 else fail=fail+1 end
-    else ok=ok+1 end
-end
-if fail>0 then warn("[SEQ] โหลดไฟล์พลาด "..fail.." — รันซ้ำ"); return end
-ENV.__HUB_FORCE_DRAWING=true
-pcall(function() if setthreadidentity then setthreadidentity(8) end end)
-
-local API = loadstring(readfile(ROOT.."EggESP.lua"),"@EggESP")()
-if type(API)~="table" then warn("[SEQ] init ไม่คืน API"); return end
-pcall(function() local c=API.GetConfig().Runtime c.tweenSpeed=500 c.speedBypassOnAutoFarm=false end)
-pcall(function() if API.Modules and API.Modules.DataCollector then API.Modules.DataCollector.Collect=function() return {} end end end)
-
-local Move = API.Modules and API.Modules.Movement
+-- require game modules
 local EggState, Assets
 pcall(function() EggState = require(RS:WaitForChild("Client",10):WaitForChild("EggState",10)) end)
 pcall(function() Assets   = require(RS:WaitForChild("Data",10):WaitForChild("Assets",10)) end)
-print("[SEQ] Move="..tostring(Move~=nil).." EggState="..tostring(EggState~=nil).." Assets="..tostring(Assets~=nil))
-if not Move or not EggState then warn("[SEQ] ❌ ขาด Move/EggState"); return end
-
-local function hrp() return (Move.GetRootPart and Move.GetRootPart()) or (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) end
+log("EggState="..tostring(EggState~=nil).." Assets="..tostring(Assets~=nil))
+if not EggState then warn("[SEQ] ❌ ไม่เจอ EggState"); return end
 
 -- rarity map
 local rarityOf={}
 pcall(function() if Assets and Assets.Directory then for k,e in pairs(Assets.Directory) do local r=e and e.Rarity
     if type(r)=="table" then local info={name=r.DisplayName or "?",tier=r.RarityNumber or 0} rarityOf[tostring(k)]=info if e.Name then rarityOf[tostring(e.Name)]=info end end end end end)
 local function rarityFor(cat) return rarityOf[tostring(cat)] or {name="?",tier=0} end
+
+-- ปิด ObbyAntiTPClient (insurance เบาๆ ไม่ hook __namecall = ไม่เสี่ยง BAC; BodyVelocity ไม่ค่อยโดนอยู่แล้ว)
+local function destroyAnti(root) if not root then return end for _,i in ipairs(root:GetDescendants()) do if i.Name=="ObbyAntiTPClient" and i:IsA("LocalScript") then pcall(function() i.Disabled=true i:Destroy() end) end end end
+pcall(function() WS:SetAttribute("ClientObbyAntiTp",false) end)
+pcall(function() destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character) end)
+player.CharacterAdded:Connect(function() task.wait(0.5); pcall(function() WS:SetAttribute("ClientObbyAntiTp",false) destroyAnti(player:FindFirstChild("PlayerScripts")); destroyAnti(player.Character) end) end)
 
 -- SeparationLine (เส้นแดง SAFE ZONE) — ฝาก = ข้ามเส้น
 local line
@@ -63,30 +41,50 @@ local function signedSide(pos) return (pos-line.Position):Dot(lineNormal()) end
 local HOME = ENV.SAE_HOME or Vector3.new(425,70,-362)
 local SAFE_SIGN = line and ((signedSide(HOME)>=0) and 1 or -1) or 1
 
--- noclip เฉพาะตอนข้ามเส้น (ทะลุกำแพงขอบโซน)
-ENV.SAE_ALIVE=true
-local noclipTemp=false
-task.spawn(function()
-    while ENV.SAE_ALIVE do
-        if noclipTemp then local ch=player.Character if ch then for _,p in ipairs(ch:GetDescendants()) do if p:IsA("BasePart") and p.CanCollide then pcall(function() p.CanCollide=false end) end end end end
-        RunService.Stepped:Wait()
-    end
-end)
-
--- carry state
+local CFG={ SPEED=340, RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+-- ===== บินด้วย BodyVelocity (ฟิสิกส์ = ไม่ lagback) =====
+ENV.SAE_ALIVE=true
+local flyBV
+local function stopFly() if flyBV and flyBV.Parent then pcall(function() flyBV.Velocity=Vector3.new(0,0,0) end) end end
+local function killFly() if flyBV then pcall(function() flyBV:Destroy() end) end flyBV=nil local h=hrp() if h then pcall(function() h.AssemblyLinearVelocity=Vector3.new(0,0,0) end) end end
+local function flyTo(target, timeout, radius)
+    timeout=timeout or 30; radius=radius or CFG.ARRIVE
+    local h=hrp(); local hu=hum(); if not(h and hu) then return false end
+    pcall(function() hu.PlatformStand=false end)
+    if not (flyBV and flyBV.Parent) then
+        flyBV=Instance.new("BodyVelocity"); flyBV.Name="SAE_Fly"; flyBV.MaxForce=Vector3.new(1e7,1e7,1e7); flyBV.P=12500; flyBV.Velocity=Vector3.new(0,0,0); flyBV.Parent=h
+    end
+    local t0=tick(); local lastPos,lastCheck=h.Position,tick()
+    while ENV.SAE_ALIVE and ENV.SAE_RUN~=false and alive() and tick()-t0<timeout do
+        local cur=hrp(); if not cur then break end
+        if not (flyBV and flyBV.Parent) then flyBV=Instance.new("BodyVelocity") flyBV.Name="SAE_Fly" flyBV.MaxForce=Vector3.new(1e7,1e7,1e7) flyBV.P=12500 flyBV.Parent=cur end
+        local flat=Vector3.new(target.X-cur.Position.X,0,target.Z-cur.Position.Z)
+        local dy=target.Y-cur.Position.Y
+        if flat.Magnitude<radius and math.abs(dy)<10 then break end
+        local dir=(flat.Magnitude>0.1) and flat.Unit or Vector3.new(0,0,0)
+        local vy=0; if math.abs(dy)>8 then vy=math.clamp(dy,-18,18) end
+        pcall(function() flyBV.Velocity=Vector3.new(dir.X*CFG.SPEED, vy, dir.Z*CFG.SPEED) end)
+        if tick()-lastCheck>2 then   -- anti-stuck: ขยับน้อยกว่า 6 ใน 2 วิ → ดันขึ้นข้ามสิ่งกีดขวาง
+            if (cur.Position-lastPos).Magnitude<6 then pcall(function() flyBV.Velocity=Vector3.new(dir.X*CFG.SPEED,16,dir.Z*CFG.SPEED) end) end
+            lastPos,lastCheck=cur.Position,tick()
+        end
+        task.wait(0.06)
+    end
+    stopFly()
+    return true
+end
 
--- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
+-- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
 local lastSync=0
 local function fieldEggs()
     if os.clock()-lastSync>0.8 then lastSync=os.clock(); pcall(function() EggState.SyncFieldEggs() end) end
     local out={}
-    local ok2,data=pcall(function() return EggState.ReadFieldEggs() end)
-    if ok2 and type(data)=="table" and type(data.Records)=="table" then
+    local ok,data=pcall(function() return EggState.ReadFieldEggs() end)
+    if ok and type(data)=="table" and type(data.Records)=="table" then
         local h=hrp(); local myPos=(h and h.Position) or Vector3.new()
         for _,rec in pairs(data.Records) do
             if type(rec)=="table" and rec.Uid then
@@ -108,27 +106,8 @@ end
 local function targetEgg()
     local e=fieldEggs(); local o={}
     for _,x in ipairs(e) do if wantTier(x) then o[#o+1]=x end end
-    -- ★ tier สูงสุดก่อน แล้วเอาใบ "ไกลสุด" ของ tier นั้น (ไข่ไกลที่เลือกระดับไว้)
-    table.sort(o,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist>b.dist end)
+    table.sort(o,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist>b.dist end)  -- tier สูง+ไกลสุด
     return o[1]
-end
-
--- ===== MOVE (monthonsova tween = ไม่ lagback) =====
-local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 30
-    local target=Vector3.new(pos.X,pos.Y,pos.Z)
-    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
-    pcall(function() Move.TweenTo(target) end)
-    local t=os.clock()
-    while ENV.SAE_RUN and os.clock()-t<timeout do
-        local r=hrp(); if not r then break end
-        if Move.IsNear(r.Position, target, radius) then return true end
-        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
-        local tweening = Move.IsTweening and Move.IsTweening()
-        if not tweening then pcall(function() Move.TweenTo(target) end) end
-        RunService.Heartbeat:Wait()
-    end
-    return false
 end
 
 -- ===== GRAB / DROP / CARRY-HOME =====
@@ -142,9 +121,9 @@ local function firePrompts(pos)
 end
 local function grab(egg)
     if carrying then return true end
-    local reached=gotoPos(egg.pos, CFG.ARRIVE)
+    local reached=flyTo(egg.pos, 30, CFG.ARRIVE)
     local h=hrp(); local dleft=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
-    if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
+    if dleft>15 then log("   ⚠️ ยังห่างไข่ "..math.floor(dleft).." studs") end
     local t=os.clock()
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
@@ -158,59 +137,54 @@ local function dropHere()
     local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
     return not carrying
 end
--- ข้ามเส้นด้วย CFrame สั้นๆ (near home = ไม่ lagback) → ฝาก
-local function stepCF(target, per)
-    local g=0
-    while g<200 and carrying do g=g+1 local h=hrp() if not h then return end local d=target-h.Position local m=d.Magnitude if m<2 then return end pcall(function() h.CFrame=CFrame.new(h.Position+d.Unit*math.min(m,per)) end) RunService.Heartbeat:Wait() end
-end
+-- ข้ามเส้น (บิน BodyVelocity ฝั่งสนาม→ฝั่งเซฟ) → ฝาก
 local function crossOnce()
     if not line then return end
     local h=hrp(); if not h then return end
     local y=h.Position.Y; local n=lineNormal(); local safeDir=n*SAFE_SIGN
     local foot=h.Position - signedSide(h.Position)*n
-    noclipTemp=true
-    stepCF(Vector3.new((foot-safeDir*18).X,y,(foot-safeDir*18).Z), 7)
-    stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
-    noclipTemp=false
+    flyTo(Vector3.new((foot-safeDir*18).X,y,(foot-safeDir*18).Z), 3, 4)   -- ฝั่งสนาม
+    flyTo(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 4, 4)   -- ข้ามกลับฝั่งเซฟ
 end
 local function carryHome()
-    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween ไกล ไม่ lagback)
+    flyTo(HOME, 30, CFG.ARRIVE)                   -- บินกลับบ้าน (ข้ามเส้น = ฝาก)
     local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
-    local tries=0                                 -- ฝากด้วยการข้ามเส้น (CFrame สั้น)
+    local tries=0
     while carrying and ENV.SAE_RUN and tries<5 do tries=tries+1; crossOnce() end
     return not carrying
 end
 
--- ===== COMMANDS (bind global + getgenv) =====
-local function bind(name, fn) ENV[name]=fn; pcall(function() _G[name]=fn end) end
+-- ===== COMMANDS =====
+local function bind(name,fn) ENV[name]=fn; pcall(function() _G[name]=fn end) end
 bind("SAE_SETHOME", function() local h=hrp(); if h then ENV.SAE_HOME=h.Position; HOME=h.Position; if line then SAFE_SIGN=(signedSide(HOME)>=0) and 1 or -1 end log("ตั้ง HOME="..tostring(h.Position)) end end)
 bind("SAE_TIER", function(x) CFG.RARITY=x or ""; log("target tier = "..(CFG.RARITY=="" and "ทุกระดับ(สูงสุดก่อน)" or CFG.RARITY)) end)
 bind("SAE_PRIME", function(b) CFG.PRIME=(b==true); log("ยกไข่มั่วหน้าเซฟโซนก่อน = "..tostring(CFG.PRIME)) end)
+bind("SAE_SPEED", function(s) CFG.SPEED=math.clamp(tonumber(s) or 340,16,1000); log("speed="..CFG.SPEED) end)
 bind("SAE_LIST", function()
     local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
     log("ไข่ในสนาม "..#e.." ใบ:")
     for i=1,math.min(#e,15) do local x=e[i] print(("  #%d [%s t%d] %s @%.0f"):format(i,x.rarity,x.tier,x.cat,x.dist)) end
 end)
-bind("SAE_STOP", function() ENV.SAE_RUN=false log("หยุด") end)
-bind("SAE_KILL", function() ENV.SAE_RUN=false ENV.SAE_ALIVE=false log("ปิดหมด") end)
+bind("SAE_STOP", function() ENV.SAE_RUN=false stopFly() log("หยุด") end)
+bind("SAE_KILL", function() ENV.SAE_RUN=false ENV.SAE_ALIVE=false killFly() log("ปิดหมด") end)
 bind("SAE_START", function()
     ENV.SAE_RUN=true; log("▶️ START (หยุด SAE_STOP)")
     task.spawn(function()
         while ENV.SAE_RUN and ENV.SAE_ALIVE do
-            gotoPos(HOME, CFG.ARRIVE)                 -- ① ยืนเซฟโซน
-            if CFG.PRIME then                         -- ② (ปิดไว้) ยกไข่มั่ว 1 ใบหน้าเซฟโซนแล้ววาง — SAE_PRIME(true) เปิด
+            flyTo(HOME, 30, CFG.ARRIVE)               -- ① ยืนเซฟโซน
+            if CFG.PRIME then                          -- ② ยกไข่มั่วกองแรกหน้าเซฟโซน → วาง
                 local first=frontEgg()
                 if first then log("① กองแรกหน้าเซฟโซน: "..first.cat); if grab(first) then dropHere() end end
             end
-            local tgt=targetEgg()                     -- ③ ไข่ไกลระดับสูงสุด → อุ้มกลับบ้าน(ฝาก)
+            local tgt=targetEgg()                      -- ③ ไข่ไกลระดับสูง → อุ้มกลับบ้าน(ฝาก)
             if tgt then
                 log("② เป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."] @"..math.floor(tgt.dist))
                 if grab(tgt) then log(carryHome() and "  ✅ ฝากเข้าบ้านแล้ว!" or "  ⚠️ ฝากไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด/ไปไม่ถึง") end
             else log("ไม่มีไข่ตรง tier"); task.wait(1) end
             task.wait(CFG.LOOP_GAP)
         end
-        log("⏹️ หยุดลูป")
+        stopFly(); log("⏹️ หยุดลูป")
     end)
 end)
 
-log("✅ พร้อม! ยืนกลางเซฟโซน → SAE_SETHOME() → SAE_TIER(\"Mythic\") → SAE_START()   (ดูไข่: SAE_LIST())")
+log("✅ พร้อม! ยืนกลางเซฟโซน → SAE_SETHOME() → SAE_TIER(\"Mythic\") → SAE_START()   (ดูไข่: SAE_LIST() | speed: SAE_SPEED(400))")
