@@ -239,8 +239,9 @@ local function cframeReturn(pos, timeout)
         local d=Vector3.new(target.X-cur.X, target.Y-cur.Y, target.Z-cur.Z)
         local m=d.Magnitude
         if m<CFG.ARRIVE then break end
-        -- ★ เร็วช่วงไกล, ช้าช่วง 30 studs สุดท้าย (ให้ egg server sync ทันก่อนถึงจุดฝาก = MIRANDA ทำ)
-        local step = (m>30) and (CFG.RETURN_STEP or 7) or 1.5
+        -- ★ เร็วช่วงไกล, "ช้าตอนข้ามเส้น SeparationLine" (ให้ egg cross บน server ทัน = claim ติด) + ช้าช่วงถึงบ้าน
+        local nearLine = line and (math.abs(signedSide(cur)) < 45)   -- ใกล้เส้น ±45 = ช้า
+        local step = (nearLine or m<=30) and 1.2 or (CFG.RETURN_STEP or 7)
         pcall(function() h.CFrame=CFrame.new(cur + d.Unit*step) end)   -- ★ CFrame ตัวจริง = egg sync
         RunService.Heartbeat:Wait()
     end
