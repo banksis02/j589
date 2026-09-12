@@ -86,6 +86,13 @@ end)
 -- carry state
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
+-- ★ ฝากสำเร็จ "จริง" = RedeemVerdict (FieldClaimed) ยิงเท่านั้น (carrying=false เฉยๆ = คืนรังก็ได้)
+local lastClaim, lastClaimInfo, totalGot = 0, "", 0
+pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(function(info)
+    lastClaim=os.clock(); totalGot=totalGot+1
+    lastClaimInfo=(type(info)=="table" and ((info.DisplayName or "?").." ["..(info.Rarity or "?").."]")) or "?"
+    log("   🎉🎉 ได้ไข่จริง #"..totalGot..": "..lastClaimInfo)
+end) end end)
 
 local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
@@ -194,11 +201,16 @@ local function crossOnce()
     noclipTemp=false
 end
 local function carryHome()
-    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween ไกล ไม่ lagback)
-    local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
-    local tries=0                                 -- ฝากด้วยการข้ามเส้น (CFrame สั้น)
-    while carrying and ENV.SAE_RUN and tries<5 do tries=tries+1; crossOnce() end
-    return not carrying
+    local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
+    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween)
+    local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
+    -- ★ เดินจริงเข้า safe zone (server เห็นการข้ามเส้นจริง = ฝากได้) — เหมือน walk-sync ตอน grab ที่เวิร์ก
+    local t=os.clock()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
+        pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
+        RunService.Heartbeat:Wait()
+    end
+    return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
 -- ===== COMMANDS (bind global + getgenv) =====
@@ -225,7 +237,7 @@ bind("SAE_START", function()
             local tgt=targetEgg()                     -- ③ ไข่ไกลระดับสูงสุด → อุ้มกลับบ้าน(ฝาก)
             if tgt then
                 log("② เป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."] @"..math.floor(tgt.dist))
-                if grab(tgt) then log(carryHome() and "  ✅ ฝากเข้าบ้านแล้ว!" or "  ⚠️ ฝากไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด/ไปไม่ถึง") end
+                if grab(tgt) then log(carryHome() and "  ✅✅ ได้ไข่จริง!" or "  ❌ ไม่ได้จริง (ไข่คืนรัง/Delivery failed)") else log("  ⚠️ อุ้มไม่ติด/ไปไม่ถึง") end
             else log("ไม่มีไข่ตรง tier"); task.wait(1) end
             task.wait(CFG.LOOP_GAP)
         end
