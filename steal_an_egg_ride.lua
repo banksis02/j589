@@ -1,19 +1,33 @@
 -- ============================================================
--- STEAL AN EGG — RIDE GUARD TEST (ทดสอบขี่ยาม = ให้ server ขยับเรา ไม่ desync)
--- weld ตัวติดยาม (guard = server-controlled) → ยามพาเราไป = anti-cheat ไม่จับ
--- SAE_RIDE() = ขี่ยามใกล้สุด | SAE_UNRIDE() = ลง | SAE_RGUARDS() = ดูยามในแมพ
+-- STEAL AN EGG — CARRIER RIDE (ท่าจริงจากสคริปที่ใช้ได้ — decode ด้วย carrier_probe)
+-- สูตรจริง (ไม่ใช่ยาม AI / ไม่ teleport / ไม่ tween CFrame):
+--   1) สร้าง CARRIER = Part ล่องหน (Massless, CanCollide=false, Transparency=1) ไม่มี Humanoid
+--   2) weld ตัวเรา (HRP) นั่งบน carrier
+--   3) ลาก carrier ด้วย BodyVelocity (ฟิสิกส์ ~500) → anti-cheat มองเป็นเคลื่อนที่ปกติ ไม่จับ ไม่ desync
+--   ตัวเรา = ผู้โดยสารน้ำหนักตาย → ไม่มี AI ไล่ ไม่โดนตี
+-- cmd: SAE_SETHOME() จำจุดฝาก | SAE_AUTORIDE() ไป-เก็บ-กลับ-ฝาก อัตโนมัติ
+--      SAE_RIDEOUT(far) ไปไข่ | SAE_RIDEHOME() กลับ | SAE_UNRIDE() ลง
 -- ============================================================
-local Players = game:GetService("Players")
-local WS      = game:GetService("Workspace")
-local RS      = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local player  = Players.LocalPlayer
-local ENV = (type(getgenv)=="function" and getgenv()) or _G
+local Players=game:GetService("Players")
+local WS=game:GetService("Workspace")
+local RS=game:GetService("ReplicatedStorage")
+local RunService=game:GetService("RunService")
+local player=Players.LocalPlayer
+local ENV=(type(getgenv)=="function" and getgenv()) or _G
 local function log(t) print("[RIDE] "..tostring(t)) end
 local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
 local function P(v) return v and ("(%.0f,%.0f,%.0f)"):format(v.X,v.Y,v.Z) or "?" end
 
--- EggState (สำหรับเก็บไข่เพื่อล่อยามให้ไล่)
+-- ───────── config ─────────
+local CFG = {
+    SPEED   = 500,     -- ความเร็ว carrier (studs/s) — ฟิสิกส์ ไม่ใช่วาป
+    HOVER   = 8,       -- ลอยเหนือเป้า/พื้น กี่ studs
+    ARRIVE  = 8,       -- ถึงเมื่อห่าง < นี่
+    GRAB_T  = 6,       -- เวลา spam เก็บไข่สูงสุด
+    HOME    = nil,     -- จุดฝาก (SAE_SETHOME) — default = จุดปัจจุบันตอนโหลด
+}
+
+-- ───────── EggState (เก็บไข่) ─────────
 local EggState; pcall(function() EggState=require(RS:WaitForChild("Client",10):WaitForChild("EggState",10)) end)
 local carrying=false
 pcall(function() if EggState and EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
@@ -21,8 +35,9 @@ local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAr
 local function pickEgg(farthest)
     if not EggState then return nil end
     local best,bd=nil, farthest and -1 or 1e9
-    local ok,data=pcall(function() EggState.SyncFieldEggs(); return EggState.ReadFieldEggs() end)
-    if ok and type(data)=="table" and type(data.Records)=="table" then
+    local ok=pcall(function() EggState.SyncFieldEggs() end)
+    local data; pcall(function() data=EggState.ReadFieldEggs() end)
+    if type(data)=="table" and type(data.Records)=="table" then
         local h=hrp(); local myPos=(h and h.Position) or Vector3.new()
         for _,rec in pairs(data.Records) do
             if type(rec)=="table" and typeof(rec.BoundsCFrame)=="CFrame" then
@@ -34,73 +49,55 @@ local function pickEgg(farthest)
     return best
 end
 
--- หายามทั้งหมด (มี Humanoid+HRP)
-local function allGuards()
-    local out={}
-    local function scan(root) if not root then return end pcall(function()
-        for _,m in ipairs(root:GetDescendants()) do
-            if m:IsA("Model") and m:FindFirstChildOfClass("Humanoid") then
-                local gh=m:FindFirstChild("HumanoidRootPart") or (m.PrimaryPart)
-                if gh and m~=player.Character then out[#out+1]={model=m,root=gh} end
-            end
-        end
-    end) end
-    scan(WS:FindFirstChild("_Guards"))
-    local a=WS:FindFirstChild("__OBJECTS"); a=a and a:FindFirstChild("Areas"); a=a and a:FindFirstChild("GuardAreas")
-    scan(a)
-    return out
-end
-local function nearestGuard()
-    local h=hrp(); if not h then return nil end
-    local best,bd=nil,1e9
-    for _,g in ipairs(allGuards()) do
-        local ok,d=pcall(function() return (g.root.Position-h.Position).Magnitude end)
-        if ok and d<bd then bd=d; best=g end
-    end
-    return best,bd
-end
-
-ENV.SAE_RGUARDS=function()
-    local gs=allGuards(); log("ยามในแมพ "..#gs.." ตัว:")
-    local h=hrp()
-    for i,g in ipairs(gs) do if i<=12 then local d=h and (g.root.Position-h.Position).Magnitude or -1
-        print(("  #%d %s @%s ห่าง %.0f"):format(i, g.model:GetFullName():gsub("Workspace%.",""), P(g.root.Position), d)) end end
-end
-
-local rideWeld, rideConn
+-- ───────── CARRIER (พาหนะล่องหน + BodyVelocity) ─────────
+local carrier, carWeld, carBV
 ENV.SAE_UNRIDE=function()
-    if rideConn then pcall(function() rideConn:Disconnect() end) rideConn=nil end
-    if rideWeld then pcall(function() rideWeld:Destroy() end) rideWeld=nil end
-    log("ลงจากยามแล้ว")
+    if carBV then pcall(function() carBV:Destroy() end) carBV=nil end
+    if carWeld then pcall(function() carWeld:Destroy() end) carWeld=nil end
+    if carrier then pcall(function() carrier:Destroy() end) carrier=nil end
+    log("ลงจาก carrier แล้ว")
 end
-ENV.SAE_RIDE=function()
+local function makeCarrier()
     ENV.SAE_UNRIDE()
-    local g,d=nearestGuard()
-    if not g then log("❌ ไม่เจอยาม"); return end
-    log("🐴 ขี่ยาม "..g.model.Name.." (ห่าง "..math.floor(d)..") — weld ตัวติด")
-    local h=hrp(); if not h then return end
-    -- วิธี 1: weld HRP ติดยาม (บนหัวยาม) → ยาม(server)ขยับ = เราขยับตาม
-    local w=Instance.new("Weld")
-    w.Part0=g.root; w.Part1=h
-    -- ★ "แครอทหน้าจมูกยาม": front ของ Roblox = −Z → offset −14 = อยู่ "ข้างหน้า" ยาม
-    -- ยามเห็นเป้า(เรา)อยู่ข้างหน้าตลอด → วิ่งไล่ไปข้างหน้าเรื่อยๆ พาเราไป + XZ 14>10 ตีไม่ถึง
-    w.C0=CFrame.new(0, 2, -14)
-    w.Parent=g.root
-    rideWeld=w
-    -- log ตำแหน่งทุก 0.5s ดูว่ายามพาไปไหน + Y สูงขึ้น (บนยาม) + ไม่ดึงกลับ
-    local t0=os.clock(); local lastLog=0
-    rideConn=RunService.Heartbeat:Connect(function()
-        if os.clock()-lastLog>0.5 then lastLog=os.clock()
-            local hh=hrp(); local gr=g.root
-            if hh and gr and gr.Parent then
-                local st = g.model:GetAttribute("GuardState") or "?"
-                local tp = g.model:GetAttribute("TargetPlayer") or ""
-                log(("t+%.0fs เรา %s | ยาม %s | สถานะ=%s target=%s"):format(os.clock()-t0, P(hh.Position), P(gr.Position), tostring(st), tostring(tp)))
-            else log("ยาม/ตัวหาย → ลง"); ENV.SAE_UNRIDE() end
-        end
-    end)
+    local h=hrp(); if not h then return false end
+    local p=Instance.new("Part")
+    p.Name="GGXCarrier"; p.Size=Vector3.new(6,1,6)
+    p.Transparency=1; p.CanCollide=false; p.Massless=true; p.Anchored=false
+    p.CFrame=CFrame.new(h.Position)   -- ใต้ตัวเรา
+    p.Parent=WS
+    -- weld ตัวเรานั่งบน carrier
+    local w=Instance.new("WeldConstraint"); w.Part0=h; w.Part1=p; w.Parent=p
+    -- BodyVelocity ลากทั้งชุด (ฟิสิกส์ ไม่ teleport)
+    local bv=Instance.new("BodyVelocity")
+    bv.MaxForce=Vector3.new(1e9,1e9,1e9); bv.P=1e4; bv.Velocity=Vector3.zero; bv.Parent=p
+    carrier,carWeld,carBV=p,w,bv
+    return true
 end
--- ★ AUTO: เก็บไข่ใกล้สุด (ล่อยามให้ไล่) → ขี่ยามอัตโนมัติ → ดูยามพาไปไหน
+-- ลาก carrier ไปจุดหมายด้วยความเร็วคงที่ (ฟิสิกส์) จนถึง
+local function driveTo(pos, tag)
+    if not carrier or not carBV then if not makeCarrier() then return false end end
+    local target=Vector3.new(pos.X, pos.Y+CFG.HOVER, pos.Z)
+    local t0=os.clock(); local stuckT=os.clock(); local lastP
+    while carrier and carrier.Parent do
+        local h=hrp(); if not h then break end
+        local cur=h.Position
+        local delta=target-cur
+        local dist=delta.Magnitude
+        if dist<CFG.ARRIVE then break end
+        carBV.Velocity = delta.Unit*CFG.SPEED
+        -- anti-stuck: ถ้าไม่ขยับ 2 วิ ดันขึ้น
+        if lastP and (cur-lastP).Magnitude<2 then
+            if os.clock()-stuckT>2 then carBV.Velocity=carBV.Velocity+Vector3.new(0,CFG.SPEED*0.6,0); stuckT=os.clock() end
+        else stuckT=os.clock() end
+        lastP=cur
+        if os.clock()-t0>20 then log("⚠️ "..(tag or "").." timeout"); break end
+        RunService.Heartbeat:Wait()
+    end
+    if carBV then carBV.Velocity=Vector3.zero end
+    return true
+end
+
+-- ───────── prompts (เผื่อไข่ต้องกด E) ─────────
 local function firePrompts(pos)
     if typeof(fireproximityprompt)~="function" then return end
     for _,c in ipairs(WS:GetChildren()) do
@@ -109,38 +106,52 @@ local function firePrompts(pos)
         end
     end
 end
--- tween ไปจุด (TweenService ลื่น — ไม่วาป)
-local TweenService=game:GetService("TweenService")
-local function tweenTo(pos, speed)
-    speed=speed or 120        -- studs/วิ (ยิ่งน้อยยิ่งลื่นช้า; ไม่ใช่วาป)
-    local h=hrp(); if not h then return false end
-    local dest=CFrame.new(pos.X, pos.Y+3, pos.Z)
-    local d=(dest.Position-h.Position).Magnitude
-    if d<6 then return true end
-    local tw=TweenService:Create(h, TweenInfo.new(d/speed, Enum.EasingStyle.Linear), {CFrame=dest})  -- ★ ไม่ cap = ลื่นจริง
-    tw:Play(); tw.Completed:Wait()
-    return true
+
+-- ───────── commands ─────────
+ENV.SAE_SETHOME=function()
+    local h=hrp(); if not h then log("❌ ไม่เจอตัว"); return end
+    CFG.HOME=h.Position
+    log("🏠 จำจุดฝาก = "..P(CFG.HOME))
 end
--- ★ AUTO: tween ไปไข่ไกลสุด → เก็บ (ล่อยาม) → ขี่ยาม (ไม่วาป)
-ENV.SAE_AUTORIDE=function()
-    ENV.SAE_UNRIDE()
-    local egg=pickEgg(true)
-    if not egg then log("❌ ไม่เจอไข่"); return end
-    log("① tween ไปไข่ไกลสุด @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
-    tweenTo(egg.pos, 250)
-    log("② เก็บไข่ (ล่อยาม)")
+ENV.SAE_RIDEOUT=function(far)
+    if far==nil then far=true end
+    local egg=pickEgg(far)
+    if not egg then log("❌ ไม่เจอไข่"); return nil end
+    log("① ขี่ carrier ไปไข่"..(far and "ไกลสุด" or "ใกล้สุด").." @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
+    makeCarrier()
+    driveTo(egg.pos,"ไป")
+    log("② ถึงไข่ → spam เก็บ")
     local t=os.clock()
-    while not carrying and os.clock()-t<6 do
+    while not carrying and os.clock()-t<CFG.GRAB_T do
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
         firePrompts(egg.pos)
         RunService.Heartbeat:Wait()
     end
-    log(carrying and "③ เก็บได้ → ขี่ยาม" or "③ เก็บไม่ติด แต่ลองขี่ยามใกล้สุดดู")
-    task.wait(0.4)
-    ENV.SAE_RIDE()
+    log(carrying and "③ เก็บไข่ติดแล้ว ✅" or "③ ⚠️ เก็บไม่ติด (ลองต่อ)")
+    return egg
+end
+ENV.SAE_RIDEHOME=function()
+    local home=CFG.HOME
+    if not home then log("❌ ยังไม่ตั้งบ้าน — SAE_SETHOME() ตอนยืนจุดฝากก่อน"); return end
+    log("④ ขี่ carrier กลับบ้าน @"..P(home))
+    if not carrier then makeCarrier() end
+    driveTo(home,"กลับ")
+    log("⑤ ถึงบ้าน → ลงจาก carrier (ฝากไข่)")
+    task.wait(0.2)
+    ENV.SAE_UNRIDE()
+    task.wait(0.6)
+    log(carrying and "⚠️ ยังถือไข่อยู่ (ฝากไม่ผ่าน?)" or "✅ ฝากไข่แล้ว (ปล่อยไข่)")
+end
+ENV.SAE_AUTORIDE=function(far)
+    if not CFG.HOME then CFG.HOME=(hrp() and hrp().Position) or nil; log("(ใช้จุดปัจจุบันเป็นบ้าน — ควร SAE_SETHOME ตอนยืนจุดฝาก)") end
+    local egg=ENV.SAE_RIDEOUT(far)
+    if not egg then ENV.SAE_UNRIDE(); return end
+    ENV.SAE_RIDEHOME()
 end
 
-pcall(function() for _,n in ipairs({"SAE_RIDE","SAE_UNRIDE","SAE_RGUARDS","SAE_AUTORIDE"}) do _G[n]=ENV[n] end end)
+if not CFG.HOME then CFG.HOME=(hrp() and hrp().Position) end
+pcall(function() for _,n in ipairs({"SAE_SETHOME","SAE_RIDEOUT","SAE_RIDEHOME","SAE_AUTORIDE","SAE_UNRIDE"}) do _G[n]=ENV[n] end end)
 
-log("✅ พร้อม — SAE_AUTORIDE() = เก็บไข่+ขี่ยามอัตโนมัติ | SAE_RGUARDS() ดูยาม | SAE_UNRIDE() ลง")
-log("ทดสอบ: SAE_AUTORIDE() แล้วดู log ว่ายาม(ตอนไล่)พาเราไปไหน")
+log("✅ พร้อม (carrier ride — ฟิสิกส์ ไม่วาป ไม่โดนตี)")
+log("1) ยืนจุดฝาก → SAE_SETHOME()   2) SAE_AUTORIDE() = ไป-เก็บ-กลับ-ฝาก")
+log("ค่า: SPEED="..CFG.SPEED.." HOVER="..CFG.HOVER.." | บ้าน="..P(CFG.HOME))
