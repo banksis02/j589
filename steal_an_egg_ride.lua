@@ -15,9 +15,32 @@ local RS=game:GetService("ReplicatedStorage")
 local RunService=game:GetService("RunService")
 local player=Players.LocalPlayer
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
-local function log(t) print("[RIDE] "..tostring(t)) end
+local monBuf={}
+local function log(t) print("[RIDE] "..tostring(t)); monBuf[#monBuf+1]="[RIDE] "..tostring(t)
+    local txt=table.concat(monBuf,"\n"); for _,fn in ipairs({setclipboard,toclipboard,writeclipboard}) do if type(fn)=="function" and pcall(fn,txt) then break end end end
 local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
 local function P(v) return v and ("(%.0f,%.0f,%.0f)"):format(v.X,v.Y,v.Z) or "?" end
+
+-- ───────── lagback monitor (จับว่าโดนดึงตอนขั้นไหน) ─────────
+local PHASE="idle"
+task.spawn(function()
+    local last, lastLog=nil,0
+    while true do
+        local h=hrp()
+        if h then
+            local pos=h.Position
+            if last then
+                local d=(pos-last).Magnitude
+                -- โดนดึง = กระโดดถอยเยอะใน 1 เฟรม (>60 studs) ตอนไม่ได้สั่งไปไกล
+                if d>60 then log(("⚠️ โดนดึง/กระตุก %.0f studs! ขั้น=%s %s→%s"):format(d, PHASE, P(last), P(pos))) end
+            end
+            last=pos
+            if os.clock()-lastLog>0.3 then lastLog=os.clock()
+                log(("· [%s] %s"):format(PHASE, P(pos))) end
+        end
+        task.wait(0.06)
+    end
+end)
 
 -- ───────── config ─────────
 local CFG = {
@@ -150,8 +173,10 @@ ENV.SAE_RIDEOUT=function(far)
     local egg=pickEgg(far)
     if not egg then log("❌ ไม่เจอไข่"); return nil end
     log("① tween ไปไข่"..(far and "ไกลสุด" or "ใกล้สุด").." @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
+    PHASE="ขาไป-tween"
     tweenTo(egg.pos, CFG.SPEED)   -- ขาไป = tween ตรงๆ (เหมือนเดิม ไม่ carrier)
     log("② ถึงไข่ → spam เก็บ")
+    PHASE="เก็บไข่"
     local t=os.clock()
     while not carrying and os.clock()-t<CFG.GRAB_T do
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
@@ -165,9 +190,11 @@ ENV.SAE_RIDEHOME=function()
     local home=CFG.HOME
     if not home then log("❌ ยังไม่ตั้งบ้าน — SAE_SETHOME() ตอนยืนจุดฝากก่อน"); return end
     log("④ ขี่ carrier กลับบ้าน @"..P(home))
+    PHASE="ขากลับ-carrier"
     makeCarrier()
     driveCarrierTo(home,"กลับ")
     log("⑤ ถึงบ้าน → ลงจาก carrier (ฝากไข่)")
+    PHASE="ฝาก"
     task.wait(0.2)
     ENV.SAE_UNRIDE()
     task.wait(0.6)
