@@ -107,21 +107,38 @@ local function firePrompts(pos)
         end
     end
 end
+-- tween ไปจุด (TweenService ลื่น — ไม่วาป)
+local TweenService=game:GetService("TweenService")
+local function tweenTo(pos, speed, timeout)
+    speed=speed or 200; timeout=timeout or 30
+    local h=hrp(); if not h then return false end
+    local dest=CFrame.new(pos.X, pos.Y+3, pos.Z)
+    local t=os.clock()
+    while os.clock()-t<timeout do
+        h=hrp(); if not h then return false end
+        local d=(dest.Position-h.Position).Magnitude
+        if d<6 then return true end
+        local tw=TweenService:Create(h, TweenInfo.new(math.min(d/speed,0.5), Enum.EasingStyle.Linear), {CFrame=dest})
+        tw:Play(); tw.Completed:Wait()
+    end
+    return false
+end
+-- ★ AUTO: tween ไปไข่ไกลสุด → เก็บ (ล่อยาม) → ขี่ยาม (ไม่วาป)
 ENV.SAE_AUTORIDE=function()
     ENV.SAE_UNRIDE()
-    local egg=pickEgg(true)   -- ★ ไข่ไกลสุด (ที่ปัญหาอยู่จริง)
+    local egg=pickEgg(true)
     if not egg then log("❌ ไม่เจอไข่"); return end
-    log("① วาปไปเก็บไข่ไกลสุด @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0).." — ล่อยาม)")
-    -- วาปไป + spam เก็บ (แค่ให้ยามตื่น พอ)
+    log("① tween ไปไข่ไกลสุด @"..P(egg.pos).." (ห่าง "..math.floor(egg.dist or 0)..")")
+    tweenTo(egg.pos, 250)
+    log("② เก็บไข่ (ล่อยาม)")
     local t=os.clock()
-    while not carrying and os.clock()-t<8 do
-        local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(egg.pos.X, egg.pos.Y+3, egg.pos.Z) end) end
+    while not carrying and os.clock()-t<6 do
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
         firePrompts(egg.pos)
         RunService.Heartbeat:Wait()
     end
-    if not carrying then log("⚠️ เก็บไข่ไม่ติด (ยามอาจยังไม่ไล่) — ขี่ยามใกล้สุดเลย") else log("② เก็บได้ → ยามน่าจะไล่ → ขี่ยาม") end
-    task.wait(0.5)
+    log(carrying and "③ เก็บได้ → ขี่ยาม" or "③ เก็บไม่ติด แต่ลองขี่ยามใกล้สุดดู")
+    task.wait(0.4)
     ENV.SAE_RIDE()
 end
 
