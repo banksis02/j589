@@ -5,12 +5,34 @@
 -- ============================================================
 local Players = game:GetService("Players")
 local WS      = game:GetService("Workspace")
+local RS      = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local player  = Players.LocalPlayer
 local ENV = (type(getgenv)=="function" and getgenv()) or _G
 local function log(t) print("[RIDE] "..tostring(t)) end
 local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
 local function P(v) return v and ("(%.0f,%.0f,%.0f)"):format(v.X,v.Y,v.Z) or "?" end
+
+-- EggState (สำหรับเก็บไข่เพื่อล่อยามให้ไล่)
+local EggState; pcall(function() EggState=require(RS:WaitForChild("Client",10):WaitForChild("EggState",10)) end)
+local carrying=false
+pcall(function() if EggState and EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
+local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
+local function nearestFieldEgg()
+    if not EggState then return nil end
+    local best,bd=nil,1e9
+    local ok,data=pcall(function() EggState.SyncFieldEggs(); return EggState.ReadFieldEggs() end)
+    if ok and type(data)=="table" and type(data.Records)=="table" then
+        local h=hrp(); local myPos=(h and h.Position) or Vector3.new()
+        for _,rec in pairs(data.Records) do
+            if type(rec)=="table" and typeof(rec.BoundsCFrame)=="CFrame" then
+                local d=(rec.BoundsCFrame.Position-myPos).Magnitude
+                if d<bd then bd=d; best={uid=rec.Uid,pos=rec.BoundsCFrame.Position,slotKey=slotKey(rec)} end
+            end
+        end
+    end
+    return best
+end
 
 -- หายามทั้งหมด (มี Humanoid+HRP)
 local function allGuards()
@@ -76,7 +98,34 @@ ENV.SAE_RIDE=function()
         end
     end)
 end
-pcall(function() for _,n in ipairs({"SAE_RIDE","SAE_UNRIDE","SAE_RGUARDS"}) do _G[n]=ENV[n] end end)
+-- ★ AUTO: เก็บไข่ใกล้สุด (ล่อยามให้ไล่) → ขี่ยามอัตโนมัติ → ดูยามพาไปไหน
+local function firePrompts(pos)
+    if typeof(fireproximityprompt)~="function" then return end
+    for _,c in ipairs(WS:GetChildren()) do
+        if c.Name=="SmartPromptPart" and c:IsA("BasePart") and (c.Position-pos).Magnitude<=22 then
+            for _,p in ipairs(c:GetChildren()) do if p:IsA("ProximityPrompt") then pcall(function() p.Enabled=true p.HoldDuration=0 p.MaxActivationDistance=math.max(p.MaxActivationDistance or 0,60) p.RequiresLineOfSight=false fireproximityprompt(p) end) end end
+        end
+    end
+end
+ENV.SAE_AUTORIDE=function()
+    ENV.SAE_UNRIDE()
+    local egg=nearestFieldEgg()
+    if not egg then log("❌ ไม่เจอไข่"); return end
+    log("① วาปไปเก็บไข่ใกล้สุด @"..P(egg.pos).." (ล่อยาม)")
+    -- วาปไป + spam เก็บ (แค่ให้ยามตื่น พอ)
+    local t=os.clock()
+    while not carrying and os.clock()-t<6 do
+        local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(egg.pos.X, egg.pos.Y+3, egg.pos.Z) end) end
+        pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
+        firePrompts(egg.pos)
+        RunService.Heartbeat:Wait()
+    end
+    if not carrying then log("⚠️ เก็บไข่ไม่ติด (ยามอาจยังไม่ไล่) — ขี่ยามใกล้สุดเลย") else log("② เก็บได้ → ยามน่าจะไล่ → ขี่ยาม") end
+    task.wait(0.5)
+    ENV.SAE_RIDE()
+end
 
-log("✅ พร้อม — SAE_RGUARDS() ดูยาม | SAE_RIDE() ขี่ยามใกล้สุด | SAE_UNRIDE() ลง")
-log("ทดสอบ: SAE_RIDE() แล้วดูว่า 'ตัวเรา' ขยับตามยามไหม + Y สูงขึ้น (บนยาม) + ไม่โดนดึงกลับ")
+pcall(function() for _,n in ipairs({"SAE_RIDE","SAE_UNRIDE","SAE_RGUARDS","SAE_AUTORIDE"}) do _G[n]=ENV[n] end end)
+
+log("✅ พร้อม — SAE_AUTORIDE() = เก็บไข่+ขี่ยามอัตโนมัติ | SAE_RGUARDS() ดูยาม | SAE_UNRIDE() ลง")
+log("ทดสอบ: SAE_AUTORIDE() แล้วดู log ว่ายาม(ตอนไล่)พาเราไปไหน")
