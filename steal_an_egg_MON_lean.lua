@@ -77,7 +77,7 @@ end)
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=false }
+local CFG={ RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -142,7 +142,9 @@ local function firePrompts(pos)
 end
 local function grab(egg)
     if carrying then return true end
-    gotoPos(egg.pos, CFG.ARRIVE)
+    local reached=gotoPos(egg.pos, CFG.ARRIVE)
+    local h=hrp(); local dleft=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
+    if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
     local t=os.clock()
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
         pcall(function() if EggState.CarryFieldEgg then EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
