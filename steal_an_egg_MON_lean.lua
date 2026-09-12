@@ -94,7 +94,7 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
     log("   🎉🎉 ได้ไข่จริง #"..totalGot..": "..lastClaimInfo)
 end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+local CFG={ STAND_Y=3, RARITY="", MIN_TIER=0, GRAB_T=6.0, ARRIVE=8, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -130,22 +130,21 @@ local function targetEgg()
     return o[1]
 end
 
--- ===== MOVE (monthonsova tween = ไม่ lagback) =====
+-- ===== MOVE = วาปทีละครั้ง (single jump = ObbyAntiTP ไม่ punish; ต่อเนื่องทุกเฟรม=โดน) =====
+local function tp(pos) local r=hrp(); if r then pcall(function() r.CFrame=CFrame.new(pos.X, pos.Y+CFG.STAND_Y, pos.Z) end) end end
 local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 30
-    local target=Vector3.new(pos.X,pos.Y,pos.Z)
-    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
-    pcall(function() Move.TweenTo(target) end)
-    local t=os.clock()
+    radius=radius or CFG.ARRIVE; timeout=timeout or 8
+    local target=Vector3.new(pos.X, pos.Y+CFG.STAND_Y, pos.Z)
+    tp(pos)                                        -- ★ วาปครั้งเดียว
+    local t=os.clock(); local lastTp=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
-        if Move.IsNear(r.Position, target, radius) then return true end
-        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
-        local tweening = Move.IsTweening and Move.IsTweening()
-        if not tweening then pcall(function() Move.TweenTo(target) end) end
+        if (r.Position-target).Magnitude<radius then return true end
+        -- ถ้าโดนดึงกลับ (ห่างเป้า) → วาปซ้ำแต่เว้น 1.2s (ไม่ต่อเนื่อง = ไม่โดน punish)
+        if os.clock()-lastTp>1.2 then lastTp=os.clock(); tp(pos) end
         RunService.Heartbeat:Wait()
     end
-    return false
+    local r=hrp(); return r and (r.Position-target).Magnitude<radius+4 or false
 end
 
 -- ===== GRAB / DROP / CARRY-HOME =====
@@ -163,14 +162,12 @@ local function grab(egg)
     local h=hrp(); local dleft=h and (Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)-h.Position).Magnitude or -1
     if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
     log(("   grab: %s [%s] dist=%.0f slotKey=%s"):format(egg.cat, egg.rarity, dleft, tostring(egg.slotKey)))
-    local eggV=Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)
-    local t=os.clock(); local lastReason; local lastReTween=0
+    local eggT=Vector3.new(egg.pos.X, egg.pos.Y+CFG.STAND_Y, egg.pos.Z)
+    local t=os.clock(); local lastReason; local lastTp=os.clock()
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
-        local cur=hrp(); local d=cur and (eggV-cur.Position).Magnitude or 999
-        -- ★ ถ้าตำแหน่งเพี้ยน/ไกล → tween กลับไปที่ไข่ใหม่ (แก้ dist โต 4-5 = "Get closer")
-        if d>CFG.ARRIVE and os.clock()-lastReTween>0.8 then lastReTween=os.clock(); pcall(function() Move.TweenTo(eggV) end) end
-        -- ★ เดินจริงช้าๆ ที่ไข่ = ให้ server เห็นตำแหน่งจริง (แก้ desync)
-        pcall(function() if Move.WalkTo then Move.WalkTo(eggV, 1, 30) end end)
+        local cur=hrp()
+        -- ถ้าโดนดึงห่างไข่ → วาปซ้ำ (เว้น 1s ไม่ต่อเนื่อง)
+        if cur and (eggT-cur.Position).Magnitude>CFG.ARRIVE and os.clock()-lastTp>1 then lastTp=os.clock(); tp(egg.pos) end
         local okc, reason = nil, nil
         pcall(function() if EggState.CarryFieldEgg then okc, reason = EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
         if reason~=nil and reason~=lastReason then log("     ↳ server: "..tostring(reason)); lastReason=reason end
@@ -185,19 +182,19 @@ local function dropHere()
     local t=os.clock(); while carrying and os.clock()-t<1.5 do RunService.Heartbeat:Wait() end
     return not carrying
 end
--- ข้ามเส้นด้วย CFrame สั้นๆ (near home = ไม่ lagback) → ฝาก
-local function stepCF(target, per)
-    local g=0
-    while g<200 and carrying do g=g+1 local h=hrp() if not h then return end local d=target-h.Position local m=d.Magnitude if m<2 then return end pcall(function() h.CFrame=CFrame.new(h.Position+d.Unit*math.min(m,per)) end) RunService.Heartbeat:Wait() end
-end
+-- ข้ามเส้นด้วยวาปทีละครั้ง (ที่บ้าน=นอกเขต ObbyAntiTP=ไม่ดึง) → ฝาก
 local function crossOnce()
     if not line then return end
     local h=hrp(); if not h then return end
     local y=h.Position.Y; local n=lineNormal(); local safeDir=n*SAFE_SIGN
     local foot=h.Position - signedSide(h.Position)*n
+    local fieldNear=Vector3.new((foot-safeDir*18).X, y, (foot-safeDir*18).Z)
+    local safeDeep =Vector3.new((foot+safeDir*40).X, y, (foot+safeDir*40).Z)
     noclipTemp=true
-    stepCF(Vector3.new((foot-safeDir*18).X,y,(foot-safeDir*18).Z), 7)
-    stepCF(Vector3.new((foot+safeDir*40).X,y,(foot+safeDir*40).Z), 7)
+    local h1=hrp(); if h1 then pcall(function() h1.CFrame=CFrame.new(fieldNear) end) end   -- วาปฝั่งสนาม
+    local ta=os.clock(); while os.clock()-ta<0.25 do RunService.Heartbeat:Wait() end        -- ให้ server เห็น
+    local h2=hrp(); if h2 then pcall(function() h2.CFrame=CFrame.new(safeDeep) end) end     -- วาปข้ามเข้าเซฟ
+    local tb=os.clock(); while os.clock()-tb<0.3 do RunService.Heartbeat:Wait() end
     noclipTemp=false
 end
 local function carryHome()
