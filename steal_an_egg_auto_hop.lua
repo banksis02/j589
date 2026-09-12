@@ -12,14 +12,14 @@ return function(context)
         env.SAE_FARM_READY_JOB = host.JobId
         return previous
     end
-    if previous and previous.jobId == host.JobId and previous.version == 10 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 11 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 10, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 11, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -28,7 +28,7 @@ return function(context)
     end
     local function alive() return state.active and env.SAE_AUTO_HOP == state and env.SAE_FARM_READY_JOB ~= host.JobId and env.SAE_VENDOR_JOB ~= host.JobId end
     local function populationReady()
-        if not alive() or state.pending or #players:GetPlayers() > 3 then return end
+        if not alive() or state.pending then return end
         env.SAE_FARM_READY_JOB = host.JobId
         state.stop() -- stop BEFORE vendor code can yield or start farming
         log("[SAE HOP] startup checks complete; hopping locked for this server")
@@ -66,7 +66,7 @@ return function(context)
     end
     local checked = {}
     local function needsHop()
-        if #players:GetPlayers() > 3 then return true end
+        -- Player count alone never triggers hopping.
         for _, other in ipairs(players:GetPlayers()) do
             if other ~= players.LocalPlayer then
                 local name = other.Name
@@ -100,7 +100,7 @@ return function(context)
             scheduler.wait(5)
             if not alive() then return end
             -- Only check on load, not every time someone joins later.
-            log("[SAE HOP] players=" .. #players:GetPlayers() .. "; hop when >3")
+            log("[SAE HOP] players=" .. #players:GetPlayers() .. "; population limit disabled")
             if not safeNeedsHop() then populationReady(); state.stop(); return end
             local player = players.LocalPlayer
             connection = teleport.TeleportInitFailed:Connect(function(who, result, message, place, options)
@@ -125,7 +125,7 @@ return function(context)
                         for _, room in ipairs(page.data) do
                             local count, maximum = tonumber(room.playing), tonumber(room.maxPlayers)
                             if type(room.id) == "string" and room.id ~= "" and room.id ~= host.JobId
-                                and count and count >= 0 and count <= 2 and maximum and count < maximum
+                                and count and count >= 0 and maximum and count < maximum
                                 and not seen[room.id] and not state.tried[room.id] then
                                 seen[room.id] = true
                                 table.insert(candidates, {id = room.id, playing = count})
