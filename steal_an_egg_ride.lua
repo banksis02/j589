@@ -69,7 +69,9 @@ ENV.SAE_RIDE=function()
         if os.clock()-lastLog>0.5 then lastLog=os.clock()
             local hh=hrp(); local gr=g.root
             if hh and gr and gr.Parent then
-                log(("t+%.0fs ตัวเรา %s | ยาม %s"):format(os.clock()-t0, P(hh.Position), P(gr.Position)))
+                local st = g.model:GetAttribute("GuardState") or "?"
+                local tp = g.model:GetAttribute("TargetPlayer") or ""
+                log(("t+%.0fs เรา %s | ยาม %s | สถานะ=%s target=%s"):format(os.clock()-t0, P(hh.Position), P(gr.Position), tostring(st), tostring(tp)))
             else log("ยาม/ตัวหาย → ลง"); ENV.SAE_UNRIDE() end
         end
     end)
