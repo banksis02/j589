@@ -114,13 +114,17 @@ end
 
 -- ===== MOVE (monthonsova tween = ไม่ lagback) =====
 local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 25
+    radius=radius or CFG.ARRIVE; timeout=timeout or 30
     local target=Vector3.new(pos.X,pos.Y,pos.Z)
+    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
+    pcall(function() Move.TweenTo(target) end)
     local t=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
         if Move.IsNear(r.Position, target, radius) then return true end
-        pcall(function() Move.TweenTo(target) end)
+        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
+        local tweening = Move.IsTweening and Move.IsTweening()
+        if not tweening then pcall(function() Move.TweenTo(target) end) end
         RunService.Heartbeat:Wait()
     end
     return false
