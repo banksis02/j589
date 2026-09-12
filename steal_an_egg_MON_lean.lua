@@ -38,7 +38,7 @@ pcall(function() if setthreadidentity then setthreadidentity(8) end end)
 local API = loadstring(readfile(ROOT.."EggESP.lua"),"@EggESP")()
 if type(API)~="table" then warn("[SEQ] init ไม่คืน API"); return end
 pcall(function() local c=API.GetConfig().Runtime c.tweenSpeed=500 c.speedBypassOnAutoFarm=false end)
-pcall(function() if API.Modules and API.Modules.DataCollector then API.Modules.DataCollector.Collect=function() return {} end end)
+pcall(function() if API.Modules and API.Modules.DataCollector then API.Modules.DataCollector.Collect=function() return {} end end end)
 
 local Move = API.Modules and API.Modules.Movement
 local EggState, Assets
