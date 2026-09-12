@@ -148,7 +148,8 @@ local function fieldEggs()
     return out
 end
 local function nearestEgg() local e=fieldEggs(); table.sort(e,function(a,b) return a.dist<b.dist end); return e[1] end
-local function farEgg()     local e=fieldEggs(); table.sort(e,function(a,b) return a.dist>b.dist end); return e[1] end  -- กองไกลสุด
+-- กองแรกหน้าเซฟโซน = ไข่ที่อยู่ใกล้ HOME(เซฟโซน)ที่สุด
+local function frontEgg()   local e=fieldEggs(); table.sort(e,function(a,b) return (a.pos-HOME).Magnitude<(b.pos-HOME).Magnitude end); return e[1] end
 local function wantTier(x)
     if CFG.MIN_TIER>0 and x.tier<CFG.MIN_TIER then return false end
     local w=(CFG.RARITY or ""):lower(); if w=="" then return true end
@@ -188,8 +189,35 @@ local function dropHere()
     return not carrying
 end
 
+-- ===== เอากลับบ้าน (ฝากข้ามเส้น SeparationLine) สำหรับไข่เป้าหมาย =====
+local line
+pcall(function() local a=WS:FindFirstChild("__OBJECTS"); a=a and a:FindFirstChild("Areas"); line=a and a:FindFirstChild("SeparationLine") end)
+local function lineNormal() local s=line.Size local n=(s.X<=s.Z) and line.CFrame.RightVector or line.CFrame.LookVector return Vector3.new(n.X,0,n.Z).Unit end
+local function signedSide(pos) return (pos-line.Position):Dot(lineNormal()) end
+local SAFE_SIGN = line and ((signedSide(HOME)>=0) and 1 or -1) or 1
+-- ข้ามเส้น 1 ครั้ง (ไปฝั่งสนาม→ข้ามกลับฝั่งเซฟ ด้วย flight controller = ขยับตัวจริง = server เห็นการข้าม)
+local function crossOnce()
+    if not line then return end
+    local h=hrp(); if not h then return end
+    local y=h.Position.Y; local n=lineNormal(); local safeDir=n*SAFE_SIGN
+    local foot=h.Position - signedSide(h.Position)*n
+    local fieldP=Vector3.new((foot-safeDir*18).X, y, (foot-safeDir*18).Z)
+    local safeP =Vector3.new((foot+safeDir*40).X, y, (foot+safeDir*40).Z)
+    MOVE_GOAL=fieldP
+    local t=os.clock(); while carrying and os.clock()-t<1.2 do local hh=hrp() if hh and (fieldP-hh.Position).Magnitude<3 then break end RunService.Heartbeat:Wait() end
+    MOVE_GOAL=safeP
+    local t2=os.clock(); while carrying and os.clock()-t2<1.5 do RunService.Heartbeat:Wait() end
+end
+local function carryHome()
+    flyTo(HOME, CFG.ARRIVE)                       -- บินกลับบ้าน (ข้ามเส้นระหว่างทาง = ฝาก)
+    local t=os.clock(); while carrying and os.clock()-t<2 do RunService.Heartbeat:Wait() end
+    local tries=0                                 -- ยังไม่ฝาก → ข้าม explicit ซ้ำ
+    while carrying and ENV.SAE_RUN and tries<5 do tries=tries+1; crossOnce() end
+    return not carrying
+end
+
 -- ===== COMMANDS (bind แน่นอน) =====
-ENV.SAE_SETHOME = function() local h=hrp(); if h then ENV.SAE_HOME=h.Position; HOME=h.Position; log("ตั้ง HOME(เซฟโซน)="..tostring(h.Position)) end end
+ENV.SAE_SETHOME = function() local h=hrp(); if h then ENV.SAE_HOME=h.Position; HOME=h.Position; if line then SAFE_SIGN=(signedSide(HOME)>=0) and 1 or -1 end log("ตั้ง HOME(เซฟโซน)="..tostring(h.Position)) end end
 ENV.SAE_TIER    = function(x) CFG.RARITY=x or ""; log("target tier = "..(CFG.RARITY=="" and "ทุกระดับ" or CFG.RARITY)) end
 ENV.SAE_LIST    = function()
     local e=fieldEggs(); table.sort(e,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
@@ -203,15 +231,15 @@ ENV.SAE_START   = function()
     task.spawn(function()
         while ENV.SAE_RUN and ENV.SAE_ALIVE and alive() do
             flyTo(HOME, CFG.ARRIVE)                       -- ① ยืนหน้าจุดเซฟโซน
-            local first=farEgg()                          -- ② วาปไปกองไกลสุดก่อน อุ้ม → ปล่อย
+            local first=frontEgg()                        -- ② วาปไปกองแรกหน้าเซฟโซน อุ้ม → ปล่อย
             if first then
-                log("① วาปกองไกล: "..first.cat.." @"..math.floor(first.dist))
+                log("① วาปกองแรกหน้าเซฟโซน: "..first.cat)
                 if grab(first) then log(dropHere() and "  ✅ ปล่อยแล้ว" or "  ⚠️ ปล่อยไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
             end
-            local tgt=targetEgg()                         -- ③ วาปเก็บเป้าหมาย → ปล่อย
+            local tgt=targetEgg()                         -- ③ วาปเก็บเป้าหมาย → อุ้มกลับบ้าน(ฝาก)
             if tgt then
                 log("② วาปเก็บเป้าหมาย: "..tgt.cat.." ["..tgt.rarity.."]")
-                if grab(tgt) then log(dropHere() and "  ✅ ปล่อยเป้าหมายแล้ว" or "  ⚠️ ปล่อยไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
+                if grab(tgt) then log(carryHome() and "  ✅ ฝากเป้าหมายเข้าบ้านแล้ว!" or "  ⚠️ ฝากไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
             else log("ไม่มีไข่ตรง tier"); task.wait(1) end
             task.wait(CFG.LOOP_GAP)
         end
