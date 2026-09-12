@@ -131,15 +131,19 @@ local function targetEgg()
     return o[1]
 end
 
--- ===== MOVE = เดินจริง WalkSpeed สูง (RigSync ไม่ desync = server เชื่อตำแหน่ง = grab/ฝากได้; ไม่วาป ไม่ tween-clone) =====
+-- ===== MOVE (monthonsova tween ลื่น = ไม่ lagback) — restore จาก f4e2a00 ที่ใช้ได้ =====
 local function gotoPos(pos, radius, timeout)
     radius=radius or CFG.ARRIVE; timeout=timeout or 40
     local target=Vector3.new(pos.X,pos.Y,pos.Z)
+    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
+    pcall(function() Move.TweenTo(target) end)
     local t=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
         if (r.Position-target).Magnitude<radius then return true end
-        pcall(function() if Move.WalkTo then Move.WalkTo(target, 1, CFG.WALKSPEED) end end)  -- เดินจริงเร็ว
+        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam = ลื่น ไม่ช้า)
+        local tweening = Move.IsTweening and Move.IsTweening()
+        if not tweening then pcall(function() Move.TweenTo(target) end) end
         RunService.Heartbeat:Wait()
     end
     local r=hrp(); return r and (r.Position-target).Magnitude<radius+3 or false
