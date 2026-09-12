@@ -108,7 +108,8 @@ end
 local function targetEgg()
     local e=fieldEggs(); local o={}
     for _,x in ipairs(e) do if wantTier(x) then o[#o+1]=x end end
-    table.sort(o,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist<b.dist end)
+    -- ★ tier สูงสุดก่อน แล้วเอาใบ "ไกลสุด" ของ tier นั้น (ไข่ไกลที่เลือกระดับไว้)
+    table.sort(o,function(a,b) if a.tier~=b.tier then return a.tier>b.tier end return a.dist>b.dist end)
     return o[1]
 end
 
