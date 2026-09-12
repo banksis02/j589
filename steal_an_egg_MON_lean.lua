@@ -206,29 +206,20 @@ end
 --   = velocity ฟิสิกส์จริงของตัวเรา → client เป็นเจ้าของ → server sync → ยามจับไม่ได้ ไม่ desync
 --   TeleguiadoGuard (Cerberus) = แค่เพ็ทโชว์ ไม่เกี่ยวการขยับ
 local function rideCleanup()
-    noclipTemp=false
-    local ch=player.Character; local hm=ch and ch:FindFirstChildOfClass("Humanoid")
-    local ST=Enum.HumanoidStateType
-    if hm then pcall(function() hm:SetStateEnabled(ST.FallingDown,true); hm:SetStateEnabled(ST.Ragdoll,true) end) end
     local h=hrp(); if h then pcall(function() h.AssemblyLinearVelocity=Vector3.new(0, h.AssemblyLinearVelocity.Y, 0) end) end
 end
 local function rideMake() return true end   -- ไม่ต้องสร้างอะไร (ขยับด้วย velocity ตัวเอง)
+-- ★ ตาม ride_how เป๊ะ: horizontal AssemblyLinearVelocity, คง Y (ไม่ noclip/ไม่แตะ state = ไม่สนตีล้ม)
 local function rideTo(pos, timeout)
-    local ch=player.Character; local hm=ch and ch:FindFirstChildOfClass("Humanoid")
-    local ST=Enum.HumanoidStateType
-    noclipTemp=true                                          -- ทะลุกำแพง (ไม่ติด→ยามตามทัน)
-    local target=Vector3.new(pos.X, pos.Y+6, pos.Z)         -- hover 6 เหนือเป้า
     local t=os.clock()
     while ENV.SAE_RUN do
         local h=hrp(); if not h then break end
-        if hm then pcall(function()                          -- ★ กันโดนตีล้ม (ragdoll/falling off)
-            hm:SetStateEnabled(ST.FallingDown,false); hm:SetStateEnabled(ST.Ragdoll,false)
-            hm:SetStateEnabled(ST.PlatformStanding,false)
-        end) end
-        local delta = target - h.Position
-        local dist = delta.Magnitude
+        local cur=h.Position
+        local dx,dz = pos.X-cur.X, pos.Z-cur.Z
+        local dist=math.sqrt(dx*dx+dz*dz)
         if dist<6 then break end
-        pcall(function() h.AssemblyLinearVelocity = delta.Unit * CFG.RIDE_SPEED end)  -- 3D (คุม Y = noclip ไม่ตก)
+        local inv=1/dist; local yv=h.AssemblyLinearVelocity.Y
+        pcall(function() h.AssemblyLinearVelocity = Vector3.new(dx*inv*CFG.RIDE_SPEED, yv, dz*inv*CFG.RIDE_SPEED) end)
         if os.clock()-t>(timeout or 25) then break end
         RunService.Heartbeat:Wait()
     end
@@ -238,9 +229,10 @@ end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
     if CFG.USE_RIDE then
-        -- ★ ขี่ carrier กลับ safe zone (server-physics = ยามจับไม่ได้ + RigSync เชื่อ)
-        log("   🐴 ขี่ carrier กลับบ้าน...")
+        -- ★ ขี่ velocity กลับ safe zone (real physics = server sync)
+        local sp=hrp(); log(("   🐴 ขี่กลับบ้าน... carrying=%s pos=%s"):format(tostring(carrying), sp and ("(%.0f,%.0f,%.0f)"):format(sp.Position.X,sp.Position.Y,sp.Position.Z) or "?"))
         rideMake(); rideTo(HOME, 25)
+        local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s (ถ้า carrying=false = ไข่หลุดกลางทาง!)"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
         if line and carrying then                  -- ขี่เลยข้ามเส้นเข้าเซฟโซนให้แน่ใจ
             local n=lineNormal(); local safeDir=n*SAFE_SIGN; local h=hrp()
             if h then local foot=h.Position - signedSide(h.Position)*n
