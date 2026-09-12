@@ -226,50 +226,37 @@ local function rideTo(pos, timeout)
     rideCleanup()
     return true
 end
-local function carryHome()
-    local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    if CFG.USE_RIDE then
-        -- ★ ขี่ velocity กลับ safe zone (real physics = server sync)
-        local sp=hrp(); log(("   🐴 ขี่กลับบ้าน... carrying=%s pos=%s"):format(tostring(carrying), sp and ("(%.0f,%.0f,%.0f)"):format(sp.Position.X,sp.Position.Y,sp.Position.Z) or "?"))
-        rideMake(); rideTo(HOME, 25)
-        local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s (ถ้า carrying=false = ไข่หลุดกลางทาง!)"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
-        if line and carrying then                  -- ขี่เลยข้ามเส้นเข้าเซฟโซนให้แน่ใจ
-            local n=lineNormal(); local safeDir=n*SAFE_SIGN; local h=hrp()
-            if h then local foot=h.Position - signedSide(h.Position)*n
-                rideTo(Vector3.new((foot+safeDir*45).X, HOME.Y, (foot+safeDir*45).Z), 10) end
-        end
-        rideCleanup()
-        local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<3 do RunService.Heartbeat:Wait() end
-        -- ★ โยนทุกวิธีฝาก: crossOnce (CFrame ข้ามเส้น proven) + walk-sync สลับ retry จนฝากได้
-        for i=1,5 do
-            if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
-            log("   ↻ ฝาก crossOnce รอบ "..i)
-            crossOnce()
-            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<1.5 do RunService.Heartbeat:Wait() end
-            if lastClaim>claimBefore then break end
-            -- walk-sync เข้า HOME (real position ให้ server เชื่อ)
-            local hv=Vector3.new(HOME.X,HOME.Y,HOME.Z); local t3=os.clock()
-            while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t3<2 do
-                pcall(function() if Move.WalkTo then Move.WalkTo(hv,1,40) end end); RunService.Heartbeat:Wait()
-            end
-        end
-    else
-        local sp=hrp(); log(("   เดินกลับ(baseline)... carrying=%s pos=%s"):format(tostring(carrying), sp and ("(%.0f,%.0f,%.0f)"):format(sp.Position.X,sp.Position.Y,sp.Position.Z) or "?"))
-        gotoPos(HOME, CFG.ARRIVE)                  -- baseline: วาปกลับบ้าน (tween)
-        local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s (false=ไข่หลุดกลางทาง)"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
-        local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
-        local t=os.clock()
-        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
-            pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
+-- ★ ฝากจริง = เดินข้ามเส้น "ช้าๆ ด้วย Move.WalkTo" (validated เหมือน grab) ให้ server egg ตามทัน+เห็น crossing
+local function walkCrossLine(claimBefore)
+    if not line then log("   ⚠️ ไม่เจอ SeparationLine") return end
+    local n=lineNormal(); local safeDir=n*SAFE_SIGN
+    for i=1,6 do
+        if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+        local h=hrp(); if not h then break end
+        local y=h.Position.Y
+        local foot = h.Position - signedSide(h.Position)*n
+        local fieldPt = Vector3.new((foot-safeDir*14).X, y, (foot-safeDir*14).Z)   -- ฝั่งสนาม 14
+        local safePt  = Vector3.new((foot+safeDir*30).X, y, (foot+safeDir*30).Z)   -- ฝั่งเซฟ 30
+        log("   ↻ เดินข้ามเส้น(walk-sync) รอบ "..i)
+        gotoPos(fieldPt, 5, 8)                       -- ไปยืนฝั่งสนามก่อน (ใกล้เส้น)
+        task.wait(0.5)                               -- ให้ server egg ตามมาทัน
+        local t=os.clock()                           -- ★ เดินจริงช้า (speed 20) ข้ามเส้น = validated
+        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<4 do
+            pcall(function() if Move.WalkTo then Move.WalkTo(safePt,1,20) end end)
             RunService.Heartbeat:Wait()
         end
-        -- ★ fallback ฝาก: crossOnce ถ้ายังถือไข่แต่ยังไม่ redeem
-        for i=1,4 do
-            if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
-            log("   ↻ ฝาก crossOnce รอบ "..i); crossOnce()
-            local t2=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<1.5 do RunService.Heartbeat:Wait() end
-        end
     end
+end
+local function carryHome()
+    local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
+    -- ① กลับบ้านเร็ว (ride หรือ tween)
+    if CFG.USE_RIDE then rideMake(); rideTo(HOME, 25); rideCleanup()
+    else gotoPos(HOME, CFG.ARRIVE) end
+    local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
+    -- ② รอ redeem อัตโนมัติแป๊บ
+    local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<2 do RunService.Heartbeat:Wait() end
+    -- ③ ถ้ายังไม่ฝาก → เดินข้ามเส้นช้าๆ (validated) ให้ server egg ตามทัน
+    if lastClaim<=claimBefore and carrying then walkCrossLine(claimBefore) end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
