@@ -148,6 +148,7 @@ local function fieldEggs()
     return out
 end
 local function nearestEgg() local e=fieldEggs(); table.sort(e,function(a,b) return a.dist<b.dist end); return e[1] end
+local function farEgg()     local e=fieldEggs(); table.sort(e,function(a,b) return a.dist>b.dist end); return e[1] end  -- กองไกลสุด
 local function wantTier(x)
     if CFG.MIN_TIER>0 and x.tier<CFG.MIN_TIER then return false end
     local w=(CFG.RARITY or ""):lower(); if w=="" then return true end
@@ -202,9 +203,9 @@ ENV.SAE_START   = function()
     task.spawn(function()
         while ENV.SAE_RUN and ENV.SAE_ALIVE and alive() do
             flyTo(HOME, CFG.ARRIVE)                       -- ① ยืนหน้าจุดเซฟโซน
-            local first=nearestEgg()                      -- ② วาปเก็บไข่จุดแรก → ปล่อย
+            local first=farEgg()                          -- ② วาปไปกองไกลสุดก่อน อุ้ม → ปล่อย
             if first then
-                log("① วาปเก็บใบแรก: "..first.cat.." @"..math.floor(first.dist))
+                log("① วาปกองไกล: "..first.cat.." @"..math.floor(first.dist))
                 if grab(first) then log(dropHere() and "  ✅ ปล่อยแล้ว" or "  ⚠️ ปล่อยไม่ผ่าน") else log("  ⚠️ อุ้มไม่ติด") end
             end
             local tgt=targetEgg()                         -- ③ วาปเก็บเป้าหมาย → ปล่อย
