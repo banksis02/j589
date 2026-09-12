@@ -239,7 +239,8 @@ local function cframeReturn(pos, timeout)
         local d=Vector3.new(target.X-cur.X, target.Y-cur.Y, target.Z-cur.Z)
         local m=d.Magnitude
         if m<CFG.ARRIVE then break end
-        local step=math.min(CFG.RETURN_STEP or 7, m)
+        -- ★ เร็วช่วงไกล, ช้าช่วง 30 studs สุดท้าย (ให้ egg server sync ทันก่อนถึงจุดฝาก = MIRANDA ทำ)
+        local step = (m>30) and (CFG.RETURN_STEP or 7) or 1.5
         pcall(function() h.CFrame=CFrame.new(cur + d.Unit*step) end)   -- ★ CFrame ตัวจริง = egg sync
         RunService.Heartbeat:Wait()
     end
