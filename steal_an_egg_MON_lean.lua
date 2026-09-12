@@ -41,7 +41,7 @@ local function signedSide(pos) return (pos-line.Position):Dot(lineNormal()) end
 local HOME = ENV.SAE_HOME or Vector3.new(425,70,-362)
 local SAFE_SIGN = line and ((signedSide(HOME)>=0) and 1 or -1) or 1
 
-local CFG={ SPEED=340, RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+local CFG={ SPEED=340, STAND_Y=3, RARITY="", MIN_TIER=0, GRAB_T=3.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
 
