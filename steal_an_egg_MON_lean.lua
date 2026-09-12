@@ -247,14 +247,15 @@ local function cframeReturn(pos, timeout)
 end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    -- ★ ขากลับ = CFrame ตัวจริงทีละสเต็ป (ท่า MIRANDA) — egg sync ตลอด → ฝากที่จุดฝาก
+    -- ★ ขากลับ = CFrame ตัวจริงทีละสเต็ป (ท่า MIRANDA) — egg sync ถึงบ้าน (carrying=true)
     cframeReturn(HOME, 25)
     local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
-    -- ★ ค้างที่จุดฝาก (CFrame ย่ำ) รอ server claim (egg auto-claim ที่จุดฝาก เหมือน MIRANDA)
-    local t=os.clock()
-    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<6 do
-        local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(HOME.X,HOME.Y,HOME.Z) end) end  -- ค้างที่จุดฝากจริง
-        RunService.Heartbeat:Wait()
+    -- ★ egg sync แล้ว → re-cross เส้น (CFrame ตัวจริง: ออกสนาม→เข้าเซฟ) = server เห็น crossing สะอาด → claim
+    for i=1,3 do
+        if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+        log("   ↻ re-cross เส้น (egg sync แล้ว) รอบ "..i)
+        crossOnce()
+        local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<2.5 do RunService.Heartbeat:Wait() end
     end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
