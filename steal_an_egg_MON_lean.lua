@@ -206,20 +206,29 @@ end
 --   = velocity ฟิสิกส์จริงของตัวเรา → client เป็นเจ้าของ → server sync → ยามจับไม่ได้ ไม่ desync
 --   TeleguiadoGuard (Cerberus) = แค่เพ็ทโชว์ ไม่เกี่ยวการขยับ
 local function rideCleanup()
+    noclipTemp=false
+    local ch=player.Character; local hm=ch and ch:FindFirstChildOfClass("Humanoid")
+    local ST=Enum.HumanoidStateType
+    if hm then pcall(function() hm:SetStateEnabled(ST.FallingDown,true); hm:SetStateEnabled(ST.Ragdoll,true) end) end
     local h=hrp(); if h then pcall(function() h.AssemblyLinearVelocity=Vector3.new(0, h.AssemblyLinearVelocity.Y, 0) end) end
 end
 local function rideMake() return true end   -- ไม่ต้องสร้างอะไร (ขยับด้วย velocity ตัวเอง)
 local function rideTo(pos, timeout)
+    local ch=player.Character; local hm=ch and ch:FindFirstChildOfClass("Humanoid")
+    local ST=Enum.HumanoidStateType
+    noclipTemp=true                                          -- ทะลุกำแพง (ไม่ติด→ยามตามทัน)
+    local target=Vector3.new(pos.X, pos.Y+6, pos.Z)         -- hover 6 เหนือเป้า
     local t=os.clock()
     while ENV.SAE_RUN do
         local h=hrp(); if not h then break end
-        local cur=h.Position
-        local dx,dz = pos.X-cur.X, pos.Z-cur.Z
-        local dist=math.sqrt(dx*dx+dz*dz)
+        if hm then pcall(function()                          -- ★ กันโดนตีล้ม (ragdoll/falling off)
+            hm:SetStateEnabled(ST.FallingDown,false); hm:SetStateEnabled(ST.Ragdoll,false)
+            hm:SetStateEnabled(ST.PlatformStanding,false)
+        end) end
+        local delta = target - h.Position
+        local dist = delta.Magnitude
         if dist<6 then break end
-        local inv=1/dist
-        local yv=h.AssemblyLinearVelocity.Y                 -- คง Y เดิม (แรงโน้มถ่วง/humanoid คุมพื้น)
-        pcall(function() h.AssemblyLinearVelocity = Vector3.new(dx*inv*CFG.RIDE_SPEED, yv, dz*inv*CFG.RIDE_SPEED) end)
+        pcall(function() h.AssemblyLinearVelocity = delta.Unit * CFG.RIDE_SPEED end)  -- 3D (คุม Y = noclip ไม่ตก)
         if os.clock()-t>(timeout or 25) then break end
         RunService.Heartbeat:Wait()
     end
