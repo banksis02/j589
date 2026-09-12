@@ -130,22 +130,18 @@ local function targetEgg()
     return o[1]
 end
 
--- ===== MOVE (monthonsova tween = ไม่ lagback) =====
+-- ===== MOVE = เดินจริง WalkSpeed สูง (RigSync ไม่ desync = server เชื่อตำแหน่ง = grab/ฝากได้; ไม่วาป ไม่ tween-clone) =====
 local function gotoPos(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; timeout=timeout or 30
+    radius=radius or CFG.ARRIVE; timeout=timeout or 40
     local target=Vector3.new(pos.X,pos.Y,pos.Z)
-    -- ★ เรียก TweenTo ครั้งเดียว (spam ทุกเฟรม = ทำลาย clone trick → lagback)
-    pcall(function() Move.TweenTo(target) end)
     local t=os.clock()
     while ENV.SAE_RUN and os.clock()-t<timeout do
         local r=hrp(); if not r then break end
-        if Move.IsNear(r.Position, target, radius) then return true end
-        -- re-issue เฉพาะเมื่อ tween จบแล้วแต่ยังไม่ถึง (ไม่ spam)
-        local tweening = Move.IsTweening and Move.IsTweening()
-        if not tweening then pcall(function() Move.TweenTo(target) end) end
+        if (r.Position-target).Magnitude<radius then return true end
+        pcall(function() if Move.WalkTo then Move.WalkTo(target, 1, CFG.WALKSPEED) end end)  -- เดินจริงเร็ว
         RunService.Heartbeat:Wait()
     end
-    return false
+    local r=hrp(); return r and (r.Position-target).Magnitude<radius+3 or false
 end
 
 -- ===== GRAB / DROP / CARRY-HOME =====
@@ -202,13 +198,22 @@ local function crossOnce()
 end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween)
+    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween) หนียามให้เร็ว
     local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
-    -- ★ เดินจริงเข้า safe zone (server เห็นการข้ามเส้นจริง = ฝากได้) — เหมือน walk-sync ตอน grab ที่เวิร์ก
+    -- ★ วิธีเดิม: เดินจริงเข้า safe zone (บางรอบไม่ฝาก)
     local t=os.clock()
-    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<4 do
         pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
         RunService.Heartbeat:Wait()
+    end
+    -- ★★ ถ้ายังไม่ฝาก → บังคับข้ามเส้น CFrame (crossOnce) = วิธีที่พิสูจน์แล้วฝากได้จริง (deposit_force)
+    for attempt=1,5 do
+        if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+        log("   ↻ ฝากไม่ผ่าน → บังคับข้ามเส้น (crossOnce) รอบ "..attempt)
+        gotoPos(HOME, CFG.ARRIVE, 15)             -- กลับมาใกล้เส้นก่อน (เผื่อโดนดึง/หลุด)
+        crossOnce()                               -- ก้าว CFrame ไปฝั่งสนาม→ข้ามกลับฝั่งเซฟ = server เห็น crossing
+        local tc=os.clock()
+        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-tc<2.5 do RunService.Heartbeat:Wait() end
     end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
