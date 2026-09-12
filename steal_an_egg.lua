@@ -12,7 +12,7 @@
 --   SAE_LIST() / SAE_TAP(1) / SAE_STEAL() / SAE_STOP()
 -- ============================================================
 
-local SCRIPT_VERSION = "v1.4"
+local SCRIPT_VERSION = "v1.5"
 _G.SAE_GEN = (_G.SAE_GEN or 0) + 1
 local GEN = _G.SAE_GEN
 local function alive() return GEN == _G.SAE_GEN end
@@ -21,11 +21,14 @@ local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace  = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 local player     = Players.LocalPlayer
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 
 local CFG = {
-    FLY_SPEED   = 500,   -- ความเร็วบิน (studs/วิ)
+    FLY_SPEED   = 500,   -- ความเร็วบิน flight controller (ยึด/ถือตำแหน่ง)
+    SPEED_OUT   = 1400,  -- ★ ขาไป tween เร็ว (ทะลุเขต boundary ก่อน AC เด้ง — เหมือนสคริปจริง ~1450)
+    SPEED_BACK  = 545,   -- ★ ขากลับ carrier (เหมือนสคริปจริง)
     FLY_STEP    = 6,     -- ขยับต่อเฟรม (เล็ก=เนียน/ไม่กระตุก AC)
     FLY_HEIGHT  = 0,     -- 0 = ขากลับบินราบระดับปกติ (ลอยแค่ STAND_Y ไม่ปีนขึ้น)
     STAND_Y     = 3,
@@ -144,6 +147,27 @@ local function flyTo(pos)
 end
 local function flyHighTo(pos) return flyTo(pos) end   -- เลิกบินสูง (ยามจับ XZ ไม่สน Y)
 
+-- ★ ขาไป: TweenService จริง (ลื่น + มี velocity = AC ยอม) เร็ว SPEED_OUT (ทะลุเขต)
+local function tweenFlyTo(pos, speed)
+    speed = speed or CFG.SPEED_OUT
+    local r=hrp(); if not r then return false end
+    local dest=CFrame.new(pos.X, pos.Y+CFG.STAND_Y, pos.Z)
+    local dist=(dest.Position-r.Position).Magnitude
+    if dist<3 then return true end
+    RIDING=true                       -- flight controller หยุดแย่ง CFrame ตอน tween
+    local tw=TweenService:Create(r, TweenInfo.new(dist/speed, Enum.EasingStyle.Linear), {CFrame=dest})
+    local done=false; tw.Completed:Connect(function() done=true end); tw:Play()
+    local dl=os.clock()+dist/speed+3
+    while alive() and not done and os.clock()<dl do
+        local rr=hrp(); if not rr then break end
+        RunService.Heartbeat:Wait()
+    end
+    pcall(function() tw:Cancel() end)
+    RIDING=false
+    MOVE_GOAL=(hrp() and hrp().Position) or MOVE_GOAL   -- flight controller ยึดจุดนี้ต่อ (ไม่ร่วง)
+    return true
+end
+
 -- ============================================================
 -- ⭐ CARRIER RIDE (ขากลับ) — ท่าจากสคริปที่ใช้ได้ (carrier_probe ยืนยัน)
 --   weld ตัวติด Part ล่องหน (Massless/nocollide) → driver ตั้ง CFrame ทีละเฟรม (track ตำแหน่งเอง=ไม่ตก)
@@ -172,7 +196,7 @@ local function makeCarrier()
     rideConn=RunService.Heartbeat:Connect(function()
         if not carrier or not carrier.Parent or not curPos then return end
         local g=goalPos or curPos
-        local delta=g-curPos; local dist=delta.Magnitude; local step=CFG.FLY_SPEED/60
+        local delta=g-curPos; local dist=delta.Magnitude; local step=CFG.SPEED_BACK/60
         if dist<=step then curPos=g else curPos=curPos+delta.Unit*step end
         pcall(function() carrier.CFrame=CFrame.new(curPos) end)   -- ตั้ง Y เอง = ไม่ร่วง
     end)
@@ -256,9 +280,9 @@ local function carryOne(e)
         end
     end
 
-    -- ★ DRIVE-BY: ตั้งเป้าไปไข่ (controller บินให้) + กด E ทุกเฟรม (ไม่หยุดยืน)
-    --   ยามตื่นช้า 0.63 วิ หลังขโมยสำเร็จ → ติดปุ๊บ controller พาหนีทันที
-    MOVE_GOAL=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)
+    -- ★ ขาไป: tween เร็ว SPEED_OUT ไปไข่ (ทะลุเขต ไม่ถูกดึงกลับ) แล้วค่อยยึดจุดไข่
+    tweenFlyTo(e.pos, CFG.SPEED_OUT)
+    MOVE_GOAL=Vector3.new(e.pos.X, e.pos.Y+CFG.STAND_Y, e.pos.Z)   -- flight controller ถือจุดไข่
     local t0=os.clock()
     while alive() and not carrying and os.clock()-t0<CFG.COLLECT_T do
         tryGrab(e)                       -- กด E ทุกเฟรม (controller บินเข้าหาไข่ให้เอง)
