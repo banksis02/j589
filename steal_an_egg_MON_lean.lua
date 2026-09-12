@@ -112,7 +112,7 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
     log("   🎉🎉 ได้ไข่จริง #"..totalGot..": "..lastClaimInfo)
 end) end end)
 
-local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
+local CFG={ STAND_Y=3, RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true }
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
