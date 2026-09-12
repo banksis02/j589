@@ -7,6 +7,7 @@ local active=true
 local connections={}
 local saved={}
 local detached={}
+local skyDetached={}
 local tracked=setmetatable({},{__mode='k'})
 local hidden=0
 local watched=setmetatable({},{__mode='k'})
@@ -87,6 +88,10 @@ local function stop()
             end
         end)
     end
+    for obj,parent in pairs(skyDetached) do
+        pcall(function()if obj.Parent==nil then obj.Parent=parent end end)
+    end
+    table.clear(skyDetached)
     table.clear(saved);table.clear(detached)
     print('[SAE PET CULL] stopped; restored surviving visuals')
 end
@@ -136,3 +141,20 @@ task.spawn(function()
         for obj in pairs(watched) do clearParticles(obj) end
     end
 end)
+
+-- Local sky presentation only. Preserve time of day and gameplay Lighting values.
+local lighting=game:GetService('Lighting')
+local terrain=workspace:FindFirstChildOfClass('Terrain')
+local function removeSky(obj)
+    if not active then return end
+    if (obj.Parent==lighting and (obj:IsA('Sky') or obj:IsA('Atmosphere')))
+        or (terrain and obj.Parent==terrain and obj:IsA('Clouds')) then
+        skyDetached[obj]=obj.Parent
+        obj.Parent=nil
+    end
+end
+table.insert(connections,lighting.ChildAdded:Connect(removeSky))
+if terrain then table.insert(connections,terrain.ChildAdded:Connect(removeSky)) end
+for _,obj in ipairs(lighting:GetChildren()) do removeSky(obj) end
+if terrain then for _,obj in ipairs(terrain:GetChildren()) do removeSky(obj) end end
+print('[SAE PET CULL] sky, atmosphere and clouds removed locally')
