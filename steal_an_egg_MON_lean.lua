@@ -157,17 +157,20 @@ local function grab(egg)
     if not reached then log("   ⚠️ ไปไม่ถึงไข่! เหลือ "..math.floor(dleft).." studs (โดนดึงกลับ/ติดอะไร)") end
     log(("   grab: %s [%s] dist=%.0f slotKey=%s"):format(egg.cat, egg.rarity, dleft, tostring(egg.slotKey)))
     local eggV=Vector3.new(egg.pos.X,egg.pos.Y,egg.pos.Z)
-    local t=os.clock(); local lastReason
+    local t=os.clock(); local lastReason; local lastReTween=0
     while ENV.SAE_RUN and not carrying and os.clock()-t<CFG.GRAB_T do
-        -- ★ เดินจริงช้าๆ ที่ไข่ = ให้ server เห็นตำแหน่งเราจริง (แก้ "Get closer to the egg" = desync จาก tween)
+        local cur=hrp(); local d=cur and (eggV-cur.Position).Magnitude or 999
+        -- ★ ถ้าตำแหน่งเพี้ยน/ไกล → tween กลับไปที่ไข่ใหม่ (แก้ dist โต 4-5 = "Get closer")
+        if d>CFG.ARRIVE and os.clock()-lastReTween>0.8 then lastReTween=os.clock(); pcall(function() Move.TweenTo(eggV) end) end
+        -- ★ เดินจริงช้าๆ ที่ไข่ = ให้ server เห็นตำแหน่งจริง (แก้ desync)
         pcall(function() if Move.WalkTo then Move.WalkTo(eggV, 1, 30) end end)
         local okc, reason = nil, nil
         pcall(function() if EggState.CarryFieldEgg then okc, reason = EggState.CarryFieldEgg(egg.uid, egg.slotKey) end end)
-        if reason~=nil and reason~=lastReason then log("     ↳ server: ok="..tostring(okc).." reason="..tostring(reason)); lastReason=reason end
+        if reason~=nil and reason~=lastReason then log("     ↳ server: "..tostring(reason)); lastReason=reason end
         firePrompts(egg.pos)
         RunService.Heartbeat:Wait()
     end
-    if not carrying then log("   ❌ เก็บไม่ติด (เหตุผลล่าสุด: "..tostring(lastReason)..")") end
+    if not carrying then log("   ❌ เก็บไม่ติด ("..tostring(lastReason)..")") end
     return carrying
 end
 local function dropHere()
