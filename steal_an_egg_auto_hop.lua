@@ -6,23 +6,32 @@ return function(context)
     if host.PlaceId ~= 107778070777162 then return end
     local env = ctx.env or (getgenv and getgenv() or _G)
     local previous = env.SAE_AUTO_HOP
-    if previous and previous.jobId == host.JobId and previous.version == 8 then return previous end
+    -- Once farming was admitted, later joins or loader revisions must not restart hopping.
+    if env.SAE_FARM_READY_JOB == host.JobId or env.SAE_SENA_JOB == host.JobId then
+        if previous and previous.stop then previous.stop() end
+        env.SAE_FARM_READY_JOB = host.JobId
+        return previous
+    end
+    if previous and previous.jobId == host.JobId and previous.version == 9 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 8, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 9, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
         state.active = false
         if connection then connection:Disconnect(); connection = nil end
     end
-    local function alive() return state.active and env.SAE_AUTO_HOP == state end
+    local function alive() return state.active and env.SAE_AUTO_HOP == state and env.SAE_FARM_READY_JOB ~= host.JobId and env.SAE_SENA_JOB ~= host.JobId end
     local function populationReady()
         if not alive() or state.pending or #players:GetPlayers() > 3 then return end
+        env.SAE_FARM_READY_JOB = host.JobId
+        state.stop() -- stop BEFORE vendor code can yield or start farming
+        log("[SAE HOP] startup checks complete; hopping locked for this server")
         scheduler.spawn(function()
             local ok, err = pcall(function()
                 local src = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_performance.lua?v=1")
@@ -133,12 +142,13 @@ return function(context)
                     return a.playing < b.playing
                 end)
                 for _, room in ipairs(candidates) do
-                    if not alive() or not safeNeedsHop() then break end
+                    if not alive() or not safeNeedsHop() or not alive() then break end
                     state.tried[room.id] = true
                     local pending = {id = room.id}
                     state.pending = pending
-                    log("[SAE HOP] joining " .. room.id .. " players=" .. room.playing)
+                    log("[SAE HOP] TELEPORT source=STARTUP_CHECK from=" .. host.JobId .. " to=" .. room.id .. " players=" .. room.playing)
                     local sent, sendError = pcall(function()
+                        if not alive() then return end
                         teleport:TeleportToPlaceInstance(host.PlaceId, room.id, player)
                     end)
                     if not sent then pending.failure = tostring(sendError) end
