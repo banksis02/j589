@@ -83,29 +83,6 @@ task.spawn(function()
     end
 end)
 
--- ★ ปิด ObbyAntiTP (passive: SetAttribute + destroy + disconnect — ไม่ hook = ปลอดภัย)
---   กัน AC ดึงตอน ride velocity → egg ไม่ desync → server ตามตำแหน่งทัน → redeem ได้
-local function killAntiTP()
-    pcall(function() WS:SetAttribute("ClientObbyAntiTp", false) end)
-    local function nuke(root) if not root then return end pcall(function()
-        for _,d in ipairs(root:GetDescendants()) do
-            if d.Name=="ObbyAntiTPClient" and (d:IsA("LocalScript") or d:IsA("ModuleScript")) then pcall(function() d.Disabled=true; d:Destroy() end) end
-        end
-    end) end
-    nuke(player:FindFirstChild("PlayerScripts")); nuke(player.Character)
-    if type(getconnections)=="function" then
-        for _,ev in ipairs({RunService.Heartbeat, RunService.Stepped}) do
-            pcall(function() for _,c in ipairs(getconnections(ev)) do
-                local ok,s=pcall(function() return c.Function and debug.info(c.Function,"s") end)
-                if ok and type(s)=="string" and (s:find("ObbyAntiTP") or s:find("ObbyAntiTp")) then pcall(function() c:Disable() end); pcall(function() c:Disconnect() end) end
-            end end)
-        end
-    end
-end
-task.spawn(function() while ENV.SAE_ALIVE do killAntiTP(); task.wait(3) end end)
-player.CharacterAdded:Connect(function() task.wait(1); killAntiTP() end)
-killAntiTP()
-
 -- carry state
 local carrying=false
 pcall(function() if EggState.CarryChanged then EggState.CarryChanged:Connect(function(cs) carrying=(cs and cs.IsCarrying)==true end) end end)
@@ -118,7 +95,8 @@ pcall(function() if EggState.FieldClaimed then EggState.FieldClaimed:Connect(fun
 end) end end)
 
 local CFG={ RARITY="", MIN_TIER=0, GRAB_T=5.0, ARRIVE=6, LOOP_GAP=0.2, PRIME=true,
-    USE_RIDE=true, RIDE_SPEED=545 }  -- ขากลับ = ride velocity (real physics = egg sync). ปิด: SAE_RIDE(false)
+    USE_RIDE=false, RIDE_SPEED=545,
+    SYNC_SPEED=24, SETTLE_TICKS=6, DEPOSIT_APPROACH=24 }  -- ★ walk-sync settle ที่บ้าน (สูตร monthonsova approachForServerSync)
 
 -- ===== อ่านไข่ (Sync จาก server = เห็นไข่ไกล/Mythic) =====
 local function slotKey(rec) if type(rec.Uid)=="string" and rec.Uid:find("FirstAreaEgg",1,true) then return tostring(rec.AreaId)..":"..tostring(rec.NestId) end return nil end
@@ -249,37 +227,28 @@ local function rideTo(pos, timeout)
     rideCleanup()
     return true
 end
--- ★ ฝากจริง = เดินข้ามเส้น "ช้าๆ ด้วย Move.WalkTo" (validated เหมือน grab) ให้ server egg ตามทัน+เห็น crossing
-local function walkCrossLine(claimBefore)
-    if not line then log("   ⚠️ ไม่เจอ SeparationLine") return end
-    local n=lineNormal(); local safeDir=n*SAFE_SIGN
-    for i=1,6 do
-        if lastClaim>claimBefore or not carrying or not ENV.SAE_RUN then break end
+-- ★★ ฝากจริง = "walk-sync settle ที่ standby" (สูตร monthonsova approachForServerSync)
+--   เดิน Move.WalkTo(HOME, 24) เข้าใกล้ → ย่ำอยู่กับที่ settle ticks → server egg ตามทัน → เกมฝากเอง
+local function depositAtHome(claimBefore)
+    local settle=0
+    local t=os.clock()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<15 do
         local h=hrp(); if not h then break end
-        local y=h.Position.Y
-        local foot = h.Position - signedSide(h.Position)*n
-        local fieldPt = Vector3.new((foot-safeDir*14).X, y, (foot-safeDir*14).Z)   -- ฝั่งสนาม 14
-        local safePt  = Vector3.new((foot+safeDir*30).X, y, (foot+safeDir*30).Z)   -- ฝั่งเซฟ 30
-        log("   ↻ เดินข้ามเส้น(walk-sync) รอบ "..i)
-        gotoPos(fieldPt, 5, 8)                       -- ไปยืนฝั่งสนามก่อน (ใกล้เส้น)
-        task.wait(0.5)                               -- ให้ server egg ตามมาทัน
-        local t=os.clock()                           -- ★ เดินจริงช้า (speed 20) ข้ามเส้น = validated
-        while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<4 do
-            pcall(function() if Move.WalkTo then Move.WalkTo(safePt,1,20) end end)
-            RunService.Heartbeat:Wait()
-        end
+        local d=(Vector3.new(h.Position.X,HOME.Y,h.Position.Z)-Vector3.new(HOME.X,HOME.Y,HOME.Z)).Magnitude
+        pcall(function() if Move.WalkTo then Move.WalkTo(Vector3.new(HOME.X,HOME.Y,HOME.Z), 1, CFG.SYNC_SPEED) end end)  -- เดิน sync 24
+        if d<=6 then settle=settle+1 else settle=0 end
+        if settle==1 then log("   ⏳ settle ที่บ้าน (ให้ server egg ตามทัน)...") end
+        RunService.Heartbeat:Wait()
     end
 end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
     -- ① กลับบ้านเร็ว (ride หรือ tween)
     if CFG.USE_RIDE then rideMake(); rideTo(HOME, 25); rideCleanup()
-    else gotoPos(HOME, CFG.ARRIVE) end
+    else gotoPos(HOME, CFG.DEPOSIT_APPROACH, 40) end   -- tween มาใกล้บ้าน (ในระยะ approach 24)
     local hh=hrp(); log(("   ▶ ถึงบ้าน carrying=%s pos=%s"):format(tostring(carrying), hh and ("(%.0f,%.0f,%.0f)"):format(hh.Position.X,hh.Position.Y,hh.Position.Z) or "?"))
-    -- ② รอ redeem อัตโนมัติแป๊บ
-    local t=os.clock(); while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<2 do RunService.Heartbeat:Wait() end
-    -- ③ ถ้ายังไม่ฝาก → เดินข้ามเส้นช้าๆ (validated) ให้ server egg ตามทัน
-    if lastClaim<=claimBefore and carrying then walkCrossLine(claimBefore) end
+    -- ② walk-sync settle ที่บ้าน = ให้ server egg ตามทัน → เกมฝากเอง (สูตร monthonsova)
+    if lastClaim<=claimBefore and carrying then depositAtHome(claimBefore) end
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
