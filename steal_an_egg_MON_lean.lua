@@ -291,6 +291,20 @@ bind("SAE_ONE", function()
         ENV.SAE_RUN=false
     end)
 end)
+-- ★ TEST ไข่ไกล: เก็บไข่ตาม tier (ไกลสุด) 1 ใบ → ฝาก (ดู log ▶ ถึงบ้าน carrying=)
+bind("SAE_ONEFAR", function()
+    if not HOME then log("⚠️ SAE_SETHOME() ก่อน") return end
+    ENV.SAE_RUN=true
+    task.spawn(function()
+        local tgt=targetEgg()
+        if not tgt then log("ไม่มีไข่ตาม tier ("..(CFG.RARITY==""and"ทุก"or CFG.RARITY)..")") ENV.SAE_RUN=false return end
+        log(("🧪 TEST FAR: %s [%s] @%.0f (ride=%s)"):format(tgt.cat, tgt.rarity, tgt.dist, tostring(CFG.USE_RIDE)))
+        if grab(tgt) then
+            log(carryHome() and "✅✅✅ ฝากไข่ไกลได้จริง!" or "❌ ฝากไม่ได้ (ดู ▶ ถึงบ้าน carrying=)")
+        else log("❌ เก็บไม่ติด/ไปไม่ถึง") end
+        ENV.SAE_RUN=false
+    end)
+end)
 bind("SAE_STOP", function() ENV.SAE_RUN=false log("หยุด") end)
 bind("SAE_KILL", function() ENV.SAE_RUN=false ENV.SAE_ALIVE=false log("ปิดหมด") end)
 bind("SAE_START", function()
