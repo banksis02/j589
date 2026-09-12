@@ -202,14 +202,25 @@ local function crossOnce()
 end
 local function carryHome()
     local claimBefore=lastClaim                   -- ★ ฝากจริง = lastClaim เพิ่ม (RedeemVerdict)
-    gotoPos(HOME, CFG.ARRIVE)                     -- วาปกลับบ้าน (tween)
-    local homeV=Vector3.new(HOME.X,HOME.Y,HOME.Z)
-    -- ★ เดินจริงเข้า safe zone (server เห็นการข้ามเส้นจริง = ฝากได้) — เหมือน walk-sync ตอน grab ที่เวิร์ก
+    if not line then gotoPos(HOME, CFG.ARRIVE); return lastClaim>claimBefore end
+    local n=lineNormal(); local safeDir=n*SAFE_SIGN
+    local foot=HOME - signedSide(HOME)*n          -- จุดบนเส้นแนว HOME
+    local fieldNear=Vector3.new((foot-safeDir*22).X, HOME.Y, (foot-safeDir*22).Z)  -- ฝั่งสนาม ใกล้เส้น
+    local safeDeep =Vector3.new((foot+safeDir*32).X, HOME.Y, (foot+safeDir*32).Z)  -- ฝั่งเซฟ ลึก
+    -- 1) วาปไปจุดฝั่งสนามใกล้เส้น
+    gotoPos(fieldNear, 6, 20)
+    -- 2) เดินจริง "ค้าง" ฝั่งสนามแป๊บ → server sync ว่าเราอยู่ฝั่งสนาม
     local t=os.clock()
-    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<9 do
-        pcall(function() if Move.WalkTo then Move.WalkTo(homeV, 1, 60) end end)
-        RunService.Heartbeat:Wait()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t<2 do
+        pcall(function() if Move.WalkTo then Move.WalkTo(fieldNear,1,40) end end); RunService.Heartbeat:Wait()
     end
+    -- 3) เดินจริง "ข้ามเส้น" เข้าฝั่งเซฟ (server เห็น prev=สนาม cur=เซฟ = Separates=true = ฝาก)
+    noclipTemp=true
+    local t2=os.clock()
+    while carrying and ENV.SAE_RUN and lastClaim<=claimBefore and os.clock()-t2<6 do
+        pcall(function() if Move.WalkTo then Move.WalkTo(safeDeep,1,55) end end); RunService.Heartbeat:Wait()
+    end
+    noclipTemp=false
     return lastClaim>claimBefore                  -- true = ได้ไข่จริง (server ยืนยัน RedeemVerdict)
 end
 
