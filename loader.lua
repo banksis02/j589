@@ -26,7 +26,7 @@ end
 if pid == 107778070777162 then
     task.spawn(function()
         local ok, err = pcall(function()
-            local source = game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_fall_recovery.lua?v=1")
+            local source = game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_fall_recovery.lua?v=2")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
