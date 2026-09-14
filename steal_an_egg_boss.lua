@@ -18,7 +18,7 @@ local function P(v) return v and ("(%.0f,%.0f,%.0f)"):format(v.X,v.Y,v.Z) or "?"
 _G.SAE_BOSS_GEN=(_G.SAE_BOSS_GEN or 0)+1
 local GEN=_G.SAE_BOSS_GEN
 local function alive() return GEN==_G.SAE_BOSS_GEN end
-local CFG={ MELEE=8, ATTACK_GAP=0.15, ARRIVE=6 }
+local CFG={ MELEE=8, ATTACK_GAP=0.3, ARRIVE=6 }   -- ATTACK_GAP ช้าลง กัน Activate spam (BAC)
 
 -- remote เข้าห้องบอส (ยิงเข้าตรงๆ ไม่ต้องเดินไปประตู)
 local RS=game:GetService("ReplicatedStorage")
@@ -64,8 +64,7 @@ local function bossActive()  -- บอส/ประตู มีอยู่ไ�
     local c=bossHP(); return c~=nil
 end
 
--- ── อาวุธ (slot 1) ──
-local VIM; pcall(function() VIM=game:GetService("VirtualInputManager") end)
+-- ── อาวุธ (slot 1) — ไม่ใช้ VirtualInputManager (เสี่ยง BAC) ──
 local function findWeapon()
     -- ถ้าถืออยู่แล้ว
     if player.Character then for _,it in ipairs(player.Character:GetChildren()) do
@@ -83,13 +82,8 @@ local function equipKatana()
     if c then for _,it in ipairs(c:GetChildren()) do if it:IsA("Tool") and it:GetAttribute("ItemType")=="Gear" and not it.Name:find("Trap") then return it end end end
     local w=findWeapon(); if not w then return nil end
     local h=hum()
-    if h then pcall(function() h:EquipTool(w) end) end
+    if h then pcall(function() h:EquipTool(w) end) end   -- EquipTool อย่างเดียว (ไม่ใช้ VIM)
     task.wait(0.1)
-    -- ถ้ายังไม่ถือ → กดปุ่ม "1" (slot 1)
-    if not (c and c:FindFirstChild(w.Name)) and VIM then
-        pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game) task.wait(0.05) VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game) end)
-        task.wait(0.1)
-    end
     return player.Character and player.Character:FindFirstChild(w.Name) or w
 end
 
@@ -140,10 +134,9 @@ ENV.SAE_BOSS_GO=function()
             if not k then k=equipKatana() end   -- ★ re-equip ถ้าหลุด
             if k and k.Parent==player.Character then pcall(function() k:Activate() end) end
         end
-        local function nearHit(p) -- ขยับเข้าระยะฟัน (CFrame สเต็ป ไม่วาป) + ฟัน
-            local h=hrp(); if not h or not p then return end
-            local d=(p-h.Position)
-            if d.Magnitude>CFG.MELEE then pcall(function() h.CFrame=CFrame.new(h.Position + d.Unit*math.min(20,d.Magnitude) + Vector3.new(0,2,0)) end) end
+        local function nearHit(p) -- ★ เดินจริง MoveTo เข้าหาเป้า (ไม่ teleport = ไม่โดน AC เตะ)
+            local h=hrp(); local hm=hum(); if not h or not hm or not p then return end
+            if (p-h.Position).Magnitude>CFG.MELEE then pcall(function() hm:MoveTo(p) end) end
         end
         -- หิน CrystalTowers
         local function crystals()
