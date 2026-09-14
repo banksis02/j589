@@ -20,23 +20,14 @@ local GEN=_G.SAE_BOSS_GEN
 local function alive() return GEN==_G.SAE_BOSS_GEN end
 local CFG={ MELEE=8, ATTACK_GAP=0.3, ARRIVE=6 }   -- ATTACK_GAP ช้าลง กัน Activate spam (BAC)
 
--- remote เข้าห้องบอส (ยิงเข้าตรงๆ ไม่ต้องเดินไปประตู)
+-- เข้าห้องบอส = ยิง remote (user เทสแล้วไม่เตะ)
 local RS=game:GetService("ReplicatedStorage")
 local NET=RS:FindFirstChild("Packages"); NET=NET and NET:FindFirstChild("Networking")
 local AskEnter=NET and NET:FindFirstChild("RF/BossEvent/AskEnter")
 local ReqTP   =NET and NET:FindFirstChild("RF/MonsterEvent/RequestTeleport")
 local function enterRemote()
-    -- ลอง AskEnter (ไม่มี arg → มี arg) แล้ว RequestTeleport
-    if AskEnter then
-        local ok,r=pcall(function() return AskEnter:InvokeServer() end)
-        log("   AskEnter() → ok="..tostring(ok).." r="..tostring(r))
-        if ok then return true end
-    end
-    if ReqTP then
-        local ok,r=pcall(function() return ReqTP:InvokeServer() end)
-        log("   RequestTeleport() → ok="..tostring(ok).." r="..tostring(r))
-        if ok then return true end
-    end
+    if AskEnter then local ok=pcall(function() return AskEnter:InvokeServer() end) if ok then return true end end
+    if ReqTP then pcall(function() return ReqTP:InvokeServer() end) end
     return false
 end
 
@@ -85,19 +76,6 @@ local function equipKatana()
     if h then pcall(function() h:EquipTool(w) end) end   -- EquipTool อย่างเดียว (ไม่ใช้ VIM)
     task.wait(0.1)
     return player.Character and player.Character:FindFirstChild(w.Name) or w
-end
-
--- ── movement (CFrame ตัวจริง — ในบอส arena ไม่มี guard/AC เข้ม) ──
-local function moveTo(pos, radius, timeout)
-    radius=radius or CFG.ARRIVE; local t=os.clock()
-    while alive() and os.clock()-t<(timeout or 12) do
-        local h=hrp(); if not h then break end
-        local d=(pos-h.Position)
-        if d.Magnitude<radius then return true end
-        pcall(function() h.CFrame=CFrame.new(h.Position + d.Unit*math.min(12,d.Magnitude)) end)
-        RunService.Heartbeat:Wait()
-    end
-    return false
 end
 
 ENV.SAE_BOSS_STATUS=function()
