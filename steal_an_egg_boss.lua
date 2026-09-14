@@ -130,19 +130,19 @@ ENV.SAE_BOSS_GO=function()
             local bc,bm=bossHP()
             if bc and bc<=0 then log("🎉🎉 บอสตาย! (HP 0)"); break end
             if not bossModel() then log("บอสหาย → จบ"); break end
-            -- หาหินที่ยังไม่แตก (HP>0 หรืออ่านไม่ได้) ใกล้สุด
-            local target=nil; local h=hrp()
+            -- ★ ตีเฉพาะหินที่ HP>0 จริง (nil/0 = แตกแล้ว → ข้าม) ใกล้สุด
+            local target=nil; local h=hrp(); local nleft=0
             for _,cr in ipairs(crystals()) do
                 if cr.m.Parent then local hc=modelHP(cr.m)
-                    if (hc==nil) or (hc>0) then
+                    if hc and hc>0 then nleft=nleft+1
                         if not target then target=cr elseif h and (cr.pos-h.Position).Magnitude<(target.pos-h.Position).Magnitude then target=cr end
                     end
                 end
             end
-            if target then nearHit(target.pos); swing()          -- ตีหิน
+            if target then nearHit(target.pos); swing()          -- ตีหิน HP>0
             else local bp=bossPos(); if bp then nearHit(bp); swing() end end  -- หินหมด → ตีบอส
-            if os.clock()-lastLog>3 then lastLog=os.clock()
-                log(("   %s | บอสHP=%s/%s"):format(target and "ตีหิน" or "หินหมด→ตีบอส", tostring(bc), tostring(bm))) end
+            if os.clock()-lastLog>2 then lastLog=os.clock()
+                log(("   %s หินเหลือ=%d | บอสHP=%s/%s"):format(target and "ตีหิน" or "ตีบอส", nleft, tostring(bc), tostring(bm))) end
             task.wait(CFG.ATTACK_GAP)
         end
         -- ④ จบ
