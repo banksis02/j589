@@ -130,37 +130,39 @@ ENV.SAE_BOSS_GO=function()
             local bc,bm=bossHP()
             if bc and bc<=0 then log("🎉🎉 บอสตาย! (HP 0)"); break end
             if not bossModel() then log("บอสหาย → จบ"); break end
-            -- ★ ตีเฉพาะหินที่ HP>0 จริง (nil/0 = แตกแล้ว → ข้าม) ใกล้สุด
-            local target=nil; local h=hrp(); local nleft=0
+            local h=hrp(); local myPos=h and h.Position
+            -- หิน: HP>0 (ใกล้สุด) + นับ Model ที่ยังอยู่
+            local target=nil; local nleft=0; local ntotal=0
             for _,cr in ipairs(crystals()) do
-                if cr.m.Parent then local hc=modelHP(cr.m)
+                if cr.m.Parent then ntotal=ntotal+1; local hc=modelHP(cr.m)
                     if hc and hc>0 then nleft=nleft+1
-                        if not target then target=cr elseif h and (cr.pos-h.Position).Magnitude<(target.pos-h.Position).Magnitude then target=cr end
+                        if not target then target=cr elseif myPos and (cr.pos-myPos).Magnitude<(target.pos-myPos).Magnitude then target=cr end
                     end
                 end
             end
-            if target then nearHit(target.pos); swing()          -- ตีหิน HP>0
-            else
-                -- ★ บอสล้ม → "มือ" มี HP billboard ของตัวเอง → หา part ที่มี HP + ใกล้เราสุด(ไม่ใช่หิน) = มือ
-                local hand=nil; local hd=1e9; local myPos=h and h.Position
-                local ar=arena()
-                if ar and myPos then for _,d in ipairs(ar:GetDescendants()) do
-                    if d:IsA("TextLabel") then
-                        local cur=tostring(d.Text):match("([%d,]+)%s*/%s*[%d,]+")
-                        if cur and tonumber((cur:gsub(",","")) or 0)>0 then
-                            if not d:FindFirstAncestor("CrystalTowers") then   -- ไม่ใช่หิน
-                                local gui=d:FindFirstAncestorWhichIsA("BillboardGui")
-                                local pt=(gui and gui.Adornee) or d:FindFirstAncestorWhichIsA("BasePart")
-                                if pt and pt:IsA("BasePart") then local dd=(pt.Position-myPos).Magnitude if dd<hd then hd=dd; hand=pt.Position end end
-                            end
-                        end
+            -- มือ: HP billboard ที่ไม่ใช่หิน+ไม่ใช่ตัวบอสสูง (ใกล้สุด)
+            local hand=nil; local hd=1e9
+            local ar=arena()
+            if ar and myPos then for _,d in ipairs(ar:GetDescendants()) do
+                if d:IsA("TextLabel") and not d:FindFirstAncestor("CrystalTowers") then
+                    local cur=tostring(d.Text):match("([%d,]+)%s*/%s*[%d,]+")
+                    if cur and (tonumber(cur:gsub(",",""))or 0)>0 then
+                        local gui=d:FindFirstAncestorWhichIsA("BillboardGui")
+                        local pt=(gui and gui.Adornee) or d:FindFirstAncestorWhichIsA("BasePart")
+                        if pt and pt:IsA("BasePart") then local dd=(pt.Position-myPos).Magnitude if dd<hd then hd=dd; hand=pt.Position end end
                     end
-                end end
-                if hand and h then nearHit(Vector3.new(hand.X, h.Position.Y, hand.Z)); swing()   -- ไปใต้มือ+ฟัน
-                else local bp=bossPos(); if bp and h then nearHit(Vector3.new(bp.X,h.Position.Y,bp.Z)); swing() end end  -- fallback ใต้บอส
-            end
+                end
+            end end
+            -- ★ ตัดสินใจ (ห้ามยืนนิ่ง): หิน HP>0 → หิน | มือ → มือ | มีหิน Model → หินใกล้สุด | ไม่งั้น → ใต้บอส
+            local mode
+            if target then mode="หิน"; nearHit(target.pos); swing()
+            elseif hand and h then mode="มือ"; nearHit(Vector3.new(hand.X,h.Position.Y,hand.Z)); swing()
+            elseif ntotal>0 then -- มีหินแต่อ่าน HP ไม่ได้ → ตีก้อนใกล้สุดไว้ก่อน (กันยืนนิ่ง)
+                mode="หิน?"; local nn,nd=nil,1e9 for _,cr in ipairs(crystals()) do if cr.m.Parent and myPos then local dd=(cr.pos-myPos).Magnitude if dd<nd then nd=dd; nn=cr end end end
+                if nn then nearHit(nn.pos); swing() end
+            else local bp=bossPos(); mode="ใต้บอส"; if bp and h then nearHit(Vector3.new(bp.X,h.Position.Y,bp.Z)); swing() end end
             if os.clock()-lastLog>2 then lastLog=os.clock()
-                log(("   %s หินเหลือ=%d | บอสHP=%s/%s"):format(target and "ตีหิน" or "ตีบอส", nleft, tostring(bc), tostring(bm))) end
+                log(("   [%s] หิน %d/%d HP>0 | มือ=%s | บอสHP=%s | เรา%s"):format(mode, nleft, ntotal, tostring(hand~=nil), tostring(bc), P(myPos))) end
             task.wait(CFG.ATTACK_GAP)
         end
         -- ④ จบ
