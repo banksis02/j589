@@ -7,12 +7,36 @@ local function save() local t=table.concat(out,"\n")
     if type(writefile)=="function" then pcall(writefile,"boss_recon.txt",t) end print(t) end
 local function P(v) return v and ("(%.0f,%.0f,%.0f)"):format(v.X,v.Y,v.Z) or "?" end
 local h=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-local function pos(o) if o:IsA("BasePart") then return o.Position end local p=o:FindFirstChild("HumanoidRootPart") or o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart") return p and p.Position end
+local function pos(o)
+    if o:IsA("BasePart") then return o.Position end
+    if o:IsA("Model") then local ok,pp=pcall(function() return o.PrimaryPart end) if ok and pp then return pp.Position end end
+    local b=o:FindFirstChildWhichIsA("BasePart",true)
+    return b and b.Position
+end
 add("════ BOSS RECON (active) ════"); add("เรา @"..P(h and h.Position))
 
--- ★★ 0) หา "ประตู RIFT" (BOSS FIGHT RIFT) ที่ต้องเข้าก่อน + วิธีเข้า ★★
-add("── ประตู RIFT (ต้องเข้าก่อน) ──")
 local myPos=(h and h.Position) or Vector3.new()
+-- ★★★ RiftMachine ตรงๆ (เจอจาก log: Workspace.__OBJECTS.Machines.RiftMachine) ★★★
+add("── RiftMachine (ประตูบอส) ──")
+local mach=WS:FindFirstChild("__OBJECTS"); mach=mach and mach:FindFirstChild("Machines")
+local rm=mach and mach:FindFirstChild("RiftMachine")
+if rm then
+    add("RiftMachine @"..P(pos(rm)).." ห่าง"..((pos(rm) and h) and math.floor((pos(rm)-myPos).Magnitude) or -1))
+    local at={} pcall(function() for k,v in pairs(rm:GetAttributes()) do at[#at+1]=k.."="..tostring(v) end end)
+    if #at>0 then add("   attr{"..table.concat(at,",").."}") end
+    for _,c in ipairs(rm:GetDescendants()) do
+        if c:IsA("ProximityPrompt") then add("   ★Prompt('"..(c.ActionText or "").."/"..(c.ObjectText or "").."') @"..P(pos(c.Parent)))
+        elseif c:IsA("ClickDetector") then add("   ★Click @"..P(pos(c.Parent)))
+        elseif c:IsA("TouchTransmitter") then add("   ★Touch @"..P(pos(c.Parent)))
+        elseif c:IsA("TextLabel") and #c.Text>0 and #c.Text<40 then add("   txt: "..c.Name.."='"..c.Text.."'") end
+    end
+    add("   ลูก RiftMachine: ")
+    for _,c in ipairs(rm:GetChildren()) do add("      └ "..c.Name.." ("..c.ClassName..") @"..P(pos(c))) end
+    if mach then add("   Machines อื่น: "); for _,c in ipairs(mach:GetChildren()) do add("      • "..c.Name) end end
+else add("   (ไม่เจอ __OBJECTS.Machines.RiftMachine)") end
+
+-- ★★ 0) หา "ประตู RIFT" อื่นๆ + วิธีเข้า ★★
+add("── ประตู/rift อื่นๆ ──")
 local KW_RIFT={"rift","Rift","portal","Portal","boss","Boss","fight","Fight","tear","Tear","monsterevent","MonsterEvent"}
 local seen={}
 for _,d in ipairs(WS:GetDescendants()) do
