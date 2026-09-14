@@ -20,6 +20,26 @@ local GEN=_G.SAE_BOSS_GEN
 local function alive() return GEN==_G.SAE_BOSS_GEN end
 local CFG={ MELEE=8, ATTACK_GAP=0.15, ARRIVE=6 }
 
+-- remote เข้าห้องบอส (ยิงเข้าตรงๆ ไม่ต้องเดินไปประตู)
+local RS=game:GetService("ReplicatedStorage")
+local NET=RS:FindFirstChild("Packages"); NET=NET and NET:FindFirstChild("Networking")
+local AskEnter=NET and NET:FindFirstChild("RF/BossEvent/AskEnter")
+local ReqTP   =NET and NET:FindFirstChild("RF/MonsterEvent/RequestTeleport")
+local function enterRemote()
+    -- ลอง AskEnter (ไม่มี arg → มี arg) แล้ว RequestTeleport
+    if AskEnter then
+        local ok,r=pcall(function() return AskEnter:InvokeServer() end)
+        log("   AskEnter() → ok="..tostring(ok).." r="..tostring(r))
+        if ok then return true end
+    end
+    if ReqTP then
+        local ok,r=pcall(function() return ReqTP:InvokeServer() end)
+        log("   RequestTeleport() → ok="..tostring(ok).." r="..tostring(r))
+        if ok then return true end
+    end
+    return false
+end
+
 -- ── หา object ──
 local function portal() local m=WS:FindFirstChild("BossArenaTeleport") return m end
 local function portalHitbox() local m=portal() return m and (m:FindFirstChild("Hitbox") or m:FindFirstChildWhichIsA("BasePart")) end
@@ -78,18 +98,11 @@ ENV.SAE_BOSS_GO=function()
     task.spawn(function()
         -- ① เข้าประตู (ถ้ายังไม่อยู่ arena)
         if not inArena() then
-            local hb=portalHitbox()
-            if not hb then log("❌ ไม่เจอ Hitbox ประตู"); ENV.SAE_BOSS_RUN=false; return end
-            log("① เดินชนประตู @"..P(hb.Position).." (CFrame ทีละสเต็ป ไม่วาป)")
+            log("① เข้าห้องบอส (ยิง remote AskEnter — ไม่ต้องเดินไปประตู)")
             local t=os.clock()
-            while alive() and ENV.SAE_BOSS_RUN and not inArena() and os.clock()-t<20 do
-                local h=hrp(); if not h then break end
-                local tgt=hb.Position+Vector3.new(0,2,0)
-                local d=tgt-h.Position
-                if d.Magnitude>2 then
-                    pcall(function() h.CFrame=CFrame.new(h.Position + d.Unit*math.min(6,d.Magnitude)) end)  -- ★ สเต็ป 6/เฟรม ไม่โดนดึง
-                end
-                RunService.Heartbeat:Wait()
+            while alive() and ENV.SAE_BOSS_RUN and not inArena() and os.clock()-t<15 do
+                enterRemote()
+                local t2=os.clock(); while not inArena() and os.clock()-t2<2 do RunService.Heartbeat:Wait() end
             end
             if not inArena() then log("⚠️ เข้า arena ไม่ได้ (ประตูอาจปิด/ต้องเงื่อนไข)"); ENV.SAE_BOSS_RUN=false; return end
             log("✅ เข้า arena แล้ว @"..P(hrp() and hrp().Position))
