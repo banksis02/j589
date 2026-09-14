@@ -6,7 +6,7 @@
 --     ถ้าเตะ = invoke คือปัญหา → กลับไปใช้ตัว min (ไม่มีชื่อ)
 --     ถ้ารอด = ได้ชื่อไข่กลับมาใช้ได้
 -- ============================================================
-local SV = "names-v2-hop"
+local SV = "names-v1"
 _G.SAE_NOTIFY_GEN = (_G.SAE_NOTIFY_GEN or 0) + 1
 local GEN = _G.SAE_NOTIFY_GEN
 local function alive() return GEN == _G.SAE_NOTIFY_GEN end
@@ -20,83 +20,6 @@ local ENV         = (type(getgenv) == "function" and getgenv()) or _G
 
 local BACKEND_URL = "https://overload-backend-production.up.railway.app"
 local INTERVAL    = 60
-
--- ============================================================
--- ⭐ AUTO SERVER HOP — ทำงานครั้งแรกที่โหลด (ไม่มี UI)
---    ถ้าห้องนี้มีคน > 4 → หาเซิร์ฟ public คนน้อย (≤4, ไม่เต็ม) แล้วย้ายอัตโนมัติ
---    เซิร์ฟเต็ม/ย้ายไม่ผ่าน (Error 772 ฯลฯ) → ลองเซิร์ฟถัดไปเอง
---    BAC-safe: ใช้แค่ Teleport API + HTTP ไป roblox API (ไม่ยิง remote เกม/ไม่ hook)
--- ============================================================
-local function autoServerHop()
-    local Teleport = game:GetService("TeleportService")
-    local n = #Players:GetPlayers()
-    if n <= 4 then
-        print(("[SAE-HOP] ห้องนี้ %d คน (≤4) — ไม่ต้องย้าย"):format(n))
-        return false
-    end
-    print(("[SAE-HOP] ห้องนี้ %d คน (>4) — หาเซิร์ฟคนน้อย..."):format(n))
-
-    local requestFn = (syn and syn.request) or (http and http.request) or http_request or request
-    local function fetch(url)
-        if type(requestFn) == "function" then
-            local res = requestFn({ Url = url, Method = "GET" })
-            if type(res) ~= "table" or tonumber(res.StatusCode) ~= 200 then
-                error("HTTP " .. tostring(res and res.StatusCode))
-            end
-            return HttpService:JSONDecode(res.Body)
-        end
-        return HttpService:JSONDecode(game:HttpGet(url))
-    end
-
-    -- รวมเซิร์ฟผู้เล่นน้อย (≤4, ไม่เต็ม, ไม่ใช่ห้องปัจจุบัน) เรียงจากน้อยไปมาก
-    local cands = {}
-    local ok, err = pcall(function()
-        local cursor
-        for _ = 1, 5 do
-            local url = ("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100")
-                :format(tostring(game.PlaceId))
-            if cursor then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
-            local data = fetch(url)
-            if type(data) ~= "table" or type(data.data) ~= "table" then break end
-            for _, s in ipairs(data.data) do
-                if type(s.id) == "string" and s.id ~= game.JobId
-                   and type(s.playing) == "number" and type(s.maxPlayers) == "number"
-                   and s.playing < s.maxPlayers and s.playing <= 4 then
-                    cands[#cands + 1] = s
-                end
-            end
-            if #cands >= 12 then break end
-            cursor = data.nextPageCursor
-            if type(cursor) ~= "string" or cursor == "" then break end
-            task.wait(0.6)
-        end
-    end)
-    if not ok then warn("[SAE-HOP] หาเซิร์ฟไม่สำเร็จ: " .. tostring(err)); return false end
-    table.sort(cands, function(a, b) return a.playing < b.playing end)
-    if #cands == 0 then print("[SAE-HOP] ไม่พบเซิร์ฟคนน้อย (≤4) — อยู่ห้องนี้ต่อ"); return false end
-
-    -- ลองย้ายทีละเซิร์ฟ (เต็ม/ล้มเหลว → เซิร์ฟถัดไป)
-    local failed = false
-    Teleport.TeleportInitFailed:Connect(function() failed = true end)
-    for i = 1, math.min(6, #cands) do
-        local s = cands[i]
-        failed = false
-        print(("[SAE-HOP] ย้ายไปเซิร์ฟ %d/%d คน (ลอง %d)..."):format(s.playing, s.maxPlayers, i))
-        local sent = pcall(function() Teleport:TeleportToPlaceInstance(game.PlaceId, s.id, player) end)
-        if sent then
-            local t = os.clock()
-            while not failed and os.clock() - t < 12 do task.wait(0.3) end
-            if not failed then return true end   -- ไม่ fail = กำลังย้าย/สำเร็จ → หยุดสคริปต์บนห้องนี้
-        end
-        print("[SAE-HOP] ห้องนี้ย้ายไม่ผ่าน (เต็ม?) ลองห้องถัดไป")
-        task.wait(1)
-    end
-    print("[SAE-HOP] ลองครบแล้วย้ายไม่สำเร็จ — อยู่ห้องนี้ต่อ")
-    return false
-end
-
--- เรียกครั้งเดียวตอนโหลด — ถ้ากำลังย้าย ให้หยุดสคริปต์ (ไม่รัน notify บนห้องที่กำลังจะออก)
-do local okHop, hopping = pcall(autoServerHop); if okHop and hopping then return end end
 
 local function log(t) print("[SAE-NAMES " .. SV .. "] " .. tostring(t)) end
 local function findDeep(root, ...)
