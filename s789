@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.99"
+local SCRIPT_VERSION = "v12.00"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -12474,10 +12474,43 @@ _G.AE_ENTER_DUMP = function()
 end
 
 -- ---------- ⭐ ทำทั้งหมด ----------
+-- ⭐ v11.99: เช็คว่าค้างอยู่ "หน้าปาร์ตี้ (pre-match)" ไหม — มีปุ่ม Change Gamemode/Change Map/Start
+local function onPartyScreen()
+    for _, g in ipairs(player.PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Enabled then
+            for _, l in ipairs(g:GetDescendants()) do
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                    local t = tostring(txt(l)):gsub("^%s+", ""):gsub("%s+$", "")
+                    if t == "Change Gamemode" or t == "Change Map" or t == "Disband" then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
 _G.AE_ENTER_RUN = function(mapName, diff)
     mapName = mapName or DEFAULT_MAP
     diff    = diff or DEFAULT_DIFF
     print(("[Enter] ▶️ เข้าด่าน %s ความยาก %d"):format(mapName, diff))
+
+    -- ⭐ v11.99: กันกดผิด (เช่นเผลอกด View Party) แล้วค้างหน้าปาร์ตี้
+    --    → กด Change Map → เลือกด่านลูกค้า → ปรับระดับ → Select Stage → Start เลย (ไม่ต้อง TP/E ใหม่)
+    if onPartyScreen() then
+        print("[Enter] ⏩ ค้างหน้าปาร์ตี้ → Change Map แล้วเลือกด่าน '"..mapName.."' ใหม่")
+        clickText("Change Map", 4)
+        task.wait(1.5)
+        if _G.AE_FORCE_STANDARD ~= false then pcall(_G.AE_ENTER_PAYLOAD) end
+        if not _G.AE_ENTER_MAP(mapName) then print("[Enter] ❌ เลือกแมพ '"..mapName.."' ไม่ได้ (หน้าปาร์ตี้)"); return false end
+        task.wait(0.5)
+        _G.AE_ENTER_DIFF(diff)
+        task.wait(0.5)
+        if not _G.AE_ENTER_SELECT() then return false end
+        task.wait(2.5)
+        if not _G.AE_ENTER_START() then task.wait(2); _G.AE_ENTER_START() end
+        print("[Enter] ✅ กด Start (กู้จากหน้าปาร์ตี้) — รอเข้าด่าน")
+        return true
+    end
 
     task.wait(2)                      -- รอ 2 วิ ตามที่ใช้จริง
     _G.AE_ENTER_TP()
