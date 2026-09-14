@@ -112,9 +112,10 @@ ENV.SAE_BOSS_GO=function()
             if not k then k=equipKatana() end   -- ★ re-equip ถ้าหลุด
             if k and k.Parent==player.Character then pcall(function() k:Activate() end) end
         end
-        local function nearHit(p) -- ★ เดินจริง MoveTo เข้าหาเป้า (ไม่ teleport = ไม่โดน AC เตะ)
+        local function nearHit(p) -- ★ เดินเข้าหา + หันหน้าหาเป้า (Katana ฟันไปข้างหน้า ต้องหันหา ถึงโดน)
             local h=hrp(); local hm=hum(); if not h or not hm or not p then return end
-            if (p-h.Position).Magnitude>CFG.MELEE then pcall(function() hm:MoveTo(p) end) end
+            if (p-h.Position).Magnitude>CFG.MELEE then pcall(function() hm:MoveTo(p) end)
+            else pcall(function() h.CFrame=CFrame.lookAt(h.Position, Vector3.new(p.X,h.Position.Y,p.Z)) end) end  -- หันหน้าหาเป้า
         end
         -- หิน CrystalTowers
         local function crystals()
@@ -131,6 +132,14 @@ ENV.SAE_BOSS_GO=function()
             if bc and bc<=0 then log("🎉🎉 บอสตาย! (HP 0)"); break end
             if not bossModel() then log("บอสหาย → จบ"); break end
             local h=hrp(); local myPos=h and h.Position
+            -- ★ บังคับให้เดินได้ (แก้ยืนเฉย: WalkSpeed=0/Sit/PlatformStand/anchored หลังเข้า arena)
+            local hm=hum()
+            if hm then pcall(function()
+                hm.Sit=false; hm.PlatformStand=false
+                if hm.WalkSpeed<8 then hm.WalkSpeed=50 end
+                hm:SetStateEnabled(Enum.HumanoidStateType.Physics,false)
+            end) end
+            if h and h.Anchored then pcall(function() h.Anchored=false end) end
             -- หิน: HP>0 (ใกล้สุด) + นับ Model ที่ยังอยู่
             local target=nil; local nleft=0; local ntotal=0
             for _,cr in ipairs(crystals()) do
@@ -162,7 +171,7 @@ ENV.SAE_BOSS_GO=function()
                 if nn then nearHit(nn.pos); swing() end
             else local bp=bossPos(); mode="ใต้บอส"; if bp and h then nearHit(Vector3.new(bp.X,h.Position.Y,bp.Z)); swing() end end
             if os.clock()-lastLog>2 then lastLog=os.clock()
-                log(("   [%s] หิน %d/%d HP>0 | มือ=%s | บอสHP=%s | เรา%s"):format(mode, nleft, ntotal, tostring(hand~=nil), tostring(bc), P(myPos))) end
+                log(("   [%s] หิน %d/%d | มือ=%s | บอสHP=%s | เรา%s WS=%s"):format(mode, nleft, ntotal, tostring(hand~=nil), tostring(bc), P(myPos), hm and ("%.0f"):format(hm.WalkSpeed) or "?")) end
             task.wait(CFG.ATTACK_GAP)
         end
         -- ④ จบ
