@@ -38,8 +38,32 @@ local function mounted()
     if not ok or type(snap)~="table" then return false end
     return table.find(snap, player.UserId)~=nil
 end
-local function wear() if not (treadmill and treadmill.AskWearStill) then return false end
-    return pcall(function() return treadmill.AskWearStill:InvokeServer() end) end
+local function hrpG() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
+local function humG() local c=player.Character return c and c:FindFirstChildOfClass("Humanoid") end
+-- ★ เอาตัวลงพื้น (แก้ "Not grounded" ตอนสคริปเก็บไข่ทำให้ลอย)
+local function groundSelf()
+    local h=hrpG(); if not h then return false end
+    -- ลบ body mover ที่ทำให้ลอย (ของสคริปเก็บไข่ตอน idle) ชั่วคราว
+    for _,d in ipairs(player.Character:GetDescendants()) do
+        if d:IsA("BodyVelocity") or d:IsA("BodyPosition") or d:IsA("BodyGyro") or d:IsA("LinearVelocity") or d:IsA("AlignPosition") then pcall(function() d.Velocity=Vector3.new(0,-50,0) end) end
+    end
+    -- raycast หาพื้นใต้ตัว → วางลงพื้น
+    local params=RaycastParams.new(); params.FilterType=Enum.RaycastFilterType.Exclude; params.FilterDescendantsInstances={player.Character}
+    local r=workspace:Raycast(h.Position, Vector3.new(0,-300,0), params)
+    if r then pcall(function() h.CFrame=CFrame.new(r.Position+Vector3.new(0,3.5,0)) end) end
+    -- รอให้ Humanoid แตะพื้น (ไม่ใช่ Air) สูงสุด 1.2 วิ
+    local hm=humG(); local t=os.clock()
+    while hm and hm.FloorMaterial==Enum.Material.Air and os.clock()-t<1.2 do
+        pcall(function() h.AssemblyLinearVelocity=Vector3.new(0,-30,0) end)
+        task.wait(0.05)
+    end
+    return hm and hm.FloorMaterial~=Enum.Material.Air
+end
+local function wear()
+    if not (treadmill and treadmill.AskWearStill) then return false end
+    groundSelf()   -- ★ ลงพื้นก่อน mount
+    return pcall(function() return treadmill.AskWearStill:InvokeServer() end)
+end
 
 ENV.SAE_TREAD_STATUS=function()
     log("Speed="..tostring(speedStat()).." | mounted="..tostring(mounted()))
