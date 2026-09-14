@@ -49,23 +49,47 @@ ENV.SAE_TREAD_STATUS=function()
         log("snapshot: {"..table.concat(ks,", ").."}") end end
 end
 
+local RunService=game:GetService("RunService")
+local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
+local function hum() local c=player.Character return c and c:FindFirstChildOfClass("Humanoid") end
+-- นับ step จาก SpeedGained
+local stepCount=0
+local SpeedGainedRE=NET and NET:FindFirstChild("RE/Treadmill/SpeedGained")
+pcall(function() if SpeedGainedRE then SpeedGainedRE.OnClientEvent:Connect(function() stepCount=stepCount+1 end) end end)
+
 ENV.SAE_TREAD_ON=function()
-    if not WearStill then log("❌ ไม่เจอ remote AskWearStill (path อาจต่าง — รัน recon)"); return end
+    if not WearStill then log("❌ ไม่เจอ remote AskWearStill"); return end
     ENV.SAE_TREAD_RUN=true
-    log("🏃 ขึ้นลู่วิ่ง (AskWearStill) ...")
-    local s0=speedStat() or 0
+    log("🏃 ขึ้นลู่วิ่ง (AskWearStill) + จำลองการก้าว...")
+    local s0=speedStat() or 0; local g0=stepCount
+    -- keep mounted
     task.spawn(function()
         while alive() and ENV.SAE_TREAD_RUN do
             local m=isMounted()
-            if m==false or m==nil then wear() end   -- ยังไม่ mount / เช็คไม่ได้ → ยิงขึ้นลู่
-            task.wait(3)                              -- keep mounted (ไม่ spam)
+            if m==false or m==nil then wear() end
+            task.wait(3)
         end
+    end)
+    -- ★ จำลองการก้าว/วิ่ง (ลู่ได้ speed ต่อ step) — ขยับ humanoid ไปมาเล็กๆ อยู่กับที่
+    task.spawn(function()
+        local dir=1
+        while alive() and ENV.SAE_TREAD_RUN do
+            local hm=hum()
+            if hm then
+                dir=-dir
+                pcall(function() hm:Move(Vector3.new(0,0,dir*1), false) end)  -- ก้าวหน้า/หลังสลับ = step ไม่เดินไปไหน
+                pcall(function() hm.Jump=true end)  -- เผื่อ step นับตอนกระโดด
+            end
+            RunService.Heartbeat:Wait()
+        end
+        local hm=hum(); if hm then pcall(function() hm:Move(Vector3.new(0,0,0)) end) end
     end)
     task.spawn(function() task.wait(6)
         if alive() and ENV.SAE_TREAD_RUN then
             local now=speedStat() or 0
-            log(("เช็ค 6 วิ: Speed %s→%s %s | mounted=%s"):format(tostring(s0), tostring(now),
-                (now>s0 and "▲ขึ้น✅" or "(ดูยาก—Speed ขึ้นเองด้วย)"), tostring(isMounted())))
+            log(("เช็ค 6 วิ: Speed +%s | SpeedGained(step) ยิง %d ครั้ง | mounted=%s → %s")
+                :format(tostring((now or 0)-(s0 or 0)), stepCount-g0, tostring(isMounted()),
+                (stepCount-g0>0) and "ก้าวได้ speed✅" or "⚠️ ยังไม่ได้ step — ต้อง SAE_TREAD_STATUS ดู snapshot"))
         end
     end)
 end
