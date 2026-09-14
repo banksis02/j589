@@ -64,18 +64,33 @@ local function bossActive()  -- บอส/ประตู มีอยู่ไ�
     local c=bossHP(); return c~=nil
 end
 
--- ── อาวุธ Katana ──
-local function findKatana()
-    for _,src in ipairs({player.Character, player:FindFirstChild("Backpack")}) do
-        if src then for _,it in ipairs(src:GetChildren()) do
-            if it:IsA("Tool") and (it.Name:find("Katana") or it.Name:find("Sword") or it:GetAttribute("ItemType")=="Gear") then return it, src end
-        end end
+-- ── อาวุธ (slot 1) ──
+local VIM; pcall(function() VIM=game:GetService("VirtualInputManager") end)
+local function findWeapon()
+    -- ถ้าถืออยู่แล้ว
+    if player.Character then for _,it in ipairs(player.Character:GetChildren()) do
+        if it:IsA("Tool") and it:GetAttribute("ItemType")=="Gear" and not it.Name:find("Trap") then return it, player.Character end end end
+    -- หาใน backpack: อาวุธ (Gear ที่ไม่ใช่ Trap — ดาบ/Katana)
+    local bp=player:FindFirstChild("Backpack")
+    if bp then
+        for _,it in ipairs(bp:GetChildren()) do if it:IsA("Tool") and (it.Name:find("Katana") or it.Name:find("Sword") or it.Name:find("Blade")) then return it,bp end end
+        for _,it in ipairs(bp:GetChildren()) do if it:IsA("Tool") and it:GetAttribute("ItemType")=="Gear" and not it.Name:find("Trap") then return it,bp end end
     end
 end
 local function equipKatana()
-    local kat=findKatana(); if not kat then return nil end
-    if kat.Parent~=player.Character then local h=hum() if h then pcall(function() h:EquipTool(kat) end) end end
-    return player.Character:FindFirstChild(kat.Name) or kat
+    -- ถ้าถืออยู่แล้ว
+    local c=player.Character
+    if c then for _,it in ipairs(c:GetChildren()) do if it:IsA("Tool") and it:GetAttribute("ItemType")=="Gear" and not it.Name:find("Trap") then return it end end end
+    local w=findWeapon(); if not w then return nil end
+    local h=hum()
+    if h then pcall(function() h:EquipTool(w) end) end
+    task.wait(0.1)
+    -- ถ้ายังไม่ถือ → กดปุ่ม "1" (slot 1)
+    if not (c and c:FindFirstChild(w.Name)) and VIM then
+        pcall(function() VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game) task.wait(0.05) VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game) end)
+        task.wait(0.1)
+    end
+    return player.Character and player.Character:FindFirstChild(w.Name) or w
 end
 
 -- ── movement (CFrame ตัวจริง — ในบอส arena ไม่มี guard/AC เข้ม) ──
@@ -112,11 +127,19 @@ ENV.SAE_BOSS_GO=function()
             if not inArena() then log("⚠️ เข้า arena ไม่ได้ (ประตูอาจปิด/ต้องเงื่อนไข)"); ENV.SAE_BOSS_RUN=false; return end
             log("✅ เข้า arena แล้ว @"..P(hrp() and hrp().Position))
         end
-        -- ② ถือ Katana
+        -- ② ถือ อาวุธ (slot 1) — ต้อง equip ก่อนตี ไม่งั้นไม่เข้า
         local kat=equipKatana()
-        log(kat and ("② ถือ "..kat.Name) or "② ⚠️ ไม่มี Katana — ตีอาจไม่เข้า")
-        local function katana() local k=player.Character and player.Character:FindFirstChildWhichIsA("Tool") return (k and (k.Name:find("Katana") or k:GetAttribute("ItemType")=="Gear")) and k or equipKatana() end
-        local function swing() local k=katana() if k and k.Parent==player.Character then pcall(function() k:Activate() end) end end
+        log(kat and ("② ถืออาวุธ: "..kat.Name) or "② ⚠️ ไม่เจออาวุธ (Gear ใน backpack)")
+        local function heldWeapon()
+            local c=player.Character; if not c then return nil end
+            for _,it in ipairs(c:GetChildren()) do if it:IsA("Tool") and it:GetAttribute("ItemType")=="Gear" and not it.Name:find("Trap") then return it end end
+            return nil
+        end
+        local function swing()
+            local k=heldWeapon()
+            if not k then k=equipKatana() end   -- ★ re-equip ถ้าหลุด
+            if k and k.Parent==player.Character then pcall(function() k:Activate() end) end
+        end
         local function nearHit(p) -- ขยับเข้าระยะฟัน (CFrame สเต็ป ไม่วาป) + ฟัน
             local h=hrp(); if not h or not p then return end
             local d=(p-h.Position)
