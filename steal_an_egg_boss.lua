@@ -80,11 +80,16 @@ ENV.SAE_BOSS_GO=function()
         if not inArena() then
             local hb=portalHitbox()
             if not hb then log("❌ ไม่เจอ Hitbox ประตู"); ENV.SAE_BOSS_RUN=false; return end
-            log("① เดินชนประตู @"..P(hb.Position))
+            log("① เดินชนประตู @"..P(hb.Position).." (CFrame ทีละสเต็ป ไม่วาป)")
             local t=os.clock()
-            while alive() and ENV.SAE_BOSS_RUN and not inArena() and os.clock()-t<15 do
-                local h=hrp(); if h then pcall(function() h.CFrame=CFrame.new(hb.Position+Vector3.new(0,2,0)) end) end
-                task.wait(0.3)
+            while alive() and ENV.SAE_BOSS_RUN and not inArena() and os.clock()-t<20 do
+                local h=hrp(); if not h then break end
+                local tgt=hb.Position+Vector3.new(0,2,0)
+                local d=tgt-h.Position
+                if d.Magnitude>2 then
+                    pcall(function() h.CFrame=CFrame.new(h.Position + d.Unit*math.min(6,d.Magnitude)) end)  -- ★ สเต็ป 6/เฟรม ไม่โดนดึง
+                end
+                RunService.Heartbeat:Wait()
             end
             if not inArena() then log("⚠️ เข้า arena ไม่ได้ (ประตูอาจปิด/ต้องเงื่อนไข)"); ENV.SAE_BOSS_RUN=false; return end
             log("✅ เข้า arena แล้ว @"..P(hrp() and hrp().Position))
