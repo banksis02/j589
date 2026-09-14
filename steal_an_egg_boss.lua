@@ -141,15 +141,23 @@ ENV.SAE_BOSS_GO=function()
             end
             if target then nearHit(target.pos); swing()          -- ตีหิน HP>0
             else
-                -- ★ บอสลอยกลางอากาศ → ตีได้แค่ "มือที่ยื่นลงมา" = part Y ต่ำสุด (เดินไปใต้มันแนวนอน+ฟัน)
-                local b=bossModel(); local hand,ly=nil,1e9
-                if b then for _,d in ipairs(b:GetDescendants()) do
-                    if d:IsA("BasePart") and d.Position.Y<ly then ly=d.Position.Y; hand=d.Position end
+                -- ★ บอสล้ม → "มือ" มี HP billboard ของตัวเอง → หา part ที่มี HP + ใกล้เราสุด(ไม่ใช่หิน) = มือ
+                local hand=nil; local hd=1e9; local myPos=h and h.Position
+                local ar=arena()
+                if ar and myPos then for _,d in ipairs(ar:GetDescendants()) do
+                    if d:IsA("TextLabel") then
+                        local cur=tostring(d.Text):match("([%d,]+)%s*/%s*[%d,]+")
+                        if cur and tonumber((cur:gsub(",","")) or 0)>0 then
+                            if not d:FindFirstAncestor("CrystalTowers") then   -- ไม่ใช่หิน
+                                local gui=d:FindFirstAncestorWhichIsA("BillboardGui")
+                                local pt=(gui and gui.Adornee) or d:FindFirstAncestorWhichIsA("BasePart")
+                                if pt and pt:IsA("BasePart") then local dd=(pt.Position-myPos).Magnitude if dd<hd then hd=dd; hand=pt.Position end end
+                            end
+                        end
+                    end
                 end end
-                if hand and h then
-                    nearHit(Vector3.new(hand.X, h.Position.Y, hand.Z))   -- เดินไปใต้มือ (คง Y เรา = อยู่พื้น)
-                    swing()
-                end
+                if hand and h then nearHit(Vector3.new(hand.X, h.Position.Y, hand.Z)); swing()   -- ไปใต้มือ+ฟัน
+                else local bp=bossPos(); if bp and h then nearHit(Vector3.new(bp.X,h.Position.Y,bp.Z)); swing() end end  -- fallback ใต้บอส
             end
             if os.clock()-lastLog>2 then lastLog=os.clock()
                 log(("   %s หินเหลือ=%d | บอสHP=%s/%s"):format(target and "ตีหิน" or "ตีบอส", nleft, tostring(bc), tostring(bm))) end
