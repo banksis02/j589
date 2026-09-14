@@ -140,7 +140,15 @@ ENV.SAE_BOSS_GO=function()
                 end
             end
             if target then nearHit(target.pos); swing()          -- ตีหิน HP>0
-            else local bp=bossPos(); if bp then nearHit(bp); swing() end end  -- หินหมด → ตีบอส
+            else
+                -- ★ หินหมด → บอสล้มยื่นแขน → ตี "ส่วนบอสที่ใกล้เราสุด (แขนที่ยื่นลงมา)" ไม่ใช่กลางตัว
+                local b=bossModel(); local myPos=h and h.Position
+                local arm,ad=nil,1e9
+                if b and myPos then for _,d in ipairs(b:GetDescendants()) do
+                    if d:IsA("BasePart") then local dd=(d.Position-myPos).Magnitude if dd<ad then ad=dd; arm=d.Position end end
+                end end
+                if arm then nearHit(arm); swing() end
+            end
             if os.clock()-lastLog>2 then lastLog=os.clock()
                 log(("   %s หินเหลือ=%d | บอสHP=%s/%s"):format(target and "ตีหิน" or "ตีบอส", nleft, tostring(bc), tostring(bm))) end
             task.wait(CFG.ATTACK_GAP)
