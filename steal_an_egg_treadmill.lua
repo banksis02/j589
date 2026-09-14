@@ -57,33 +57,50 @@ ENV.SAE_TREAD_LIST=function()
 end
 ENV.SAE_TREAD_SET=function(n) CFG.SET_PLOT=n and tostring(n) or nil; log("ล็อกลู่วิ่ง Plot = "..(CFG.SET_PLOT or "ใกล้สุด(auto)")) end
 
-ENV.SAE_TREAD_ON=function()
-    local tm=myTreadmill()
-    if not tm then log("❌ ไม่เจอลู่วิ่ง (Plots.<N>.TreadmillBottom)"); return end
-    log("🏃 ขึ้นลู่วิ่ง Plot "..tm.plot.." @"..P(tm.pos))
-    ENV.SAE_TREAD_RUN=true
-    local startSpeed=speedStat() or 0; local startGain=gainCount; local t0=os.clock()
+-- ยืนบนลู่ 1 อัน hold (ใช้ทั้งตอนเทสหาลู่เรา + ตอนวิ่งจริง)
+local holdTM=nil
+local function holdLoop()
     task.spawn(function()
-        while alive() and ENV.SAE_TREAD_RUN do
+        while alive() and ENV.SAE_TREAD_RUN and holdTM do
             local h=hrp()
-            if h and tm.part and tm.part.Parent then
-                -- ยืนบนสายพาน (ยกเหนือ TreadmillBottom เล็กน้อย)
-                local target=tm.pos+Vector3.new(0,CFG.STAND_Y,0)
+            if h and holdTM.part and holdTM.part.Parent then
+                local target=holdTM.pos+Vector3.new(0,CFG.STAND_Y,0)
                 if (h.Position-target).Magnitude>3 then pcall(function() h.CFrame=CFrame.new(target) end) end
             end
             RunService.Heartbeat:Wait()
         end
     end)
-    -- รายงานว่า Speed ขึ้นไหม (เช็ค 5 วิ)
-    task.spawn(function()
-        task.wait(5)
-        if alive() and ENV.SAE_TREAD_RUN then
-            local now=speedStat() or 0
-            local dGain=gainCount-startGain
-            log(("เช็ค 5 วิ: Speed %s→%s (%s) | SpeedGained ยิง %d ครั้ง = %s")
-                :format(tostring(startSpeed), tostring(now), (now>startSpeed and "▲ขึ้น✅" or "ไม่ขึ้น"), dGain, (dGain>0 or now>startSpeed) and "ลู่วิ่งทำงาน✅" or "⚠️ อาจไม่ใช่ลู่เรา/ยืนไม่โดน — ลอง SAE_TREAD_SET(plot อื่น)"))
+end
+-- เทสลู่ 1 อันว่า Speed ขึ้นไหม (= ลู่ของเรา)
+local function testTreadmill(tm, secs)
+    holdTM=tm; ENV.SAE_TREAD_RUN=true; holdLoop()
+    local s0=speedStat() or 0; local g0=gainCount
+    local t=os.clock(); while alive() and os.clock()-t<(secs or 3.5) do RunService.Heartbeat:Wait() end
+    local rose=(speedStat() or 0)>s0 or (gainCount-g0)>0
+    return rose
+end
+ENV.SAE_TREAD_ON=function()
+    local t=allTreadmills()
+    if #t==0 then log("❌ ไม่เจอลู่วิ่ง"); return end
+    -- ถ้าล็อกไว้แล้ว → ขึ้นเลย
+    if CFG.SET_PLOT then
+        local tm; for _,x in ipairs(t) do if x.plot==tostring(CFG.SET_PLOT) then tm=x end end
+        if tm then log("🏃 ขึ้นลู่วิ่ง Plot "..tm.plot.." (ล็อกไว้)"); ENV.SAE_TREAD_RUN=true; holdTM=tm; holdLoop(); return end
+    end
+    -- auto-detect: เรียงใกล้สุด → เทสทีละอันจน Speed ขึ้น = ลู่เรา
+    local h=hrp(); local myPos=(h and h.Position) or Vector3.new()
+    table.sort(t,function(a,b) return (a.pos-myPos).Magnitude<(b.pos-myPos).Magnitude end)
+    log("🔎 หาลู่ของเรา (เทสทีละอันว่า Speed ขึ้นไหม)...")
+    for i,tm in ipairs(t) do
+        if not (alive() and (ENV.SAE_TREAD_RUN~=false or i==1)) then break end
+        log(("   ลอง Plot %s @%s"):format(tm.plot, P(tm.pos)))
+        if testTreadmill(tm, 3.5) then
+            CFG.SET_PLOT=tm.plot
+            log("✅ ลู่ของเรา = Plot "..tm.plot.." (Speed ขึ้น) → ยืนต่อ"); return
         end
-    end)
+    end
+    log("⚠️ เทสทุกลู่แล้ว Speed ไม่ขึ้น — อาจต้องอยู่ใกล้ฐานก่อน หรือลู่วิ่งเต็ม/ต้องกดเริ่ม บอกผมด้วยว่า Plot ไหนของคุณ")
+    ENV.SAE_TREAD_RUN=false; holdTM=nil
 end
 ENV.SAE_TREAD_OFF=function() ENV.SAE_TREAD_RUN=false log("ลงจากลู่วิ่ง") end
 
