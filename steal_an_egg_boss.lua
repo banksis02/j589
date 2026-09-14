@@ -109,7 +109,7 @@ end
 ENV.SAE_BOSS_STATUS=function()
     local c,m=bossHP()
     log(("portal=%s inArena=%s boss=%s HP=%s/%s"):format(tostring(portal()~=nil), tostring(inArena()), tostring(bossModel()~=nil), tostring(c), tostring(m)))
-    local k=findKatana(); log("Katana="..(k and "✅ "..k.Name or "❌ ไม่เจอ"))
+    local k=findWeapon(); log("อาวุธ="..(k and "✅ "..k.Name or "❌ ไม่เจอ"))
 end
 
 ENV.SAE_BOSS_GO=function()
