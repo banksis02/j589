@@ -74,5 +74,43 @@ ENV.SAE_TREAD_OFF=function()
     if treadmill and treadmill.AskDoff then pcall(function() treadmill.AskDoff:InvokeServer() end) log("ลงลู่ (AskDoff)") else log("หยุด") end
 end
 
-pcall(function() for _,n in ipairs({"SAE_TREAD_ON","SAE_TREAD_OFF","SAE_TREAD_STATUS"}) do _G[n]=ENV[n] end end)
-log("✅ พร้อม (โค้ด moa) — SAE_TREAD_ON() | SAE_TREAD_STATUS() | SAE_TREAD_OFF()")
+-- ═══ COORDINATOR: ขึ้นลู่ตอน "ว่าง" / ลงลู่ตอนสคริปเก็บไข่ทำงาน ═══
+local function hrp() local c=player.Character return c and c:FindFirstChild("HumanoidRootPart") end
+-- busy = สคริปเก็บไข่กำลังทำงาน: (ก) อุ้มไข่ (Tool egg ในตัว) หรือ (ข) เพิ่งขยับเยอะ (ถูกลากไปเก็บ)
+local function carryingEgg()
+    local c=player.Character; if not c then return false end
+    for _,it in ipairs(c:GetChildren()) do
+        if it:IsA("Tool") and (it:GetAttribute("ItemType")=="AssetEgg" or it.Name:lower():find("egg")) then return true end
+    end
+    return false
+end
+local lastPos, lastMoveT = nil, 0
+local function eggScriptBusy()
+    if carryingEgg() then return true end
+    local h=hrp()
+    if h then
+        if lastPos and (h.Position-lastPos).Magnitude>25 then lastMoveT=os.clock() end  -- ขยับเยอะ = ถูกลากไปเก็บ
+        lastPos=h.Position
+    end
+    return (os.clock()-lastMoveT)<4   -- เพิ่งขยับใน 4 วิ = ยังทำงาน
+end
+ENV.SAE_TREAD_AUTO=function(on)
+    if on==false then ENV.SAE_AUTO_RUN=false; ENV.SAE_TREAD_OFF(); log("ปิด auto"); return end
+    ENV.SAE_AUTO_RUN=true
+    log("🤖 AUTO: ว่าง→ขึ้นลู่ | เก็บไข่/ขยับ→ลงลู่หลบ")
+    task.spawn(function()
+        local ridingTread=false
+        while alive() and ENV.SAE_AUTO_RUN do
+            local busy=eggScriptBusy()
+            if busy then
+                if ridingTread then ENV.SAE_TREAD_OFF(); ridingTread=false; log("   สคริปเก็บไข่ทำงาน → ลงลู่หลบ") end
+            else
+                if not ridingTread then ENV.SAE_TREAD_ON(); ridingTread=true; log("   ว่าง → ขึ้นลู่วิ่ง") end
+            end
+            task.wait(2)
+        end
+    end)
+end
+
+pcall(function() for _,n in ipairs({"SAE_TREAD_ON","SAE_TREAD_OFF","SAE_TREAD_STATUS","SAE_TREAD_AUTO"}) do _G[n]=ENV[n] end end)
+log("✅ พร้อม (โค้ด moa) — SAE_TREAD_ON() ขึ้นลู่ | SAE_TREAD_AUTO() = auto (ว่างขึ้นลู่/เก็บไข่ลงลู่) | SAE_TREAD_OFF()")
