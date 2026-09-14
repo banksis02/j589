@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v11.98"
+local SCRIPT_VERSION = "v11.99"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -12736,24 +12736,36 @@ end
 _G.AE_EXP_REPEAT = function()
     local gui = findEndGui()
     if not gui then warn("[End] ❌ ไม่ได้อยู่หน้าจบเกม"); return false end
-    for _, b in ipairs(gui:GetDescendants()) do
-        if b:IsA("GuiButton") and b.Visible then
-            local hit = (b:IsA("TextButton") and clean(b.Text) == "Repeat Stage")
-            if not hit then
-                for _, l in ipairs(b:GetDescendants()) do
-                    if l:IsA("TextLabel") and l.Visible and clean(l.Text) == "Repeat Stage" then hit = true; break end
-                end
-            end
-            if hit then
-                print("[End] 🔁 กด Repeat Stage")
-                clickHard(b)
-                task.wait(1.5)
-                return true
-            end
+    -- ⭐ v11.99: หา "ข้อความ Repeat Stage" ก่อน แล้วไต่หา "ปุ่มแม่ตัวในสุด" (innermost GuiButton)
+    --    กันบั๊ก: เดิมวน GetDescendants เจอ GuiButton "กล่องครอบทั้งแถว" ก่อน → clickHard VIM
+    --    คลิกกลางกล่อง = ตำแหน่ง View Party (ปุ่มกลาง) → เด้งไปหน้าปาร์ตี้แทนที่จะรีเพล
+    local target
+    for _, l in ipairs(gui:GetDescendants()) do
+        if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible and clean(l.Text) == "Repeat Stage" then
+            target = l; break
         end
     end
-    warn("[End] ❌ ไม่เจอปุ่ม Repeat Stage")
-    return false
+    if not target then warn("[End] ❌ ไม่เจอปุ่ม Repeat Stage"); return false end
+    local btn = target:IsA("GuiButton") and target or nil
+    if not btn then
+        local p = target.Parent
+        while p and p ~= gui do
+            if p:IsA("GuiButton") then btn = p; break end
+            p = p.Parent
+        end
+    end
+    if not btn then warn("[End] ❌ Repeat Stage ไม่มีปุ่มแม่"); return false end
+    -- กันกดผิด: ปุ่มที่จะกดต้องไม่ครอบ "View Party" (แปลว่าเป็นกล่องใหญ่ ไม่ใช่ปุ่ม Repeat จริง)
+    for _, l in ipairs(btn:GetDescendants()) do
+        if l:IsA("TextLabel") and clean(l.Text) == "View Party" then
+            warn("[End] ⚠️ ปุ่มที่เจอครอบ View Party ด้วย — ไม่กด (กันเด้งไปหน้าปาร์ตี้)")
+            return false
+        end
+    end
+    print("[End] 🔁 กด Repeat Stage")
+    clickHard(btn)
+    task.wait(1.5)
+    return true
 end
 
 -- ⭐ ชุดเต็ม: อ่านผล → แจ้งเตือน → Repeat
