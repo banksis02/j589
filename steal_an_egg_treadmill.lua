@@ -56,6 +56,14 @@ ENV.SAE_TREAD_LIST=function()
     log("Speed ตอนนี้ = "..tostring(speedStat()))
 end
 ENV.SAE_TREAD_SET=function(n) CFG.SET_PLOT=n and tostring(n) or nil; log("ล็อกลู่วิ่ง Plot = "..(CFG.SET_PLOT or "ใกล้สุด(auto)")) end
+-- ★ ยืนบนลู่ของคุณเอง แล้วเรียก = จำลู่นั้นเป็นลู่เรา (ชัวร์สุด)
+ENV.SAE_TREAD_SETHERE=function()
+    local t=allTreadmills(); local h=hrp()
+    if not h or #t==0 then log("❌ ไม่มีตัว/ลู่"); return end
+    local best,bd=nil,1e9
+    for _,x in ipairs(t) do local d=(x.pos-h.Position).Magnitude if d<bd then bd=d; best=x end end
+    if best then CFG.SET_PLOT=best.plot; log("✅ จำลู่ของเรา = Plot "..best.plot.." @"..P(best.pos).." (ห่าง "..math.floor(bd)..") — ต่อไป SAE_TREAD_ON() จะขึ้นลู่นี้เสมอ") end
+end
 
 -- ยืนบนลู่ 1 อัน hold (ใช้ทั้งตอนเทสหาลู่เรา + ตอนวิ่งจริง)
 local holdTM=nil
