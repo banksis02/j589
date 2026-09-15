@@ -12,14 +12,14 @@ return function(context)
         env.SAE_FARM_READY_JOB = host.JobId
         return previous
     end
-    if previous and previous.jobId == host.JobId and previous.version == 14 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 15 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 14, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 15, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -44,9 +44,9 @@ return function(context)
         if env.SAE_VENDOR_JOB == host.JobId then return end
         -- Latch before invoking vendor code: a partial run must not start twice.
         env.SAE_VENDOR_JOB = host.JobId
-        log("[SAE HOP] population ready; loading Flowauth loader")
+        log("[SAE HOP] population ready; loading Luarmor loader")
         local ok, err = pcall(function()
-            local source = host:HttpGet("https://flowauth.net/v1/loaders/69d3463240384f3a73fbe32c178093a2.lua")
+            local source = host:HttpGet("https://api.luarmor.net/files/v4/loaders/36107afd3107e8d841f9d1a69e2465d4.lua")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
