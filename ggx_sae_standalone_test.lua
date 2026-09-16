@@ -1,4 +1,4 @@
--- GGX SAE standalone experiment v0.3.0 -- NOT the main GGX loader.
+-- GGX SAE standalone experiment v0.3.1 -- NOT the main GGX loader.
 -- Collector derived from ojiasa/Steal-an-egg @ 0cb06f0c2453e519129fece24d3c988cbb6f8984.
 -- Catalog rarity approach reviewed from ugphone33241-prog/Steal-an-egg (Oxide)
 -- @ 86372cb86a014ab93fea5dadd2c7da7ed6dd6db4. Original collector comments retained.
@@ -29,7 +29,7 @@ message.BackgroundColor3 = Color3.fromRGB(14,20,30)
 message.TextColor3 = Color3.new(1,1,1)
 message.TextSize = 16
 message.TextWrapped = true
-message.Text = "GGX SAE 0.3.0: Loading collector..."
+message.Text = "GGX SAE 0.3.1: Loading collector..."
 message.Parent = boot
 if game.PlaceId ~= 107778070777162 then
     message.Text = "GGX SAE: Unsupported PlaceId " .. tostring(game.PlaceId) .. " (expected 107778070777162). Send this message for diagnosis."
@@ -67,6 +67,17 @@ function F.allowed(record, assets, areas, rarities, fallbackArea)
     local rarity = F.rarity(record, assets)
     local area = record.AreaId or fallbackArea
     return rarity ~= nil and rarities[rarity] == true and areas[F.normalize(area)] == true
+end
+function F.rank(rarity)
+    for index, name in ipairs(F.rarities) do
+        if rarity == name then return #F.rarities - index + 1 end
+    end
+    return 0
+end
+function F.prefer(a, b)
+    local ar, br = F.rank(a.rarity), F.rank(b.rarity)
+    if ar ~= br then return ar > br end
+    return a.dFromPlayer < b.dFromPlayer
 end
 return F
 
@@ -322,7 +333,7 @@ local function checkRecord(record, map, method, force)
         audit(text)
         print("[GGX FILTER] " .. text)
     end
-    return allowed
+    return allowed, rarity
 end
 local function allowPrompt(prompt, force)
     local pos = promptPosition(prompt)
@@ -761,6 +772,7 @@ local function findEggInTargets()
                             if tgt.name == realMap.name then
                                 table.insert(candidates, {
                                     prompt = v, pos = ppos, map = realMap,
+                                    rarity = select(2, allowPrompt(v)),
                                     dFromPlayer = dist(ppos, hrp.Position),
                                     dFromHome = dist(realMap.pos, config.HOME_POS),
                                 })
@@ -797,13 +809,15 @@ local function findEggInTargets()
         table.sort(candidates, function(a, b) return a.dFromPlayer < b.dFromPlayer end)
     end
 
+    table.sort(candidates, Filter.prefer)
     local best = candidates[1]
+    audit("TARGET | " .. tostring(best.rarity) .. " | " .. best.map.name .. " | highest selected rarity first")
     return best.prompt, best.pos, best.dFromPlayer, best.map
 end
 
 local function findPromptSteal(pos, radius)
     radius = radius or config.MAP_RADIUS
-    local best, bestDist = nil, radius
+    local best, bestDist, bestRank = nil, radius, -1
     for _, v in ipairs(promptList()) do
         if v:IsA("ProximityPrompt") and v.Enabled and not stolenPrompts[v] then
             local isEgg = v.Name == "CarryAreaEgg"
@@ -818,7 +832,10 @@ local function findPromptSteal(pos, radius)
                     ppos = part.Parent.Position end
                 if ppos then
                     local d = dist(ppos, pos)
-                    if d < bestDist then best, bestDist = v, d end
+                    local rank = Filter.rank(select(2, allowPrompt(v)))
+                    if d < radius and (rank > bestRank or (rank == bestRank and d < bestDist)) then
+                        best, bestDist, bestRank = v, d, rank
+                    end
                 end
             end
         end
@@ -1841,7 +1858,7 @@ local function label(text, x,y,w,h,size)
         TextColor3=Color3.fromRGB(226,236,247), Font=Enum.Font.Gotham, TextSize=size or 13,
         TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Left}, panel)
 end
-local title = label("GGX / EGG COLLECTOR · TEST 0.3.0",16,10,390,28,16)
+local title = label("GGX / EGG COLLECTOR · TEST 0.3.1",16,10,390,28,16)
 local function button(text,x,y,w,h,fn)
     local b = make("TextButton", {Text=text, Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
         BackgroundColor3=tile, TextColor3=Color3.fromRGB(240,246,255), BorderSizePixel=0,
@@ -1893,7 +1910,7 @@ for i, map in ipairs(Collector.getAllMaps()) do
     end)
     b.BackgroundColor3 = chosenAreas[key] and accent or tile
 end
-label("RARITY • ไม่เลือกระดับ = ไม่เริ่มเก็บ",16,228,438,20,12)
+label("RARITY • เก็บระดับสูงสุดที่เลือกก่อน",16,228,438,20,12)
 for i, rarity in ipairs(Filter.rarities) do
     local b
     b = button((chosenRarities[rarity] and "✓ " or "□ ")..rarity,16+((i-1)%4)*111,253+math.floor((i-1)/4)*29,103,25,function()
@@ -1947,6 +1964,6 @@ if options.autoStart ~= false then start() end
 end, function(err) return debug.traceback(tostring(err), 2) end)
 bootDone = true
 if bootOK then boot:Destroy() else
-    message.Text = "GGX SAE 0.3.0 initialization failed:\n" .. tostring(bootError)
+    message.Text = "GGX SAE 0.3.1 initialization failed:\n" .. tostring(bootError)
     warn(message.Text)
 end
