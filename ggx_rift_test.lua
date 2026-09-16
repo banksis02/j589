@@ -1,7 +1,9 @@
--- GGX Rift test 0.2. Entry remote retained from the user's steal_an_egg_boss.lua.
+-- GGX Rift test 0.3. Entry remote retained from the user's steal_an_egg_boss.lua.
 -- Separate egg collector. Phase signals derived from three user arena snapshots.
 local env = getgenv and getgenv() or _G
 if env.GGX_RIFT_TEST then env.GGX_RIFT_TEST.destroy() end
+local options = env.GGX_RIFT_CONFIG or {}
+local moveSpeed = math.clamp(tonumber(options.moveSpeed) or 150, 10, 500)
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -50,7 +52,7 @@ text.TextWrapped=true; text.Parent=frame
 local function show(s,d)
     if state~=s or detail~=d then print("[GGX RIFT] "..s.." | "..d) end
     state,detail=s,d
-    text.Text="GGX RIFT TEST 0.2\n"..state.."\n"..detail
+    text.Text="GGX RIFT TEST 0.3 • "..moveSpeed.." studs/s\n"..state.."\n"..detail
 end
 local function cancelMove()
     if tween then tween:Cancel(); tween=nil end
@@ -95,7 +97,7 @@ local function approachAndHit(target)
         local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*4
         if movePart~=target or not goal or (goal-destination).Magnitude>3 or not tween or tween.PlaybackState~=Enum.PlaybackState.Playing then
             cancelMove(); goal=destination; movePart=target
-            tween=TweenService:Create(r,TweenInfo.new(math.max(0.1,(destination-r.Position).Magnitude/35),Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)})
+            tween=TweenService:Create(r,TweenInfo.new(math.max(0.1,(destination-r.Position).Magnitude/moveSpeed),Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)})
             tween:Play()
         end
         return
@@ -172,7 +174,7 @@ local function tick()
     else cancelMove(); show("WAIT_HAND","รอมือลดลง • ไม่ตีตัวบอส • ถ้ามือลงแล้วไม่ตี กด COPY DATA") end
 end
 local function diagnostics()
-    local out={"GGX_RIFT_DATA v0.2", "state="..state,"inside="..tostring(inside()),"detail="..detail}
+    local out={"GGX_RIFT_DATA v0.3", "state="..state,"inside="..tostring(inside()),"detail="..detail}
     local function add(obj)
         local attrs={}; for k,v in pairs(obj:GetAttributes()) do table.insert(attrs,k.."="..tostring(v)) end
         local line=obj:GetFullName().." ["..obj.ClassName.."] "..table.concat(attrs,",")
