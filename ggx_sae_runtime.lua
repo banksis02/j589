@@ -2153,6 +2153,7 @@ local function settings(j)
     for _,name in ipairs(split(j.eggAreas)) do areas[Filter.normalize(name)]=true end
     for _,name in ipairs(split(j.eggRarity)) do if Filter.rank(name)>0 then rarities[name]=true end end
     for _,map in ipairs(Collector.getAllMaps()) do
+        if #split(j.eggAreas)==0 then areas[Filter.normalize(map.name)]=true end
         if areas[Filter.normalize(map.name)] then table.insert(targets,map) end
     end
     return areas,rarities,targets
