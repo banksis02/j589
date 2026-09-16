@@ -1,5 +1,5 @@
--- GGX Rift test 0.1. Entry remote retained from the user's steal_an_egg_boss.lua.
--- Separate from egg collector. Hand exposure detection is provisional until arena diagnostics are supplied.
+-- GGX Rift test 0.2. Entry remote retained from the user's steal_an_egg_boss.lua.
+-- Separate egg collector. Phase signals derived from three user arena snapshots.
 local env = getgenv and getgenv() or _G
 if env.GGX_RIFT_TEST then env.GGX_RIFT_TEST.destroy() end
 local Players = game:GetService("Players")
@@ -50,7 +50,7 @@ text.TextWrapped=true; text.Parent=frame
 local function show(s,d)
     if state~=s or detail~=d then print("[GGX RIFT] "..s.." | "..d) end
     state,detail=s,d
-    text.Text="GGX RIFT TEST 0.1\n"..state.."\n"..detail
+    text.Text="GGX RIFT TEST 0.2\n"..state.."\n"..detail
 end
 local function cancelMove()
     if tween then tween:Cancel(); tween=nil end
@@ -71,15 +71,26 @@ local function weapon()
         end end
     end
 end
+local function targetPosition(target)
+    if target:IsA("Bone") then return target.TransformedWorldCFrame.Position end
+    if target:IsA("Attachment") then return target.WorldPosition end
+    if target:IsA("BasePart") then return target.Position end
+end
+local function closestPosition(target, position)
+    if not target:IsA("BasePart") then return targetPosition(target) end
+    local localPoint=target.CFrame:PointToObjectSpace(position)
+    local half=target.Size/2
+    return target.CFrame:PointToWorldSpace(Vector3.new(
+        math.clamp(localPoint.X,-half.X,half.X),math.clamp(localPoint.Y,-half.Y,half.Y),math.clamp(localPoint.Z,-half.Z,half.Z)))
+end
 local function approachAndHit(target)
     local r,h=root(),humanoid()
     if not r or not h or h.Health<=0 or not target.Parent then cancelMove(); return end
-    local localPoint=target.CFrame:PointToObjectSpace(r.Position)
-    local half=target.Size/2
-    local closest=target.CFrame:PointToWorldSpace(Vector3.new(
-        math.clamp(localPoint.X,-half.X,half.X),math.clamp(localPoint.Y,-half.Y,half.Y),math.clamp(localPoint.Z,-half.Z,half.Z)))
+    local center=targetPosition(target)
+    if not center then cancelMove(); return end
+    local closest=closestPosition(target,r.Position)
     if (closest-r.Position).Magnitude>7 then
-        local away=Vector3.new(r.Position.X-target.Position.X,0,r.Position.Z-target.Position.Z)
+        local away=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
         if away.Magnitude<0.1 then away=Vector3.new(1,0,0) end
         local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*4
         if movePart~=target or not goal or (goal-destination).Magnitude>3 or not tween or tween.PlaybackState~=Enum.PlaybackState.Playing then
@@ -90,7 +101,7 @@ local function approachAndHit(target)
         return
     end
     cancelMove()
-    local flat=Vector3.new(target.Position.X,r.Position.Y,target.Position.Z)
+    local flat=Vector3.new(center.X,r.Position.Y,center.Z)
     if (flat-r.Position).Magnitude>0.1 then r.CFrame=CFrame.lookAt(r.Position,flat) end
     local tool=weapon()
     if not tool then show("NO_WEAPON","ไม่พบ Katana / Sword / Blade • กด COPY DATA"); return end
@@ -101,7 +112,9 @@ local function stones()
     local a=arena(); local folder=a and a:FindFirstChild("CrystalTowers")
     local result,unknown={},0
     if folder then for _, obj in ipairs(folder:GetChildren()) do
-        local p=part(obj); local health=hp(obj)
+        local p=obj:FindFirstChild("Hitbox")
+        local health=p and p:GetAttribute("Health")
+        if type(health)~="number" then health=nil end
         if p then
             if health==nil then unknown+=1 elseif health>0 then table.insert(result,{part=p,health=health}) end
         end
@@ -111,24 +124,17 @@ local function stones()
     return result,unknown
 end
 local function exposedHand()
-    local b,r=boss(),root(); if not b or not r then return nil end
-    -- Explicit false vulnerability, when supplied by the game, always blocks attacks.
-    for _, key in ipairs({"Vulnerable","IsVulnerable","Damageable"}) do
-        if b:GetAttribute(key)==false then return nil end
-    end
-    local best,dist=nil,math.huge
-    for _, obj in ipairs(b:GetDescendants()) do
-        local n=obj.Name:lower()
-        if obj:IsA("BasePart") and (n:find("hand") or n:find("fist") or n:find("palm")) then
-            -- Provisional exposure test: a named hand must be lowered near the fighting floor.
-            local bottom=obj.Position.Y-obj.Size.Y/2
-            if bottom<=r.Position.Y+8 and obj.Position.Y>=r.Position.Y-8 and obj.Transparency<1 then
-                local d=(obj.Position-r.Position).Magnitude
-                if d<dist then best,dist=obj,d end
-            end
-        end
-    end
-    return best
+    local b=boss()
+    if not b or b:GetAttribute("Attacking")~=true then return nil end
+    local hand=b:FindFirstChild("UpperHand1.R",true)
+    if not hand or not (hand:IsA("Bone") or hand:IsA("Attachment") or hand:IsA("BasePart")) then return nil end
+    local health=hand:FindFirstChild("Health")
+    if not health or not health:IsA("BillboardGui") or not health.Enabled then return nil end
+    local label=health:FindFirstChildWhichIsA("TextLabel",true)
+    if not label or not label.Visible then return nil end
+    local current=hp(hand)
+    if not current or current<=0 then return nil end
+    return hand
 end
 local function tick()
     if not inside() then
@@ -161,15 +167,16 @@ local function tick()
     if unknown>0 then cancelMove(); show("NEED_DATA","อ่าน HP หินไม่ได้ "..unknown.." ก้อน • กด COPY DATA"); return end
     local hand=exposedHand()
     if hand then
-        show("HAND_TEST",hand.Name.." • HP "..tostring(current).."/"..tostring(maximum).." • ตรวจมือจากตำแหน่ง ยังต้องยืนยันเฟสจริง")
+        show("HAND_OPEN",hand.Name.." • HP "..tostring(current).."/"..tostring(maximum).." • Attacking + ป้ายเลือดมือ")
         approachAndHit(hand)
     else cancelMove(); show("WAIT_HAND","รอมือลดลง • ไม่ตีตัวบอส • ถ้ามือลงแล้วไม่ตี กด COPY DATA") end
 end
 local function diagnostics()
-    local out={"GGX_RIFT_DATA v0.1", "state="..state,"inside="..tostring(inside()),"detail="..detail}
+    local out={"GGX_RIFT_DATA v0.2", "state="..state,"inside="..tostring(inside()),"detail="..detail}
     local function add(obj)
         local attrs={}; for k,v in pairs(obj:GetAttributes()) do table.insert(attrs,k.."="..tostring(v)) end
         local line=obj:GetFullName().." ["..obj.ClassName.."] "..table.concat(attrs,",")
+        if obj:IsA("Bone") then line..=" world="..tostring(obj.TransformedWorldCFrame.Position) end
         if obj:IsA("BasePart") then line..=" pos="..tostring(obj.Position).." size="..tostring(obj.Size) end
         if obj:IsA("TextLabel") then line..=" text="..obj.Text end
         table.insert(out,line)
