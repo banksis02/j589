@@ -24,6 +24,16 @@ local function run(file, starter)
 end
 
 if pid == 107778070777162 then
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local src = game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_anti_idle.lua?v=1")
+            local chunk, compileError = loadstring(src)
+            assert(chunk, compileError)
+            chunk()
+        end)
+        if not ok then warn("[SAE IDLE] load failed: " .. tostring(err)) end
+    end)
+
     -- Start presentation suppression immediately, independently of startup hopping.
     task.spawn(function()
         local ok, err = pcall(function()
