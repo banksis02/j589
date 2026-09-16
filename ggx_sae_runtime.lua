@@ -1985,7 +1985,14 @@ local function tick()
 end
 local M = {}
 function M.inside() return inside() end
-function M.available() return workspace:FindFirstChild("BossArenaTeleport") ~= nil end
+function M.available()
+    local currentBoss=boss()
+    if deadBoss and currentBoss==deadBoss then
+        local health=bossHealth()
+        if health and health>0 then deadBoss=nil else return false end
+    end
+    return workspace:FindFirstChild("BossArenaTeleport") ~= nil
+end
 function M.run(allowed)
     local sawInside=inside()
     local began=os.clock()
