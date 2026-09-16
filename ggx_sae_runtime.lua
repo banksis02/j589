@@ -1496,7 +1496,13 @@ local function mainLoop()
             waitingForWork = false
             continue
         end
-        if beforeEgg and not beforeEgg() then task.wait(2); continue end
+        if beforeEgg then
+            waitingForWork=true
+            local ready=beforeEgg()
+            if not ready then task.wait(2) end
+            waitingForWork=false
+            if not ready then continue end
+        end
         log("═══════════════════════")
         pcall(checkEggReset)
 
@@ -2096,22 +2102,38 @@ function M.step()
  end
  return true
 end
+local function nearBelt(root,belt)
+ local point=belt.CFrame:PointToObjectSpace(root.Position)
+ return math.abs(point.X)<=belt.Size.X/2+3
+  and math.abs(point.Z)<=belt.Size.Z/2+3 and math.abs(point.Y)<=12
+end
 function M.leave()
  M.stop()
  local h,r=character()
  if not h or not r or h.Health<=0 then return false end
- -- Jump once before travel, also covers accidental contact with a belt.
- if not h:GetStateEnabled(Enum.HumanoidStateType.Jumping) then return false end
+ local belt=ownBelt()
+ -- Already away from the treadmill: no jump confirmation is needed.
+ if not belt or not nearBelt(r,belt) then entered=false;return true end
+ if not h:GetStateEnabled(Enum.HumanoidStateType.Jumping) then
+  warn('[GGX TREADMILL] Jump unavailable; retry later');return false
+ end
  h:Move(Vector3.zero,false);h:MoveTo(r.Position);h.Jump=true
- local start=os.clock();local y=r.Position.Y;local airborne=false
+ task.wait(0.3)
+ if not r.Parent or h.Health<=0 or player.Character~=h.Parent then return false end
+ -- The treadmill can release without an observable airborne frame.
+ -- Move to the approved safe-zone point, then check that it does not pull us back.
+ local destination=Vector3.new(534.4960327148438,69.64423370361328,-367.4530334472656)
+ r.CFrame=CFrame.new(destination);r.AssemblyLinearVelocity=Vector3.zero
+ local began=os.clock()
  repeat
-  task.wait(0.05)
+  task.wait(0.1)
   if not r.Parent or h.Health<=0 or player.Character~=h.Parent then return false end
-  local state=h:GetState()
-  airborne=airborne or state==Enum.HumanoidStateType.Jumping or state==Enum.HumanoidStateType.Freefall or r.Position.Y>y+0.5
- until airborne or os.clock()-start>2
- if not airborne then warn('[GGX TREADMILL] Exit not confirmed; travel held');return false end
+  if nearBelt(r,belt) or (r.Position-destination).Magnitude>8 then
+   warn('[GGX TREADMILL] Returned to belt; travel held');return false
+  end
+ until os.clock()-began>=1
  entered=false
+ print('[GGX TREADMILL] Left belt; safe-zone position confirmed')
  return true
 end
 return M
