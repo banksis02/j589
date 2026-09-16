@@ -1923,8 +1923,9 @@ local function stop()
 end
 local function isWeapon(tool)
     if not tool:IsA("Tool") or tool:GetAttribute("ItemType")~="Gear" then return false end
+    if tool:GetAttribute("IsBat")==true then return true end
     local words={}
-    for word in tool.Name:lower():gmatch("%a+") do words[word]=true end
+    for word in tostring(tool:GetAttribute("GearName") or tool.Name):lower():gmatch("%a+") do words[word]=true end
     if words.trap then return false end
     return words.katana or words.sword or words.blade or words.axe or words.battleaxe or false
 end
@@ -1952,6 +1953,17 @@ local function closestPosition(target, position)
         math.clamp(localPoint.X,-half.X,half.X),math.clamp(localPoint.Y,-half.Y,half.Y),math.clamp(localPoint.Z,-half.Z,half.Z)))
 end
 local lastEquip=-math.huge
+local trackedTarget,lastTargetHealth,healthAt=nil,nil,0
+local swingAttempts=0
+local function resetWeapon(tool,h)
+    local ok,err=pcall(function()
+        tool:Deactivate()
+        h:UnequipTools()
+        h:EquipTool(tool)
+    end)
+    lastEquip=os.clock()
+    if not ok then warn("[GGX RIFT] Equip failed: "..tostring(err)) end
+end
 local function approachAndHit(target)
     local r,h=root(),humanoid()
     if not r or not h or h.Health<=0 or not target.Parent then cancelMove(); return end
@@ -1959,9 +1971,7 @@ local function approachAndHit(target)
     local tool=weapon()
     local equipped=tool and tool.Parent==player.Character
     if tool and not equipped and os.clock()-lastEquip>=1 then
-        lastEquip=os.clock()
-        local ok,err=pcall(function() h:UnequipTools(); h:EquipTool(tool) end)
-        if not ok then warn("[GGX RIFT] Equip failed: "..tostring(err)) end
+        resetWeapon(tool,h)
     elseif not tool then
         show("NO_WEAPON","ไม่พบอาวุธ Gear; รออาวุธโหลด ไม่เลือกสัตว์แทน")
     end
@@ -1983,8 +1993,27 @@ local function approachAndHit(target)
     local flat=Vector3.new(center.X,r.Position.Y,center.Z)
     if (flat-r.Position).Magnitude>0.1 then r.CFrame=CFrame.lookAt(r.Position,flat) end
     if not tool or tool.Parent~=player.Character or not isWeapon(tool) then return end
+    if os.clock()-lastEquip<0.3 then return end
+    local targetHealth=target:IsA("BasePart") and target:GetAttribute("Health") or bossHealth()
+    if trackedTarget~=target or targetHealth~=lastTargetHealth then
+        trackedTarget=target;lastTargetHealth=targetHealth;healthAt=os.clock();swingAttempts=0
+    elseif type(targetHealth)=="number" and targetHealth>0 and swingAttempts>=6 and os.clock()-healthAt>=4 then
+        warn("[GGX RIFT] HP unchanged; re-equip "..tool.Name.." and approach again")
+        resetWeapon(tool,h)
+        healthAt=os.clock();swingAttempts=0
+        local offset=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
+        if offset.Magnitude>0.1 then
+            local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+offset.Unit*0.5
+            cancelMove();goal=destination;movePart=target
+            tween=TweenService:Create(r,TweenInfo.new(0.2,Enum.EasingStyle.Linear),{CFrame=CFrame.lookAt(destination,Vector3.new(center.X,destination.Y,center.Z))})
+            tween:Play()
+        end
+        return
+    end
+    if not tool.Enabled or tool:GetAttribute("CooldownActive")==true then return end
     if os.clock()-lastSwing>=0.35 then
-        local ok,err=pcall(function() tool:Activate() end)
+        local ok,err=pcall(function() tool:Deactivate(); tool:Activate() end)
+        if ok then swingAttempts+=1 end
         lastSwing=os.clock()
         if not ok then warn("[GGX RIFT] Attack failed: "..tostring(err)) end
     end
