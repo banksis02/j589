@@ -2050,8 +2050,9 @@ local job=nil
 local lastGood=0
 local signature=nil
 local recoveryThread=nil
+local hopping=false
 local function configured()
-    return active and job and job.status=="active" and os.clock()-lastGood<45
+    return active and not hopping and job and job.status=="active" and os.clock()-lastGood<45
         and (job.mode=="sae_egg" or job.mode=="sae_egg_boss")
 end
 local function bossAllowed() return configured() and job.mode=="sae_egg_boss" end
@@ -2088,11 +2089,55 @@ Collector.setIdleHandler(function()
         print("[GGX SAE] Rift finished or job stopped; rescan eggs")
     end
 end, Rift.inside)
-env.GGX_SAE_RUNTIME={stop=function()
+env.GGX_SAE_RUNTIME={manualHopVersion=1,stop=function()
     active=false; Rift.stop(); Collector.destroy(); env.GGX_SAE_RUNTIME=nil
 end}
+-- Manual customer command, scoped to the original server; never repeats after teleport.
+env.GGX_SAE_HOP_SEEN=env.GGX_SAE_HOP_SEEN or {}
+local seenCommands=env.GGX_SAE_HOP_SEEN
+local function manualHop(command)
+    if type(command)~="table" or type(command.requestId)~="string" or command.sourceServerId~=game.JobId
+        or seenCommands[command.requestId] then return end
+    local valid,expires=pcall(function() return DateTime.fromIsoDate(command.expiresAt).UnixTimestamp end)
+    if not valid or expires<os.time() then return end
+    seenCommands[command.requestId]=true
+    hopping=true
+    Collector.stop(); Rift.stop(); signature=nil
+    local service=game:GetService("TeleportService")
+    local failure=nil
+    local connection=service.TeleportInitFailed:Connect(function(who,_,message)
+        if who==player then failure=tostring(message) end
+    end)
+    local ok,err=pcall(function()
+        local url="https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100"
+        local rooms=http:JSONDecode(game:HttpGet(url)).data
+        assert(type(rooms)=="table","server list unavailable")
+        local attempts=0
+        for _,room in ipairs(rooms) do
+            if not active then return end
+            if type(room.id)=="string" and room.id~=game.JobId and tonumber(room.playing) and tonumber(room.maxPlayers)
+                and room.playing<room.maxPlayers then
+                attempts+=1; failure=nil
+                print("[GGX MANUAL HOP] customer requested new server: "..room.id)
+                local sent,message=pcall(function() service:TeleportToPlaceInstance(game.PlaceId,room.id,player) end)
+                if not sent then failure=tostring(message) end
+                local began=os.clock()
+                while active and not failure and os.clock()-began<30 do task.wait(0.5) end
+                if not failure then return end -- Unknown outcome: do not send competing teleports.
+                if attempts>=3 then error(failure) end
+                task.wait(2)
+            end
+        end
+        error("no available server")
+    end)
+    connection:Disconnect()
+    hopping=false
+    if not ok then warn("[GGX MANUAL HOP] failed: "..tostring(err)) end
+end
+
 task.spawn(function()
     while active do
+        if env.GGX_SAE_MANUAL_HOP then manualHop(env.GGX_SAE_MANUAL_HOP) end
         local ok,result=pcall(fetchJob)
         if ok and type(result)=="table" then job=result; lastGood=os.clock() end
         if not configured() then

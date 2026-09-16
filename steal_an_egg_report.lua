@@ -302,7 +302,7 @@ local function send()
         report.collectedEggs=#batch>0 and batch or nil
         local money,speed=hud("Money"),hud("Speed")
         local bossMastery,bossTokens=bossMasteryStats()
-        local payload={username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
+        local payload={gameServerId=game.JobId,manualHopCapable=ENV.GGX_SAE_RUNTIME~=nil and ENV.GGX_SAE_RUNTIME.manualHopVersion==1,username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
             currentStats={money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens},stealReport=report,
             matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
@@ -314,6 +314,10 @@ local function send()
         else response=HTTP:RequestAsync({Url=BASE.."/api/overload/update",Method="POST",Headers={["Content-Type"]="application/json"},Body=body}) end
         local code=tonumber(response and response.StatusCode)
         if not code or code<200 or code>=300 then error("HTTP "..tostring(code).." "..tostring(response and response.Body):sub(1,150)) end
+        local decodedOK,decoded=pcall(function() return HTTP:JSONDecode(response.Body) end)
+        if decodedOK and type(decoded)=="table" and type(decoded.manualHop)=="table" then
+            ENV.GGX_SAE_MANUAL_HOP=decoded.manualHop
+        end
         for _,row in ipairs(batch) do state.pending[row.id]=nil; state.delivered[row.id]=os.clock() end
         for id,at in pairs(state.delivered) do if os.clock()-at>3600 then state.delivered[id]=nil end end
         log(string.format("SENT | Pets %d | Eggs %d | Pickups %d | Missing weight %d | Unmapped %d",counts.pets,counts.eggs,#batch,counts.missingWeight,counts.unmapped))
