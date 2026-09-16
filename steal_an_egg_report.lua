@@ -137,6 +137,23 @@ local function getTools()
     end
     return byId
 end
+local function bossMasteryStats()
+    local pg=player:FindFirstChild("PlayerGui")
+    local function findPath(names)
+        local obj=pg
+        for _,name in ipairs(names) do obj=obj and obj:FindFirstChild(name) end
+        return obj
+    end
+    local function numberAt(names)
+        local obj=findPath(names)
+        if not obj or not (obj:IsA("TextLabel") or obj:IsA("TextButton")) then return nil end
+        local value=obj.Text:gsub(",", ""):match("^%s*(%d+)%s*$")
+        return value and tonumber(value) or nil
+    end
+    return numberAt({"BossMastery","Frame","InfoHolder","MasteryLabel"}),
+        numberAt({"BossMastery","Frame","Header","CurrencyHolder","Amount"})
+            or numberAt({"BossShop","Main","Main","Header","CurrencyHolder","Amount"})
+end
 local function saveData()
     if Save and type(Save.Get)=="function" then local ok,data=pcall(Save.Get); if ok and type(data)=="table" then return data end end
 end
@@ -284,8 +301,9 @@ local function send()
         end
         report.collectedEggs=#batch>0 and batch or nil
         local money,speed=hud("Money"),hud("Speed")
+        local bossMastery,bossTokens=bossMasteryStats()
         local payload={username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
-            currentStats={money=money,speed=speed},stealReport=report,
+            currentStats={money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens},stealReport=report,
             matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
         for _,kind in ipairs({"pets","eggs"}) do if report[kind] and #report[kind]==0 then report[kind]="__SAE_EMPTY_ARRAY__" end end
