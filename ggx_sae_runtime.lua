@@ -281,19 +281,14 @@ local function fieldRecords()
     return records
 end
 local lastScanLog = -math.huge
-local failedFieldKey=nil
-local retryFieldAt=0
-local function fieldKey()
- local ids={}
- for id,r in pairs(fieldRecords()) do if type(r)=="table" then table.insert(ids,tostring(r.Uid or id)..":"..tostring(r.State)) end end
- table.sort(ids);return table.concat(ids,"|")
-end
+local emptySince=nil
 local function hasSelectedFieldEgg()
     local total, slotted, matched, unknown = 0, 0, 0, 0
     for _, record in pairs(fieldRecords()) do
         if type(record)=="table" then
             total += 1
-            if tostring(record.State or ""):lower()=="slot" then
+            local eggStatus=tostring(record.State or ""):lower()
+            if eggStatus=="slot" or eggStatus=="dropped" or eggStatus=="guardcarried" then
                 slotted += 1
                 local map=record.BoundsCFrame and getEggRealMap(record.BoundsCFrame.Position)
                 if not Filter.rarity(record, AssetsData) then unknown += 1 end
@@ -305,7 +300,7 @@ local function hasSelectedFieldEgg()
         lastScanLog=os.clock()
         log(string.format("[SCAN] records=%d slot=%d selected=%d unknownRarity=%d ready=%s",total,slotted,matched,unknown,tostring(snapshotHealthy)))
     end
-    return matched>0 and (fieldKey()~=failedFieldKey or os.clock()>=retryFieldAt)
+    return matched>0
 end
 local function promptPosition(prompt)
     local parent = prompt.Parent
@@ -1276,6 +1271,7 @@ end
 local function baitBoss(timeout)
     timeout = timeout or config.BAIT_TIMEOUT
     log("🎯 Bait boss...")
+    local carriedAtStart=isCarryingEgg()
     local t0 = os.clock()
     local hum0, hrp0 = getHum(), getHRP()
     local startHealth = hum0 and hum0.Health or 100
@@ -1285,6 +1281,10 @@ local function baitBoss(timeout)
     while isRunning and os.clock() - t0 < timeout do
         local hum, hrp = getHum(), getHRP()
         if not hum or not hrp then break end
+        if carriedAtStart and os.clock()-t0>0.5 and not isCarryingEgg() then
+            log("[PREP] Forest egg released; proceed to selected eggs")
+            return true
+        end
         keepHealth()
         local vel = hrp.AssemblyLinearVelocity
         local speed = vel.Magnitude
@@ -1497,14 +1497,17 @@ local function mainLoop()
         local candidate = hasSelectedFieldEgg()
         if not candidate and not snapshotHealthy then
             waitingForWork = true
+            emptySince=nil
             fieldRecords()
             task.wait(2)
             waitingForWork = false
             continue
         end
+        if candidate then emptySince=nil end
         if not candidate then
             waitingForWork = true
-            if idleHandler then idleHandler() end
+            emptySince=emptySince or os.clock()
+            if os.clock()-emptySince>=3 and snapshotHealthy and idleHandler then idleHandler() end
             task.wait(0.05)
             waitingForWork = false
             continue
@@ -1516,7 +1519,6 @@ local function mainLoop()
             waitingForWork=false
             if not ready then continue end
         end
-        failedFieldKey=fieldKey();retryFieldAt=os.clock()+60
         log("═══════════════════════")
         pcall(checkEggReset)
 
@@ -1679,7 +1681,6 @@ local function mainLoop()
                                     task.wait(0.2)
                                 else
                                     log("🎉 THÀNH CÔNG")
-                                    failedFieldKey=nil;retryFieldAt=0
                                     success = true
                                     lastTargetPos = nil
                                     lastTargetMap = nil
