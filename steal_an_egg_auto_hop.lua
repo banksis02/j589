@@ -12,14 +12,14 @@ return function(context)
         env.SAE_FARM_READY_JOB = host.JobId
         return previous
     end
-    if previous and previous.jobId == host.JobId and previous.version == 16 then return previous end
+    if previous and previous.jobId == host.JobId and previous.version == 17 then return previous end
     if previous and previous.stop then previous.stop() end
     local players = host:GetService("Players")
     local teleport = host:GetService("TeleportService")
     local http = host:GetService("HttpService")
     local scheduler = ctx.task or task
     local log = ctx.log or warn
-    local state = {jobId = host.JobId, version = 16, active = true, tried = {}, pending = nil}
+    local state = {jobId = host.JobId, version = 17, active = true, tried = {}, pending = nil}
     env.SAE_AUTO_HOP = state
     local connection
     function state.stop()
@@ -44,14 +44,14 @@ return function(context)
         if env.SAE_VENDOR_JOB == host.JobId then return end
         -- Latch before invoking vendor code: a partial run must not start twice.
         env.SAE_VENDOR_JOB = host.JobId
-        log("[SAE HOP] population ready; loading Flowauth loader")
+        log("[SAE HOP] population ready; loading GGX managed egg/boss runtime")
         local ok, err = pcall(function()
-            local source = host:HttpGet("https://flowauth.net/v1/loaders/69d3463240384f3a73fbe32c178093a2.lua")
+            local source = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ggx_sae_runtime.lua?v=1")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
         end)
-        if not ok then log("[SAE VENDOR] load failed: " .. tostring(err)) end
+        if not ok then log("[SAE RUNTIME] load failed: " .. tostring(err)) end
     end
     local function fetch(url)
         if ctx.fetch then return ctx.fetch(url) end
