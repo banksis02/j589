@@ -1951,16 +1951,27 @@ local function closestPosition(target, position)
     return target.CFrame:PointToWorldSpace(Vector3.new(
         math.clamp(localPoint.X,-half.X,half.X),math.clamp(localPoint.Y,-half.Y,half.Y),math.clamp(localPoint.Z,-half.Z,half.Z)))
 end
+local lastEquip=-math.huge
 local function approachAndHit(target)
     local r,h=root(),humanoid()
     if not r or not h or h.Health<=0 or not target.Parent then cancelMove(); return end
+    -- Equip while approaching as well as while in attack range.
+    local tool=weapon()
+    local equipped=tool and tool.Parent==player.Character
+    if tool and not equipped and os.clock()-lastEquip>=1 then
+        lastEquip=os.clock()
+        local ok,err=pcall(function() h:UnequipTools(); h:EquipTool(tool) end)
+        if not ok then warn("[GGX RIFT] Equip failed: "..tostring(err)) end
+    elseif not tool then
+        show("NO_WEAPON","ไม่พบอาวุธ Gear; รออาวุธโหลด ไม่เลือกสัตว์แทน")
+    end
     local center=targetPosition(target)
     if not center then cancelMove(); return end
     local closest=closestPosition(target,r.Position)
-    if (closest-r.Position).Magnitude>7 then
+    if (closest-r.Position).Magnitude>3 then
         local away=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
         if away.Magnitude<0.1 then away=Vector3.new(1,0,0) end
-        local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*4
+        local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*1.5
         if movePart~=target or not goal or (goal-destination).Magnitude>3 or not tween or tween.PlaybackState~=Enum.PlaybackState.Playing then
             cancelMove(); goal=destination; movePart=target
             tween=TweenService:Create(r,TweenInfo.new(math.max(0.1,(destination-r.Position).Magnitude/moveSpeed),Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)})
@@ -1971,11 +1982,12 @@ local function approachAndHit(target)
     cancelMove()
     local flat=Vector3.new(center.X,r.Position.Y,center.Z)
     if (flat-r.Position).Magnitude>0.1 then r.CFrame=CFrame.lookAt(r.Position,flat) end
-    local tool=weapon()
-    if not tool then show("NO_WEAPON","ไม่พบอาวุธ Gear (Katana/Sword/Blade/Axe)"); return end
-    if tool.Parent~=player.Character then h:UnequipTools(); h:EquipTool(tool); return end
-    if not isWeapon(tool) then return end
-    if os.clock()-lastSwing>=0.35 then tool:Activate(); lastSwing=os.clock() end
+    if not tool or tool.Parent~=player.Character or not isWeapon(tool) then return end
+    if os.clock()-lastSwing>=0.35 then
+        local ok,err=pcall(function() tool:Activate() end)
+        lastSwing=os.clock()
+        if not ok then warn("[GGX RIFT] Attack failed: "..tostring(err)) end
+    end
 end
 local function stones()
     local a=arena(); local folder=a and a:FindFirstChild("CrystalTowers")
