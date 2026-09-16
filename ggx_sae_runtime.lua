@@ -236,7 +236,7 @@ local function isCarryingEgg()
     end
     for _, eggData in pairs(fd.Records) do
         local state = tostring(eggData.State or ""):lower()
-        if state == "carried" or state == "carry" or state == "carrying" then
+        if (state == "carried" or state == "carry" or state == "carrying") and tonumber(eggData.CarrierUserId)==game:GetService("Players").LocalPlayer.UserId then
             return true
         end
     end
@@ -281,6 +281,13 @@ local function fieldRecords()
     return records
 end
 local lastScanLog = -math.huge
+local failedFieldKey=nil
+local retryFieldAt=0
+local function fieldKey()
+ local ids={}
+ for id,r in pairs(fieldRecords()) do if type(r)=="table" then table.insert(ids,tostring(r.Uid or id)..":"..tostring(r.State)) end end
+ table.sort(ids);return table.concat(ids,"|")
+end
 local function hasSelectedFieldEgg()
     local total, slotted, matched, unknown = 0, 0, 0, 0
     for _, record in pairs(fieldRecords()) do
@@ -298,7 +305,7 @@ local function hasSelectedFieldEgg()
         lastScanLog=os.clock()
         log(string.format("[SCAN] records=%d slot=%d selected=%d unknownRarity=%d ready=%s",total,slotted,matched,unknown,tostring(snapshotHealthy)))
     end
-    return matched>0
+    return matched>0 and (fieldKey()~=failedFieldKey or os.clock()>=retryFieldAt)
 end
 local function promptPosition(prompt)
     local parent = prompt.Parent
@@ -1078,6 +1085,7 @@ end
 -- ⭐⭐⭐ v9.3-FIXED: goHomeWithRecovery — FIX LỤM EGG KHÔNG VỀ HOME
 local function goHomeWithRecovery()
     log("🏃 BAY VỀ HOME (Y=" .. (config.HOME_FLY_ABSOLUTE_Y or 100) .. ")")
+    if not isCarryingEgg() then return false end
     local startTime = os.clock()
     local lastHealth = nil
     local recoveryAttempts = 0
@@ -1090,6 +1098,11 @@ local function goHomeWithRecovery()
 
         local hum, r = getHum(), getHRP()
         if not hum or not r then break end
+        if not isCarryingEgg() and dist(r.Position,config.HOME_POS)>30 then
+            r.AssemblyLinearVelocity=Vector3.zero
+            log("[CARRY] Egg lost; stop delivery and retry collection")
+            return false
+        end
         keepHealth()
         forceRunningState()  -- ⭐ v9.3
 
@@ -1367,7 +1380,7 @@ local function stealAtPos(targetPos, label, expectedIncome)
         task.wait(config.STEAL_VERIFY_WAIT)
         local _, countNow = getSlotSet()
         local stolen, slotName = hasStolenSlot(slotsBefore)
-        if stolen then
+        if stolen and isCarryingEgg() then
             log("🎒 SLOT MẤT: " .. slotName)
             log(string.format("📊 Slots: %d → %d", countBefore, countNow))
             log("✅ ĐÃ STEAL")
@@ -1503,6 +1516,7 @@ local function mainLoop()
             waitingForWork=false
             if not ready then continue end
         end
+        failedFieldKey=fieldKey();retryFieldAt=os.clock()+60
         log("═══════════════════════")
         pcall(checkEggReset)
 
@@ -1657,13 +1671,15 @@ local function mainLoop()
 
                             local stolen = stealAtPos(stealPos, stealMap.name)
                             if stolen then
-                                goHomeWithRecovery()
+                                local delivered=goHomeWithRecovery()
+                                if not delivered then deliveryFailed=true end
                                 task.wait(config.CHAT_WAIT)
                                 if deliveryFailed then
                                     log("❌ Chat báo fail — RETRY")
                                     task.wait(0.2)
                                 else
                                     log("🎉 THÀNH CÔNG")
+                                    failedFieldKey=nil;retryFieldAt=0
                                     success = true
                                     lastTargetPos = nil
                                     lastTargetMap = nil
@@ -2193,17 +2209,21 @@ Collector.setIdleHandler(function()
 end, Rift.inside)
 -- SAFE ZONE measured by the user in-game.
 local SAFE_ZONE=Vector3.new(534.4960327148438,69.64423370361328,-367.4530334472656)
+local initialDeparture=true
 Collector.setBeforeEgg(function()
  if not configured() or not SAFE_ZONE then return false end
  if not Treadmill.leave() then return false end
  if not configured() then return false end
+ if not initialDeparture then return true end
  local char=player.Character
  local root=char and char:FindFirstChild('HumanoidRootPart')
  if not root then return false end
  root.CFrame=CFrame.new(SAFE_ZONE)
  root.AssemblyLinearVelocity=Vector3.zero
  task.wait(0.3)
- return configured() and (root.Position-SAFE_ZONE).Magnitude<6
+ local arrived=configured() and (root.Position-SAFE_ZONE).Magnitude<6
+ if arrived then initialDeparture=false end
+ return arrived
 end)
 
 env.GGX_SAE_RUNTIME={manualHopVersion=1,stop=function()
