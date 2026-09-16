@@ -82,6 +82,35 @@ local ENV=(type(getgenv)=="function" and getgenv()) or _G
 if type(ENV.SAE_REPORT_STOP)=="function" then pcall(ENV.SAE_REPORT_STOP) end
 local active=true
 local connections={}
+-- Observe the game's visible warning; no inventory capacity is guessed.
+local eggFullSeenAt=0
+local warningLabels=setmetatable({},{__mode="k"})
+local playerGui=player:WaitForChild("PlayerGui")
+local function watchWarning(obj)
+    if obj:IsA("TextLabel") or obj:IsA("TextButton") then warningLabels[obj]=true end
+end
+for _,obj in ipairs(playerGui:GetDescendants()) do watchWarning(obj) end
+table.insert(connections,playerGui.DescendantAdded:Connect(watchWarning))
+task.spawn(function()
+    while active do
+        for obj in pairs(warningLabels) do
+            if obj.Parent and obj:IsDescendantOf(playerGui) then
+                local value=obj.Text:gsub("<[^>]+>",""):lower()
+                if value:find("egg inventory full",1,true) then
+                    local shown=obj.TextTransparency<1
+                    local ancestor=obj
+                    while shown and ancestor and ancestor~=playerGui do
+                        if ancestor:IsA("GuiObject") and not ancestor.Visible then shown=false end
+                        if ancestor:IsA("LayerCollector") and not ancestor.Enabled then shown=false end
+                        ancestor=ancestor.Parent
+                    end
+                    if shown then eggFullSeenAt=os.time() end
+                end
+            else warningLabels[obj]=nil end
+        end
+        task.wait(0.5)
+    end
+end)
 local BASE="https://overload-backend-production.up.railway.app"
 local function find(root,...)
     for _,key in ipairs({...}) do root=root and root:FindFirstChild(key) end
@@ -303,7 +332,7 @@ local function send()
         local money,speed=hud("Money"),hud("Speed")
         local bossMastery,bossTokens=bossMasteryStats()
         local payload={gameServerId=game.JobId,manualHopCapable=ENV.GGX_SAE_RUNTIME~=nil and ENV.GGX_SAE_RUNTIME.manualHopVersion==1,username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
-            currentStats={money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens},stealReport=report,
+            currentStats={eggInventoryFullAt=eggFullSeenAt>0 and eggFullSeenAt or nil,money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens},stealReport=report,
             matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
         for _,kind in ipairs({"pets","eggs"}) do if report[kind] and #report[kind]==0 then report[kind]="__SAE_EMPTY_ARRAY__" end end
