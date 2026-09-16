@@ -65,12 +65,22 @@ local function stop()
     worker=nil
     show("STOPPED","หยุดแล้ว")
 end
+local function isWeapon(tool)
+    if not tool:IsA("Tool") or tool:GetAttribute("ItemType")~="Gear" then return false end
+    local words={}
+    for word in tool.Name:lower():gmatch("%a+") do words[word]=true end
+    if words.trap then return false end
+    return words.katana or words.sword or words.blade or words.axe or words.battleaxe or false
+end
 local function weapon()
-    for _, holder in ipairs({player.Character, player:FindFirstChild("Backpack")}) do
-        if holder then for _, tool in ipairs(holder:GetChildren()) do
-            local n=tool.Name:lower()
-            if tool:IsA("Tool") and (n:find("katana") or n:find("sword") or n:find("blade")) then return tool end
-        end end
+    local holders={}
+    if player.Character then table.insert(holders,player.Character) end
+    local backpack=player:FindFirstChild("Backpack")
+    if backpack then table.insert(holders,backpack) end
+    for _,holder in ipairs(holders) do
+        for _,tool in ipairs(holder:GetChildren()) do
+            if isWeapon(tool) then return tool end
+        end
     end
 end
 local function targetPosition(target)
@@ -106,8 +116,9 @@ local function approachAndHit(target)
     local flat=Vector3.new(center.X,r.Position.Y,center.Z)
     if (flat-r.Position).Magnitude>0.1 then r.CFrame=CFrame.lookAt(r.Position,flat) end
     local tool=weapon()
-    if not tool then show("NO_WEAPON","ไม่พบ Katana / Sword / Blade • กด COPY DATA"); return end
-    if tool.Parent~=player.Character then h:EquipTool(tool); return end
+    if not tool then show("NO_WEAPON","ไม่พบอาวุธ Gear (Katana/Sword/Blade/Axe)"); return end
+    if tool.Parent~=player.Character then h:UnequipTools(); h:EquipTool(tool); return end
+    if not isWeapon(tool) then return end
     if os.clock()-lastSwing>=0.35 then tool:Activate(); lastSwing=os.clock() end
 end
 local function stones()
