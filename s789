@@ -1,7 +1,7 @@
 -- ============================================================
 -- 📦 SCRIPT VERSION
 -- ============================================================
-local SCRIPT_VERSION = "v12.02"
+local SCRIPT_VERSION = "v12.03"
 _G.OVERLOAD_SCRIPT_VERSION = SCRIPT_VERSION
 -- generation ต้องสร้างตั้งแต่ต้นไฟล์ เพื่อให้ task รุ่นเก่าหยุดได้ทันทีเมื่อ re-inject
 _G.AE_SCRIPT_GEN = (_G.AE_SCRIPT_GEN or 0) + 1
@@ -12681,12 +12681,67 @@ local function clean(s)
 end
 
 -- หา ScreenGui ของหน้าจบเกม (มีคำว่า Victory/Defeat + ปุ่ม Repeat Stage)
+-- Open the collapsed results panel before the Expedition end-state check.
+local resultsLastClick = -math.huge
+local function resultVisible(el)
+    if not el:IsDescendantOf(player.PlayerGui) then return false end
+    local n = el
+    while n and n ~= player.PlayerGui do
+        if n:IsA("GuiObject") and not n.Visible then return false end
+        if n:IsA("ScreenGui") and not n.Enabled then return false end
+        n = n.Parent
+    end
+    return el.AbsoluteSize.X > 0 and el.AbsoluteSize.Y > 0
+end
+local function openCollapsedResults()
+    if os.clock() - resultsLastClick < 5 then return false end
+    local label, button
+    for _, el in ipairs(player.PlayerGui:GetDescendants()) do
+        if (el:IsA("TextLabel") or el:IsA("TextButton")) and resultVisible(el) then
+            local text = clean(el.Text):gsub("%s+", " "):lower()
+            if text == "game results" then
+                local b = el
+                while b and not b:IsA("GuiButton") do b = b.Parent end
+                if b then
+                    if button and button ~= b then return false end
+                    button = b
+                    if not label or el.AbsoluteSize.X * el.AbsoluteSize.Y < label.AbsoluteSize.X * label.AbsoluteSize.Y then label = el end
+                end
+            end
+        end
+    end
+    if not label then return false end
+    resultsLastClick = os.clock()
+    local held, x, y = false, 0, 0
+    local ok, err = pcall(function()
+        local function point()
+            assert(resultVisible(label), "Game Results disappeared")
+            local insetNow = game:GetService("GuiService"):GetGuiInset()
+            local center = label.AbsolutePosition + label.AbsoluteSize / 2
+            return math.round(center.X + insetNow.X), math.round(center.Y + insetNow.Y)
+        end
+        x, y = point()
+        VIM:SendMouseMoveEvent(x, y, game)
+        task.wait(0.1)
+        x, y = point()
+        held = true
+        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.12)
+        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+        held = false
+        print(("[Exp Results] Click Game Results at %d,%d"):format(x, y))
+    end)
+    if held then pcall(function() VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end) end
+    if not ok then warn("[Exp Results] " .. tostring(err)) end
+    return ok
+end
+
 local function findEndGui()
     for _, g in ipairs(player.PlayerGui:GetChildren()) do
         if g:IsA("ScreenGui") and g.Enabled then
             local result, hasRepeat = nil, false
             for _, l in ipairs(g:GetDescendants()) do
-                if (l:IsA("TextLabel") or l:IsA("TextButton")) and l.Visible then
+                if (l:IsA("TextLabel") or l:IsA("TextButton")) and resultVisible(l) then
                     local t = clean(l.Text)
                     if t == "Victory" or t == "Defeat" then result = t end
                     if t == "Repeat Stage" then hasRepeat = true end
@@ -12700,6 +12755,11 @@ end
 
 _G.AE_EXP_ENDOPEN = function()
     local _, result = findEndGui()
+    if not result and openCollapsedResults() then
+        task.wait(0.6)
+        local _, openedResult = findEndGui()
+        result = openedResult
+    end
     return result
 end
 
