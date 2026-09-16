@@ -279,6 +279,26 @@ local function fieldRecords()
     end
     return records
 end
+local lastScanLog = -math.huge
+local function hasSelectedFieldEgg()
+    local total, slotted, matched, unknown = 0, 0, 0, 0
+    for _, record in pairs(fieldRecords()) do
+        if type(record)=="table" then
+            total += 1
+            if tostring(record.State or ""):lower()=="slot" then
+                slotted += 1
+                local map=record.BoundsCFrame and getEggRealMap(record.BoundsCFrame.Position)
+                if not Filter.rarity(record, AssetsData) then unknown += 1 end
+                if Filter.allowed(record, AssetsData, filterAreas, filterRarities, map and map.name) then matched += 1 end
+            end
+        end
+    end
+    if os.clock()-lastScanLog>=15 then
+        lastScanLog=os.clock()
+        log(string.format("[SCAN] records=%d slot=%d selected=%d unknownRarity=%d ready=%s",total,slotted,matched,unknown,tostring(snapshotHealthy)))
+    end
+    return matched>0
+end
 local function promptPosition(prompt)
     local parent = prompt.Parent
     if parent and parent:IsA("Attachment") then return parent.WorldPosition end
@@ -1367,6 +1387,7 @@ local function checkEggReset()
     if lastEggCount >= 0 and count > lastEggCount + 10 then
         log("🔄 Phát hiện egg reset! Clear stolenPrompts")
         stolenPrompts = {}
+        lastEggCount = count
         return true
     end
     lastEggCount = count
@@ -1459,7 +1480,7 @@ local function mainLoop()
             continue
         end
         fieldRecords()
-        local candidate = findEggInTargets()
+        local candidate = hasSelectedFieldEgg()
         if not candidate and not snapshotHealthy then
             waitingForWork = true
             fieldRecords()
@@ -2076,6 +2097,7 @@ task.spawn(function()
                 Collector.setFilters(areas,rarities)
                 if not Collector.isRunning() then Collector.setTargets(targets) end
                 signature=key
+                print("[GGX SAE CONFIG] "..key)
             end
             if #targets>0 and next(rarities) and not Collector.isRunning() then
                 if Rift.inside() then
