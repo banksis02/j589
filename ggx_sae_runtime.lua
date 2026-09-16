@@ -108,6 +108,7 @@ local filterAreas, filterRarities = {}, {}
 local forestPreparation = false
 local waitingForWork = false
 local idleHandler
+local beforeEgg
 local arenaCheck
 local pendingFilters
 local auditCallbacks = {}
@@ -1491,10 +1492,11 @@ local function mainLoop()
         if not candidate then
             waitingForWork = true
             if idleHandler then idleHandler() end
-            task.wait(2)
+            task.wait(0.05)
             waitingForWork = false
             continue
         end
+        if beforeEgg and not beforeEgg() then task.wait(2); continue end
         log("═══════════════════════")
         pcall(checkEggReset)
 
@@ -1836,6 +1838,7 @@ function M.setHome(p) if p then config.HOME_POS = p; log("📍 Home") end end
 function M.setForest(p) if p then config.FOREST_POS = p; log("📍 Forest") end end
 function M.getConfig() return config end
 
+function M.setBeforeEgg(fn) beforeEgg=fn end
 function M.setIdleHandler(fn, check) idleHandler = fn; arenaCheck=check end
 return M
 
@@ -2042,6 +2045,78 @@ function M.stop() cancelMove() end
 return M
 
 end)()
+local Treadmill=(function()
+local M={}
+local player=game:GetService('Players').LocalPlayer
+local oldSpeed,applied,humanoid
+local entered=false
+local function character()
+ local c=player.Character
+ return c and c:FindFirstChildOfClass('Humanoid'),c and c:FindFirstChild('HumanoidRootPart')
+end
+local function owner(plot)
+ local sign=plot:FindFirstChild('PlotSign')
+ local gui=sign and sign:FindFirstChild('PlayerPlotSign')
+ local frame=gui and gui:FindFirstChild('Frame')
+ local icon=frame and frame:FindFirstChild('PlayerIcon')
+ return icon and tonumber(icon.Image:match('[?&]id=(%d+)'))
+end
+local function ownBelt()
+ local plots=workspace:FindFirstChild('Plots');local found
+ if not plots then return end
+ for _,plot in ipairs(plots:GetChildren()) do
+  if owner(plot)==player.UserId then
+   if found then return end
+   found=plot
+  end
+ end
+ local belt=found and found:FindFirstChild('TreadmillBottom')
+ if belt and belt:IsA('BasePart') then return belt end
+end
+function M.stop()
+ if humanoid and humanoid.Parent then
+  humanoid:Move(Vector3.zero,false)
+  local _,r=character();if r then humanoid:MoveTo(r.Position) end
+  if applied and humanoid.WalkSpeed==applied then humanoid.WalkSpeed=oldSpeed end
+ end
+ humanoid=nil;applied=nil;oldSpeed=nil
+end
+function M.step()
+ local h,r=character();local belt=ownBelt()
+ if not h or not r or h.Health<=0 or not belt then M.stop();return false end
+ if humanoid~=h then M.stop();humanoid=h;oldSpeed=h.WalkSpeed end
+ local target=belt.Position+belt.CFrame.UpVector*(belt.Size.Y/2)
+ local d=Vector3.new(target.X-r.Position.X,0,target.Z-r.Position.Z).Magnitude
+ if d<=1.2 then
+  h:Move(Vector3.zero,false);h:MoveTo(r.Position)
+  if applied and h.WalkSpeed==applied then h.WalkSpeed=oldSpeed end
+  applied=nil;entered=true
+ else
+  applied=math.min(oldSpeed,math.clamp(d*2,4,32));h.WalkSpeed=applied;h:MoveTo(target)
+ end
+ return true
+end
+function M.leave()
+ M.stop()
+ local h,r=character()
+ if not h or not r or h.Health<=0 then return false end
+ -- Jump once before travel, also covers accidental contact with a belt.
+ if not h:GetStateEnabled(Enum.HumanoidStateType.Jumping) then return false end
+ h:Move(Vector3.zero,false);h:MoveTo(r.Position);h.Jump=true
+ local start=os.clock();local y=r.Position.Y;local airborne=false
+ repeat
+  task.wait(0.05)
+  if not r.Parent or h.Health<=0 or player.Character~=h.Parent then return false end
+  local state=h:GetState()
+  airborne=airborne or state==Enum.HumanoidStateType.Jumping or state==Enum.HumanoidStateType.Freefall or r.Position.Y>y+0.5
+ until airborne or os.clock()-start>2
+ if not airborne then warn('[GGX TREADMILL] Exit not confirmed; travel held');return false end
+ entered=false
+ return true
+end
+return M
+
+end)()
 
 local http=game:GetService("HttpService")
 local player=game:GetService("Players").LocalPlayer
@@ -2053,9 +2128,9 @@ local recoveryThread=nil
 local hopping=false
 local function configured()
     return active and not hopping and job and job.status=="active" and os.clock()-lastGood<45
-        and (job.mode=="sae_egg" or job.mode=="sae_egg_boss")
+        and (job.mode=="sae_egg" or job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_treadmill")
 end
-local function bossAllowed() return configured() and job.mode=="sae_egg_boss" end
+local function bossAllowed() return configured() and (job.mode=="sae_egg_boss" or job.mode=="sae_bundle") end
 local function fetchJob()
     local url="https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"
         ..http:UrlEncode(player.Name).."?game=steal_an_egg"
@@ -2084,13 +2159,32 @@ local function settings(j)
 end
 Collector.setIdleHandler(function()
     if bossAllowed() and (Rift.available() or Rift.inside()) then
+        if not Rift.inside() and not Treadmill.leave() then return end
         print("[GGX SAE] No selected eggs remain; entering Rift")
         Rift.run(bossAllowed)
         print("[GGX SAE] Rift finished or job stopped; rescan eggs")
+    elseif configured() and job.mode=="sae_bundle" then
+        local untilAt=os.clock()+1
+        repeat Treadmill.step(); task.wait(0.05) until os.clock()>=untilAt or not configured()
     end
 end, Rift.inside)
+-- SAFE ZONE measured by the user in-game.
+local SAFE_ZONE=Vector3.new(534.4960327148438,69.64423370361328,-367.4530334472656)
+Collector.setBeforeEgg(function()
+ if not configured() or not SAFE_ZONE then return false end
+ if not Treadmill.leave() then return false end
+ if not configured() then return false end
+ local char=player.Character
+ local root=char and char:FindFirstChild('HumanoidRootPart')
+ if not root then return false end
+ root.CFrame=CFrame.new(SAFE_ZONE)
+ root.AssemblyLinearVelocity=Vector3.zero
+ task.wait(0.3)
+ return configured() and (root.Position-SAFE_ZONE).Magnitude<6
+end)
+
 env.GGX_SAE_RUNTIME={manualHopVersion=1,stop=function()
-    active=false; Rift.stop(); Collector.destroy(); env.GGX_SAE_RUNTIME=nil
+    active=false; Treadmill.stop(); Rift.stop(); Collector.destroy(); env.GGX_SAE_RUNTIME=nil
 end}
 -- Manual customer command, scoped to the original server; never repeats after teleport.
 env.GGX_SAE_HOP_SEEN=env.GGX_SAE_HOP_SEEN or {}
@@ -2102,7 +2196,7 @@ local function manualHop(command)
     if not valid or expires<os.time() then return end
     seenCommands[command.requestId]=true
     hopping=true
-    Collector.stop(); Rift.stop(); signature=nil
+    Treadmill.stop(); Collector.stop(); Rift.stop(); signature=nil
     local service=game:GetService("TeleportService")
     local failure=nil
     local connection=service.TeleportInitFailed:Connect(function(who,_,message)
@@ -2135,19 +2229,31 @@ local function manualHop(command)
     if not ok then warn("[GGX MANUAL HOP] failed: "..tostring(err)) end
 end
 
+-- Network polling cannot delay treadmill braking near the destination.
+task.spawn(function()
+    while active do
+        local ok,result=pcall(fetchJob)
+        if ok and type(result)=="table" then job=result; lastGood=os.clock() end
+        task.wait(10)
+    end
+end)
 task.spawn(function()
     while active do
         if env.GGX_SAE_MANUAL_HOP then manualHop(env.GGX_SAE_MANUAL_HOP) end
-        local ok,result=pcall(fetchJob)
-        if ok and type(result)=="table" then job=result; lastGood=os.clock() end
         if not configured() then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
+            Treadmill.stop()
             signature=nil
+        elseif job.mode=="sae_treadmill" then
+            if Collector.isRunning() then Collector.stop(); Rift.stop() end
+            signature=nil
+            if not Rift.inside() then Treadmill.step() end
         else
             local areas,rarities,targets=settings(job)
             local key=tostring(job.id).."|"..tostring(job.mode).."|"..table.concat(split(job.eggAreas),",").."|"..table.concat(split(job.eggRarity),",")
             if #targets==0 or not next(rarities) then
-                Collector.stop(); Rift.stop()
+                Collector.stop(); Rift.stop(); Treadmill.stop()
+                task.wait(2)
                 warn("[GGX SAE] Waiting for valid Area and Rarity settings from CONTROL/Discord")
             elseif key~=signature then
                 Collector.setFilters(areas,rarities)
@@ -2168,6 +2274,6 @@ task.spawn(function()
                 elseif not recoveryThread then Collector.start() end
             end
         end
-        task.wait(10)
+        task.wait(0.1)
     end
 end)

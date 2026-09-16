@@ -46,7 +46,7 @@ return function(context)
         env.SAE_VENDOR_JOB = host.JobId
         log("[SAE HOP] population ready; loading GGX managed egg/boss runtime")
         local ok, err = pcall(function()
-            local source = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ggx_sae_runtime.lua?v=1")
+            local source = host:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/ggx_sae_runtime.lua?v=2")
             local chunk, compileError = loadstring(source)
             assert(chunk, compileError)
             chunk()
