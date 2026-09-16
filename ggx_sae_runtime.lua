@@ -1955,6 +1955,7 @@ end
 local lastEquip=-math.huge
 local trackedTarget,lastTargetHealth,healthAt=nil,nil,0
 local swingAttempts=0
+local lastCharacter,lastHumanoid,selectedStone=nil,nil,nil
 local function resetWeapon(tool,h)
     local ok,err=pcall(function()
         tool:Deactivate()
@@ -1963,6 +1964,24 @@ local function resetWeapon(tool,h)
     end)
     lastEquip=os.clock()
     if not ok then warn("[GGX RIFT] Equip failed: "..tostring(err)) end
+end
+local function continuousAttack()
+    local h=humanoid()
+    if not h or h.Health<=0 then return end
+    local tool=weapon()
+    if not tool then show("NO_WEAPON","รออาวุธ Gear/IsBat โหลด");return end
+    if tool.Parent~=player.Character then
+        if os.clock()-lastEquip>=1 then resetWeapon(tool,h) end
+        return
+    end
+    if os.clock()-lastEquip<0.3 then return end
+    if not tool.Enabled or tool:GetAttribute("CooldownActive")==true then return end
+    if os.clock()-lastSwing>=0.35 then
+        local ok,err=pcall(function() tool:Deactivate(); tool:Activate() end)
+        if ok then swingAttempts+=1 end
+        lastSwing=os.clock()
+        if not ok then warn("[GGX RIFT] Attack failed: "..tostring(err)) end
+    end
 end
 local function approachAndHit(target)
     local r,h=root(),humanoid()
@@ -1978,10 +1997,11 @@ local function approachAndHit(target)
     local center=targetPosition(target)
     if not center then cancelMove(); return end
     local closest=closestPosition(target,r.Position)
-    if (closest-r.Position).Magnitude>3 then
+    local contactRange=target:IsA("BasePart") and 1 or 3
+    if (closest-r.Position).Magnitude>contactRange then
         local away=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
         if away.Magnitude<0.1 then away=Vector3.new(1,0,0) end
-        local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*1.5
+        local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*(target:IsA("BasePart") and 0.25 or 1.5)
         if movePart~=target or not goal or (goal-destination).Magnitude>3 or not tween or tween.PlaybackState~=Enum.PlaybackState.Playing then
             cancelMove(); goal=destination; movePart=target
             tween=TweenService:Create(r,TweenInfo.new(math.max(0.1,(destination-r.Position).Magnitude/moveSpeed),Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)})
@@ -2010,13 +2030,7 @@ local function approachAndHit(target)
         end
         return
     end
-    if not tool.Enabled or tool:GetAttribute("CooldownActive")==true then return end
-    if os.clock()-lastSwing>=0.35 then
-        local ok,err=pcall(function() tool:Deactivate(); tool:Activate() end)
-        if ok then swingAttempts+=1 end
-        lastSwing=os.clock()
-        if not ok then warn("[GGX RIFT] Attack failed: "..tostring(err)) end
-    end
+
 end
 local function stones()
     local a=arena(); local folder=a and a:FindFirstChild("CrystalTowers")
@@ -2047,6 +2061,17 @@ local function exposedHand()
     return hand
 end
 local function tick()
+    local char,h=player.Character,humanoid()
+    if char~=lastCharacter or h~=lastHumanoid then
+        cancelMove()
+        lastCharacter,lastHumanoid=char,h
+        trackedTarget,lastTargetHealth,selectedStone=nil,nil,nil
+        healthAt=os.clock();swingAttempts=0;lastEquip=-math.huge;lastSwing=0
+    end
+    if not h or h.Health<=0 or not root() then
+        cancelMove();selectedStone=nil
+        show("WAIT_RESPAWN","รอเกิดใหม่ แล้วตรวจอาวุธอีกครั้ง");return
+    end
     if not inside() then
         cancelMove()
         if not workspace:FindFirstChild("BossArenaTeleport") then
@@ -2069,17 +2094,22 @@ local function tick()
     if current==0 or deadBoss==b then
         deadBoss=b; cancelMove(); show("COMPLETE","บอส HP 0 • หยุดโจมตี รอออกจากห้อง"); return
     end
+    continuousAttack() -- Independent of distance, crystal HP maximum, or hand exposure.
     local targets,unknown=stones()
     if #targets>0 then
-        show("CRYSTALS","หินเหลือ "..#targets.." • เป้า "..targets[1].part.Name.." HP "..targets[1].health)
-        approachAndHit(targets[1].part); return
+        local chosen=targets[1]
+        for _,candidate in ipairs(targets) do if candidate.part==selectedStone then chosen=candidate;break end end
+        selectedStone=chosen.part
+        show("CRYSTALS","หินเหลือ "..#targets.." • เป้า "..chosen.part.Name.." HP "..chosen.health)
+        approachAndHit(chosen.part); return
     end
+    selectedStone=nil
     if unknown>0 then cancelMove(); show("NEED_DATA","อ่าน HP หินไม่ได้ "..unknown.." ก้อน • กด COPY DATA"); return end
     local hand=exposedHand()
     if hand then
         show("HAND_OPEN",hand.Name.." • HP "..tostring(current).."/"..tostring(maximum).." • Attacking + ป้ายเลือดมือ")
         approachAndHit(hand)
-    else cancelMove(); show("WAIT_HAND","รอมือลดลง • ไม่ตีตัวบอส • ถ้ามือลงแล้วไม่ตี กด COPY DATA") end
+    else cancelMove(); show("WAIT_HAND","รอมือลดลง • ถืออาวุธและตีต่อเนื่อง") end
 end
 local M = {}
 function M.inside() return inside() end
