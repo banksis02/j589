@@ -1,4 +1,4 @@
--- GGX SAE standalone experiment v0.2.1 -- NOT the main GGX loader.
+-- GGX SAE standalone experiment v0.3.0 -- NOT the main GGX loader.
 -- Collector derived from ojiasa/Steal-an-egg @ 0cb06f0c2453e519129fece24d3c988cbb6f8984.
 -- Catalog rarity approach reviewed from ugphone33241-prog/Steal-an-egg (Oxide)
 -- @ 86372cb86a014ab93fea5dadd2c7da7ed6dd6db4. Original collector comments retained.
@@ -29,7 +29,7 @@ message.BackgroundColor3 = Color3.fromRGB(14,20,30)
 message.TextColor3 = Color3.new(1,1,1)
 message.TextSize = 16
 message.TextWrapped = true
-message.Text = "GGX SAE 0.2.1: Loading collector..."
+message.Text = "GGX SAE 0.3.0: Loading collector..."
 message.Parent = boot
 if game.PlaceId ~= 107778070777162 then
     message.Text = "GGX SAE: Unsupported PlaceId " .. tostring(game.PlaceId) .. " (expected 107778070777162). Send this message for diagnosis."
@@ -135,6 +135,10 @@ local config = {
 local isRunning = false
 local filterAreas, filterRarities = {}, {}
 local forestPreparation = false
+local pendingFilters
+local auditCallbacks = {}
+local function audit(text) for _, cb in ipairs(auditCallbacks) do pcall(cb, text) end end
+function M.onAudit(cb) table.insert(auditCallbacks, cb) end
 local ownedConnections, ownedTasks = {}, setmetatable({}, {__mode = "k"})
 local nativeTask = task
 local task = setmetatable({}, {__index = nativeTask})
@@ -304,12 +308,31 @@ local function promptPosition(prompt)
     if parent and parent:IsA("BasePart") then return parent.Position end
     if parent and parent.Parent and parent.Parent:IsA("BasePart") then return parent.Parent.Position end
 end
-local function allowPrompt(prompt)
+local lastAuditAt = -math.huge
+local function checkRecord(record, map, method, force)
+    local allowed = Filter.allowed(record, AssetsData, filterAreas, filterRarities, map and map.name)
+    local rarity = Filter.rarity(record, AssetsData)
+    local area = record.AreaId or (map and map.name) or "?"
+    local reason = not rarity and "unknown rarity" or not filterAreas[Filter.normalize(area)] and "area not selected"
+        or not filterRarities[rarity] and "rarity not selected" or "matches filters"
+    if force or (not allowed and os.clock() - lastAuditAt > 2) then
+        lastAuditAt = os.clock()
+        local text = string.format("%s | %s | %s | %s | %s [%s]", force and (allowed and "PICK" or "BLOCK") or "SKIP",
+            tostring(record.AssetCategory or record.Name or "Egg"), tostring(rarity or "UNKNOWN"), tostring(area), reason, method)
+        audit(text)
+        print("[GGX FILTER] " .. text)
+    end
+    return allowed
+end
+local function allowPrompt(prompt, force)
     local pos = promptPosition(prompt)
     if not pos then return false end
     local map = getEggRealMap(pos)
     -- ojiasa's Forest setup is required even when Forest is not a target area.
-    if forestPreparation then return map and map.name == "Forest" end
+    if forestPreparation then
+        if force then audit("PREP | Holding Forest egg before target collection (ojiasa)") end
+        return map and map.name == "Forest"
+    end
     local ids = {}
     local ancestor = prompt.Parent
     while ancestor and ancestor ~= W do
@@ -325,7 +348,7 @@ local function allowPrompt(prompt)
         if type(record) == "table" and record.BoundsCFrame then
             local id = record.Uid or record.UID or key
             if ids[tostring(id)] then
-                return Filter.allowed(record, AssetsData, filterAreas, filterRarities, map and map.name)
+                return checkRecord(record, map, "UID", force)
             end
             local d = (record.BoundsCFrame.Position - pos).Magnitude
             if d < distance then
@@ -335,8 +358,14 @@ local function allowPrompt(prompt)
         end
     end
     -- Do not guess between overlapping records, or infer rarity from the area.
-    if not nearest or secondDistance - distance < 1 then return false end
-    return Filter.allowed(nearest, AssetsData, filterAreas, filterRarities, map and map.name)
+    if not nearest or secondDistance - distance < 1 then
+        if force or os.clock() - lastAuditAt > 2 then
+            lastAuditAt = os.clock()
+            audit("SKIP | Cannot match prompt to an egg record reliably")
+        end
+        return false
+    end
+    return checkRecord(nearest, map, "position", force)
 end
 
 local function getEggInfoAtPos(eggPos, radius)
@@ -936,7 +965,7 @@ local function teleToMap(targetPos)
 end
 
 local function firePromptOnce(prompt)
-    if not isRunning or not prompt or not prompt.Parent or not allowPrompt(prompt) then return false end
+    if not isRunning or not prompt or not prompt.Parent or not allowPrompt(prompt, true) then return false end
     forceRunningState()  -- ⭐ v9.3: force trước khi fire
     pcall(function()
         prompt.Enabled = true
@@ -1422,6 +1451,20 @@ end
 -- ══════════ MAIN LOOP ══════════
 local function mainLoop()
     while isRunning do
+        if pendingFilters then
+            filterAreas, filterRarities = pendingFilters.areas, pendingFilters.rarities
+            pendingFilters = nil
+            config.TARGETS = {}
+            for _, map in ipairs(ALL_MAPS) do
+                if filterAreas[Filter.normalize(map.name)] then table.insert(config.TARGETS, map) end
+            end
+            audit("APPLIED | Updated filters for this cycle")
+        end
+        if not next(filterAreas) or not next(filterRarities) then
+            audit("WAIT | Select at least one Area and Rarity")
+            task.wait(0.5)
+            continue
+        end
         log("═══════════════════════")
         pcall(checkEggReset)
 
@@ -1673,8 +1716,14 @@ function M.stop()
     log("STOPPED")
 end
 function M.setFilters(areas, rarities)
-    assert(not isRunning, "Stop before changing filters")
-    filterAreas, filterRarities = table.clone(areas), table.clone(rarities)
+    local nextAreas, nextRarities = table.clone(areas), table.clone(rarities)
+    if isRunning then
+        pendingFilters = {areas = nextAreas, rarities = nextRarities}
+        return "pending"
+    end
+    filterAreas, filterRarities = nextAreas, nextRarities
+    pendingFilters = nil
+    return "applied"
 end
 function M.destroy()
     M.stop()
@@ -1792,7 +1841,7 @@ local function label(text, x,y,w,h,size)
         TextColor3=Color3.fromRGB(226,236,247), Font=Enum.Font.Gotham, TextSize=size or 13,
         TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Left}, panel)
 end
-local title = label("GGX / EGG COLLECTOR · TEST 0.2.1",16,10,390,28,16)
+local title = label("GGX / EGG COLLECTOR · TEST 0.3.0",16,10,390,28,16)
 local function button(text,x,y,w,h,fn)
     local b = make("TextButton", {Text=text, Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
         BackgroundColor3=tile, TextColor3=Color3.fromRGB(240,246,255), BorderSizePixel=0,
@@ -1816,13 +1865,20 @@ end
 for _, rarity in ipairs(Filter.rarities) do
     if options.rarities == nil or table.find(options.rarities, rarity) then chosenRarities[rarity] = true end
 end
+local function updateFilters()
+    local result = Collector.setFilters(chosenAreas, chosenRarities)
+    report(result == "pending" and "บันทึกแล้ว • ใช้รอบถัดไป ไข่ที่ถืออยู่ส่งต่อให้จบ" or "อัปเดตตัวกรองแล้ว")
+end
+local auditView = label("FILTER • รออ่านข้อมูลไข่",16,383,438,44,11)
+auditView.TextColor3 = Color3.fromRGB(111,232,195)
+Collector.onAudit(function(text) auditView.Text = text end)
 local logLines = {}
-local logView = label("",16,387,438,87,11)
+local logView = label("",16,432,438,43,11)
 logView.TextYAlignment = Enum.TextYAlignment.Top
 Collector.onLog(function(text)
     if text == "STOPPED" then status.Text = "หยุดแล้ว • ดูผลล่าสุดด้านล่าง" end
     table.insert(logLines, tostring(text))
-    while #logLines > 4 do table.remove(logLines,1) end
+    while #logLines > 2 do table.remove(logLines,1) end
     logView.Text = table.concat(logLines,"\n")
 end)
 label("AREA • เลือกได้หลายด่าน",16,82,438,20,12)
@@ -1830,10 +1886,10 @@ for i, map in ipairs(Collector.getAllMaps()) do
     local key = Filter.normalize(map.name)
     local b
     b = button((chosenAreas[key] and "✓ " or "□ ")..map.name,16+((i-1)%3)*148,108+math.floor((i-1)/3)*29,140,25,function()
-        if Collector.isRunning() then report("กด STOP ก่อนเปลี่ยนตัวกรอง"); return end
         chosenAreas[key] = not chosenAreas[key] or nil
         b.Text = (chosenAreas[key] and "✓ " or "□ ")..map.name
         b.BackgroundColor3 = chosenAreas[key] and accent or tile
+        updateFilters()
     end)
     b.BackgroundColor3 = chosenAreas[key] and accent or tile
 end
@@ -1841,10 +1897,10 @@ label("RARITY • ไม่เลือกระดับ = ไม่เริ�
 for i, rarity in ipairs(Filter.rarities) do
     local b
     b = button((chosenRarities[rarity] and "✓ " or "□ ")..rarity,16+((i-1)%4)*111,253+math.floor((i-1)/4)*29,103,25,function()
-        if Collector.isRunning() then report("กด STOP ก่อนเปลี่ยนตัวกรอง"); return end
         chosenRarities[rarity] = not chosenRarities[rarity] or nil
         b.Text = (chosenRarities[rarity] and "✓ " or "□ ")..rarity
         b.BackgroundColor3 = chosenRarities[rarity] and accent or tile
+        updateFilters()
     end)
     b.BackgroundColor3 = chosenRarities[rarity] and accent or tile
 end
@@ -1891,6 +1947,6 @@ if options.autoStart ~= false then start() end
 end, function(err) return debug.traceback(tostring(err), 2) end)
 bootDone = true
 if bootOK then boot:Destroy() else
-    message.Text = "GGX SAE 0.2.1 initialization failed:\n" .. tostring(bootError)
+    message.Text = "GGX SAE 0.3.0 initialization failed:\n" .. tostring(bootError)
     warn(message.Text)
 end
