@@ -1,4 +1,4 @@
--- GGX Oxide-adapted collector test v0.1. Not the production runtime.
+-- GGX Oxide-adapted collector test v0.2. Not the production runtime.
 local env=getgenv and getgenv() or _G
 assert(not env.GGX_SAE_RUNTIME, 'Run this test in a fresh session without the main script')
 if env.GGX_OXIDE_TEST and env.GGX_OXIDE_TEST.destroy then env.GGX_OXIDE_TEST.destroy() end
@@ -98,27 +98,51 @@ local function ragdolled()
     return s==Enum.HumanoidStateType.Physics or s==Enum.HumanoidStateType.Ragdoll
         or s==Enum.HumanoidStateType.FallingDown or s==Enum.HumanoidStateType.PlatformStanding
 end
+-- Oxide MoveToPoint: advance from the current replicated position each Heartbeat.
 local function move(pos,speed,uid)
     local r,h=root(),hum()
-    if not active or not r or not h or h.Health<=0 then return false end
-    local duration=math.max((r.Position-pos).Magnitude/speed,0.05)
-    tween=TweenService:Create(r,TweenInfo.new(duration,Enum.EasingStyle.Linear),{CFrame=CFrame.new(pos)})
-    tween:Play()
-    local start=os.clock()
-    while active and os.clock()-start<duration+1 do
-        if root()~=r or hum()~=h or h.Health<=0 or (uid and not carried(uid)) then
-            tween:Cancel(); tween=nil
-            r.AssemblyLinearVelocity=Vector3.zero
-            return uid and bag(uid) or false
-        end
-        if tween.PlaybackState==Enum.PlaybackState.Completed then
-            tween=nil
-            r.AssemblyLinearVelocity=Vector3.zero
-            return (r.Position-pos).Magnitude<8
-        end
-        task.wait(0.03)
+    if not active or not r or not h or h.Health<=0 then
+        log('MOVE BLOCKED: character not alive/ready'); return false
     end
-    if tween then tween:Cancel();tween=nil end
+    speed=math.clamp(tonumber(speed) or 750,50,750)
+    local total=(r.Position-pos).Magnitude
+    local deadline=os.clock()+math.min(total/50+5,60)
+    local best=total
+    local progressAt=os.clock()
+    while active do
+        if root()~=r or hum()~=h or h.Health<=0 then
+            log('MOVE CANCEL: character changed/dead'); return false
+        end
+        if uid and not carried(uid) then
+            r.AssemblyLinearVelocity=Vector3.zero
+            log('MOVE CANCEL: carry lost')
+            return bag(uid) or false
+        end
+        local delta=pos-r.Position
+        local remaining=delta.Magnitude
+        if remaining<1 then
+            r.AssemblyLinearVelocity=Vector3.zero
+            r.AssemblyAngularVelocity=Vector3.zero
+            return true
+        end
+        if remaining<best-1 then best=remaining;progressAt=os.clock() end
+        if os.clock()>deadline or os.clock()-progressAt>3 then
+            r.AssemblyLinearVelocity=Vector3.zero
+            log(string.format('MOVE BLOCKED: remaining=%.1f; position=%s',remaining,tostring(r.Position)))
+            return false
+        end
+        local dt=game:GetService('RunService').Heartbeat:Wait()
+        -- STOP/respawn/carry can change while waiting; never write stale character state.
+        if not active or root()~=r or hum()~=h or h.Health<=0 then return false end
+        if uid and not carried(uid) then r.AssemblyLinearVelocity=Vector3.zero;return bag(uid) or false end
+        delta=pos-r.Position
+        if delta.Magnitude>0 then
+            local nextPos=r.Position+delta.Unit*math.min(speed*math.min(dt,0.1),delta.Magnitude)
+            r.CFrame=CFrame.lookAt(nextPos,nextPos+delta.Unit)
+        end
+        r.AssemblyLinearVelocity=Vector3.zero
+        r.AssemblyAngularVelocity=Vector3.zero
+    end
     return false
 end
 local function travel(pos,uid)
@@ -130,9 +154,9 @@ local function travel(pos,uid)
     end
     table.insert(route,{Vector3.new(pos.X,y,-364.5),uid and 245 or 750})
     table.insert(route,{pos+Vector3.new(0,1.2,0),uid and 245 or 750})
-    for _,step in ipairs(route) do
+    for index,step in ipairs(route) do
         if uid and bag(uid) then return true end
-        if not move(step[1],step[2],uid) then return false end
+        if not move(step[1],step[2],uid) then log('ROUTE STOP: segment '..index);return false end
     end
     return true
 end
@@ -157,9 +181,10 @@ local function collect(target)
     local base=home()
     if not base then log('Cannot identify own plot'); return end
     local latest=record(uid)
-    if not latest or (latest.State~='Slot' and latest.State~='Dropped') or not latest.BoundsCFrame then return end
+    if not latest or ((latest.State~='Slot' and latest.State~='Dropped') and latest.State~='Dropped') or not latest.BoundsCFrame then return end
     log('APPROACH '..tostring(latest.AssetCategory)..' / '..tostring(latest.AreaId))
-    if not travel(latest.BoundsCFrame.Position) then return end
+    if not travel(latest.BoundsCFrame.Position) then task.wait(2);return end
+    log('ARRIVED: requesting pickup')
     if not pickup(uid) then log('Pickup not confirmed'); return end
     log('WAIT GUARD: '..uid)
     local t=os.clock()
@@ -271,7 +296,7 @@ local function label(text, x,y,w,h,size)
         TextColor3=Color3.fromRGB(226,236,247), Font=Enum.Font.Gotham, TextSize=size or 13,
         TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Left}, panel)
 end
-local title = label("GGX / OXIDE COLLECTOR · TEST 0.1",16,10,390,28,16)
+local title = label("GGX / OXIDE COLLECTOR · TEST 0.2",16,10,390,28,16)
 local function button(text,x,y,w,h,fn)
     local b = make("TextButton", {Text=text, Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
         BackgroundColor3=tile, TextColor3=Color3.fromRGB(240,246,255), BorderSizePixel=0,
