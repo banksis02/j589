@@ -2142,6 +2142,9 @@ end
 local function bossOnly() return job and (job.mode=="sae_boss" or job.mode=="sae_rift") end
 local function bossAllowed() return configured() and (job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_boss" or job.mode=="sae_rift") end
 local function fetchJob()
+    -- โหมดเทสบนเครื่องเทส: ตั้ง getgenv().SAE_TEST_JOB = {status="active",mode="sae_egg",eggAreas="",eggRarity="Rare"}
+    -- แล้วรันได้เลยไม่ต้องพึ่ง backend/ผูกจอ (ตั้ง =nil เพื่อกลับไปใช้งานจริง)
+    if type(env.SAE_TEST_JOB)=="table" then return env.SAE_TEST_JOB end
     local url="https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"
         ..http:UrlEncode(player.Name).."?game=steal_an_egg"
     local requestFn=env.request or env.http_request or request or http_request or (syn and syn.request)
