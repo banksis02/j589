@@ -107,6 +107,7 @@ local isRunning = false
 local filterAreas, filterRarities = {}, {}
 local forestPreparation = false
 local waitingForWork = false
+local deliveryRetryBlocked=false
 local idleHandler
 local beforeEgg
 local arenaCheck
@@ -1409,6 +1410,11 @@ local function mainLoop()
         end
         waitingForWork=false
         fullPauseLogged=false
+        if deliveryRetryBlocked then
+            waitingForWork=true
+            task.wait(0.25)
+            continue
+        end
         forestPreparation = false
         pcall(checkEggReset)
         if arenaCheck and arenaCheck() then
@@ -1549,7 +1555,7 @@ local function mainLoop()
 
                         local targetPos = eggPos + Vector3.new(0, 3, 0)
                         local success = false
-                        for attempt = 1, config.MAX_RETRY do
+                        for attempt = 1, 1 do
                             if not isRunning then break end
                             log("═══════════════════════")
                             log(string.format("🔄 ATTEMPT %d/%d", attempt, config.MAX_RETRY))
@@ -1558,46 +1564,6 @@ local function mainLoop()
                             local stealPos = eggPos
                             local stealMap = eggMap
                             local stealTarget = targetPos
-
-                            if attempt > 1 and lastTargetPos then
-                                local p, ppos, pd = nil, nil, 500
-                                for _, v in ipairs(promptList()) do
-                                    if v:IsA("ProximityPrompt") and v.Enabled and not stolenPrompts[v] then
-                                        local isEgg = v.Name == "CarryAreaEgg"
-                                            or ((v.ObjectText or "") == "Egg"
-                                                and (v.ActionText or ""):lower():find("steal", 1, true))
-                                        if isEgg and allowPrompt(v) then
-                                            local part = v.Parent
-                                            local pp
-                                            if part and part:IsA("BasePart") then pp = part.Position
-                                            elseif part and part:IsA("Attachment") then pp = part.WorldPosition
-                                            elseif part and part.Parent and part.Parent:IsA("BasePart") then
-                                                pp = part.Parent.Position end
-                                            if pp then
-                                                local d = (pp - lastTargetPos).Magnitude
-                                                if d < pd then
-                                                    p, ppos, pd = v, pp, d
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                                if p and ppos then
-                                    log(string.format("🔄 Retry: egg cũ cách %.0f studs → steal lại", pd))
-                                    stealPos = ppos
-                                    stealMap = getEggRealMap(ppos) or eggMap
-                                    stealTarget = ppos + Vector3.new(0, 3, 0)
-                                else
-                                    log("⚠ Không tìm thấy egg cũ → steal egg mới")
-                                    if config.BIG_EGG_MODE then
-                                        local np, npos, nd, nm = findBiggestEgg()
-                                        if npos then
-                                            stealPos, stealMap = npos, nm
-                                            stealTarget = npos + Vector3.new(0, 3, 0)
-                                        end
-                                    end
-                                end
-                            end
 
                             teleToMap(stealTarget)
                             task.wait(0.05)
@@ -1608,8 +1574,11 @@ local function mainLoop()
                                 if not delivered then deliveryFailed=true end
                                 if delivered then task.wait(config.CHAT_WAIT) end
                                 if deliveryFailed then
-                                    log("❌ Chat báo fail — RETRY")
-                                    task.wait(0.2)
+                                    deliveryRetryBlocked=true
+                                    lastTargetPos=nil
+                                    lastTargetMap=nil
+                                    log("[NO RECOVERY TEST] Delivery failed; collection paused. No return pickup or home teleport.")
+                                    break
                                 else
                                     log("🎉 THÀNH CÔNG")
                                     success = true
@@ -1618,7 +1587,7 @@ local function mainLoop()
                                     break
                                 end
                             else
-                                log("⚠ Steal fail — retry")
+                                log("[NO RECOVERY TEST] Pickup failed; no immediate retry")
                                 task.wait(0.2)
                             end
                         end
@@ -1627,7 +1596,7 @@ local function mainLoop()
                             deliveryFailed = false
                             log("🎉 HOÀN THÀNH")
                         else
-                            log("❌ Hết " .. config.MAX_RETRY .. " lần retry")
+                            log("[NO RECOVERY TEST] Attempt ended")
                             lastTargetPos = nil
                             lastTargetMap = nil
                         end
@@ -1681,7 +1650,8 @@ function M.start()
     lastTargetPos = nil
     lastTargetMap = nil
     isRunning = true
-    log("▶ START v9.3-FIXED — " .. #config.TARGETS .. " map(s)")
+    deliveryRetryBlocked=false
+    log("▶ START NO-RECOVERY — " .. #config.TARGETS .. " map(s)")
     startWatchdog()
     task.spawn(function()
         local ok, err = pcall(mainLoop)
