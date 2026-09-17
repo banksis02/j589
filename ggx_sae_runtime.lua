@@ -2141,12 +2141,7 @@ local function configured()
 end
 local function bossOnly() return job and (job.mode=="sae_boss" or job.mode=="sae_rift") end
 local function bossAllowed() return configured() and (job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_boss" or job.mode=="sae_rift") end
-local function fetchJob()
-    -- โหมดเทสบนเครื่องเทส: ตั้ง getgenv().SAE_TEST_JOB = {status="active",mode="sae_egg",eggAreas="",eggRarity="Rare"}
-    -- แล้วรันได้เลยไม่ต้องพึ่ง backend/ผูกจอ (ตั้ง =nil เพื่อกลับไปใช้งานจริง)
-    if type(env.SAE_TEST_JOB)=="table" then return env.SAE_TEST_JOB end
-    local url="https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"
-        ..http:UrlEncode(player.Name).."?game=steal_an_egg"
+local function httpGetJSON(url)
     local requestFn=env.request or env.http_request or request or http_request or (syn and syn.request)
     if requestFn then
         local response=requestFn({Url=url,Method="GET"})
@@ -2154,6 +2149,20 @@ local function fetchJob()
         return http:JSONDecode(response.Body)
     end
     return http:JSONDecode(game:HttpGet(url))
+end
+local function fetchJob()
+    -- โหมดเทสบนเครื่องเทส: ตั้ง getgenv().SAE_TEST_JOB = {status="active",mode="sae_egg",eggAreas="",eggRarity="Rare"}
+    -- แล้วรันได้เลยไม่ต้องพึ่ง backend/ผูกจอ (ตั้ง =nil เพื่อกลับไปใช้งานจริง)
+    if type(env.SAE_TEST_JOB)=="table" then return env.SAE_TEST_JOB end
+    local name=http:UrlEncode(player.Name)
+    -- 1) งานจริงจาก automation (ผูกจอ) — มาก่อนเสมอ
+    local ok,rj=pcall(httpGetJSON,"https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"..name.."?game=steal_an_egg")
+    if ok and type(rj)=="table" and rj.status and rj.status~="idle" then return rj end
+    -- 2) fallback: งานที่ตั้งผ่าน GGx CONTROL โดยไม่ผูกจอ → สั่งงานตรงจาก CONTROL แล้วรันได้เลย
+    local ok2,cj=pcall(httpGetJSON,"https://overload-backend-production.up.railway.app/api/overload/job/"..name.."?game=steal_an_egg")
+    if ok2 and type(cj)=="table" and cj.status and cj.status~="idle" then return cj end
+    if ok and type(rj)=="table" then return rj end
+    error("job API unavailable")
 end
 local function split(value)
     if type(value)=="table" then return value end
