@@ -82,7 +82,7 @@ local config = {
     BIG_EGG_MODE       = false,
 
     HOME_FLY_ABSOLUTE_Y = 100,
-    FLY_HOME_SPEED      = 500,
+    FLY_HOME_SPEED      = 600,
     DROP_SPEED          = 250,
     RECOVERY_RADIUS     = 500,
     MAX_RECOVERY        = 3,
@@ -990,11 +990,13 @@ local function firePromptOnce(prompt)
         prompt.RequiresLineOfSight = false
     end)
     if type(fireproximityprompt) == "function" then pcall(fireproximityprompt, prompt) end
+    if isCarryingEgg() then return true end
     pcall(function()
         prompt:InputHoldBegin()
         task.wait(0.02)
         prompt:InputHoldEnd()
     end)
+    if isCarryingEgg() then return true end
     pcall(function()
         prompt.PromptButtonHoldBegan:Fire()
         task.wait(0.02)
@@ -1056,7 +1058,7 @@ end
 
 local function velocityFlyTo(targetPos, timeout, speed)
     timeout = timeout or 20
-    speed = speed or config.FLY_HOME_SPEED or 500
+    speed = speed or config.FLY_HOME_SPEED or 600
     local hum, hrp = getHum(), getHRP()
     if not hum or not hrp then return false end
     keepHealth()
@@ -1129,7 +1131,7 @@ local function goHomeWithRecovery()
                 and Vector3.new(config.HOME_POS.X,config.HOME_FLY_ABSOLUTE_Y or 100,config.HOME_POS.Z)
                 or config.HOME_POS
             local direction = target-r.Position
-            local speed = math.min(config.FLY_HOME_SPEED or 500,direction.Magnitude/0.05)
+            local speed = math.min(config.FLY_HOME_SPEED or 600,direction.Magnitude/0.05)
             r.AssemblyLinearVelocity = direction.Magnitude > 0 and direction.Unit*speed or Vector3.zero
         end
         task.wait(0.05)
@@ -1730,7 +1732,7 @@ function M.setForestRadius(n)
 end
 
 function M.setFlyHomeSpeed(n)
-    config.FLY_HOME_SPEED = n or 500
+    config.FLY_HOME_SPEED = n or 600
     log("🏃 Fly home speed: " .. config.FLY_HOME_SPEED)
 end
 
