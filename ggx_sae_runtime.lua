@@ -736,72 +736,30 @@ local function findForestEggOnly()
 end
 
 local function findEggInTargets()
-    local hrp = getHRP()
-    if not hrp then return nil, nil, nil, nil end
-
-    local candidates = {}
-
-    for _, v in ipairs(promptList()) do
-        if v:IsA("ProximityPrompt") and v.Enabled and not stolenPrompts[v] then
-            local isEgg = v.Name == "CarryAreaEgg"
-                or ((v.ObjectText or "") == "Egg"
-                    and (v.ActionText or ""):lower():find("steal", 1, true))
-            if isEgg and allowPrompt(v) then
-                local part = v.Parent
-                local ppos
-                if part and part:IsA("BasePart") then ppos = part.Position
-                elseif part and part:IsA("Attachment") then ppos = part.WorldPosition
-                elseif part and part.Parent and part.Parent:IsA("BasePart") then
-                    ppos = part.Parent.Position end
-
-                if ppos then
-                    local realMap = getEggRealMap(ppos)
-                    if realMap then
-                        for _, tgt in ipairs(config.TARGETS) do
-                            if tgt.name == realMap.name then
-                                table.insert(candidates, {
-                                    prompt = v, pos = ppos, map = realMap,
-                                    rarity = select(2, allowPrompt(v)),
-                                    dFromPlayer = dist(ppos, hrp.Position),
-                                    dFromHome = dist(realMap.pos, config.HOME_POS),
-                                })
-                                break
-                            end
-                        end
-                    end
-                end
+    local hrp=getHRP()
+    if not hrp then return nil,nil,nil,nil end
+    local candidates={}
+    for _,record in pairs(fieldRecords()) do
+        if type(record)=='table' and typeof(record.BoundsCFrame)=='CFrame' then
+            local state=tostring(record.State):lower()
+            local pos=record.BoundsCFrame.Position
+            local map
+            for _,m in ipairs(ALL_MAPS) do
+                if Filter.normalize(m.name)==Filter.normalize(record.AreaId) then map=m;break end
+            end
+            map=map or getEggRealMap(pos)
+            if (state=='slot' or state=='dropped') and map
+                and Filter.allowed(record,AssetsData,filterAreas,filterRarities,map.name) then
+                table.insert(candidates,{pos=pos,map=map,rarity=Filter.rarity(record,AssetsData),dFromPlayer=dist(pos,hrp.Position),uid=record.Uid})
             end
         end
     end
-
-    if #candidates == 0 then return nil, nil, nil, nil end
-
-    if config.PRIORITY_INCOME or config.BIG_EGG_MODE then
-        for _, c in ipairs(candidates) do
-            local inc, sc = getEggInfoAtPos(c.pos)
-            c.income = inc
-            c.scale = sc
-        end
-        if config.BIG_EGG_MODE then
-            table.sort(candidates, function(a, b)
-                if a.scale ~= b.scale then return a.scale > b.scale end
-                return a.income > b.income
-            end)
-        else
-            table.sort(candidates, function(a, b)
-                return a.income > b.income
-            end)
-        end
-    elseif config.PREFER_FAR then
-        table.sort(candidates, function(a, b) return a.dFromHome > b.dFromHome end)
-    else
-        table.sort(candidates, function(a, b) return a.dFromPlayer < b.dFromPlayer end)
-    end
-
-    table.sort(candidates, Filter.prefer)
-    local best = candidates[1]
-    audit("TARGET | " .. tostring(best.rarity) .. " | " .. best.map.name .. " | highest selected rarity first")
-    return best.prompt, best.pos, best.dFromPlayer, best.map
+    table.sort(candidates,Filter.prefer)
+    local best=candidates[1]
+    if not best then return nil,nil,nil,nil end
+    audit('TARGET RECORD | '..tostring(best.rarity)..' | '..best.map.name..' | '..tostring(best.uid))
+    -- Prompt is resolved only after arriving; streaming must not block travel.
+    return nil,best.pos,best.dFromPlayer,best.map
 end
 
 local function findPromptSteal(pos, radius)
@@ -2183,14 +2141,14 @@ end
 Collector.setIdleHandler(function()
     if bossAllowed() and (Rift.available() or Rift.inside()) then
         if not Rift.inside() and not Treadmill.leave() then return end
-        print("[GGX SAE] No selected eggs remain; entering Rift")
+        print("[GGX SAE] Boss priority: entering Rift before next egg")
         Rift.run(bossAllowed)
         print("[GGX SAE] Rift finished or job stopped; rescan eggs")
     elseif configured() and job.mode=="sae_bundle" then
         local untilAt=os.clock()+1
         repeat Treadmill.step(); task.wait(0.05) until os.clock()>=untilAt or not configured()
     end
-end, Rift.inside)
+end, function() return Rift.inside() or (bossAllowed() and Rift.available()) end)
 -- SAFE ZONE measured by the user in-game.
 local SAFE_ZONE=Vector3.new(534.4960327148438,69.64423370361328,-367.4530334472656)
 local initialDeparture=true
