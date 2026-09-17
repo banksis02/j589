@@ -1343,6 +1343,43 @@ local function startWatchdog()
 end
 
 -- ══════════ MAIN LOOP ══════════
+local function approachForest(target,timeout)
+    local h,r=getHum(),getHRP()
+    if not h or not r or h.Health<=0 then return false end
+    local oldSpeed=h.WalkSpeed
+    local setSpeed
+    local function finish(ok)
+        if h.Parent then
+            h:Move(Vector3.zero,false)
+            h:MoveTo(r.Position)
+            if setSpeed and h.WalkSpeed==setSpeed then h.WalkSpeed=oldSpeed end
+        end
+        if r.Parent then r.AssemblyLinearVelocity=Vector3.zero end
+        return ok
+    end
+    local began=os.clock()
+    local best=math.huge
+    local progress=os.clock()
+    while isRunning and os.clock()-began<timeout do
+        if getHRP()~=r or getHum()~=h or h.Health<=0 then return finish(false) end
+        local delta=target-r.Position
+        local horizontal=Vector3.new(delta.X,0,delta.Z).Magnitude
+        if horizontal<8 and math.abs(delta.Y)<12 then return finish(true) end
+        if horizontal<best-1 then best=horizontal;progress=os.clock() end
+        if os.clock()-progress>5 then
+            log(string.format('[FOREST MOVE] No progress; distance=%.1f height=%.1f',horizontal,delta.Y))
+            return finish(false)
+        end
+        -- Ground approach: no CFrame nudges, forced velocity or repeated jumps.
+        setSpeed=math.clamp(horizontal*1.5,8,28)
+        h.WalkSpeed=setSpeed
+        h:MoveTo(Vector3.new(target.X,r.Position.Y,target.Z))
+        task.wait(0.05)
+    end
+    log('[FOREST MOVE] Stopped or timed out')
+    return finish(false)
+end
+
 local function mainLoop()
     while isRunning do
         if pendingFilters then
@@ -1413,7 +1450,7 @@ local function mainLoop()
         forestPreparation = true
         log("PHASE 1: Bay tới Forest")
 
-        if not velocityMoveTo(config.FOREST_POS, 30) then
+        if not approachForest(config.FOREST_POS, 30) then
             if not isRunning then break end
             log("❌ Không tới Forest")
             task.wait(0.5)
@@ -1428,7 +1465,7 @@ local function mainLoop()
 
                 local hrp = getHRP()
                 if hrp and dist(hrp.Position, ppos) > config.ARRIVE_DIST then
-                    velocityMoveTo(ppos, 20)
+                    if not approachForest(ppos,20) then forestPreparation=false;continue end
                 end
 
                 local forestBefore, forestCount = getSlotSet()
