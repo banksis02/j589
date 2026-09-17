@@ -107,7 +107,6 @@ local isRunning = false
 local filterAreas, filterRarities = {}, {}
 local forestPreparation = false
 local waitingForWork = false
-local deliveryRetryBlocked=false
 local idleHandler
 local beforeEgg
 local arenaCheck
@@ -1410,11 +1409,6 @@ local function mainLoop()
         end
         waitingForWork=false
         fullPauseLogged=false
-        if deliveryRetryBlocked then
-            waitingForWork=true
-            task.wait(0.25)
-            continue
-        end
         forestPreparation = false
         pcall(checkEggReset)
         if arenaCheck and arenaCheck() then
@@ -1574,10 +1568,9 @@ local function mainLoop()
                                 if not delivered then deliveryFailed=true end
                                 if delivered then task.wait(config.CHAT_WAIT) end
                                 if deliveryFailed then
-                                    deliveryRetryBlocked=true
                                     lastTargetPos=nil
                                     lastTargetMap=nil
-                                    log("[NO RECOVERY TEST] Delivery failed; collection paused. No return pickup or home teleport.")
+                                    log("[COLLECTION] Delivery lost; rescan current eggs and continue scheduler")
                                     break
                                 else
                                     log("🎉 THÀNH CÔNG")
@@ -1587,7 +1580,7 @@ local function mainLoop()
                                     break
                                 end
                             else
-                                log("[NO RECOVERY TEST] Pickup failed; no immediate retry")
+                                log("[COLLECTION] Pickup failed; no immediate retry")
                                 task.wait(0.2)
                             end
                         end
@@ -1596,7 +1589,7 @@ local function mainLoop()
                             deliveryFailed = false
                             log("🎉 HOÀN THÀNH")
                         else
-                            log("[NO RECOVERY TEST] Attempt ended")
+                            log("[COLLECTION] Attempt ended")
                             lastTargetPos = nil
                             lastTargetMap = nil
                         end
@@ -1650,8 +1643,7 @@ function M.start()
     lastTargetPos = nil
     lastTargetMap = nil
     isRunning = true
-    deliveryRetryBlocked=false
-    log("▶ START NO-RECOVERY — " .. #config.TARGETS .. " map(s)")
+    log("▶ START v9.3-FIXED — " .. #config.TARGETS .. " map(s)")
     startWatchdog()
     task.spawn(function()
         local ok, err = pcall(mainLoop)
