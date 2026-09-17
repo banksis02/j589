@@ -2136,9 +2136,9 @@ local recoveryThread=nil
 local hopping=false
 local function configured()
     return active and not hopping and job and job.status=="active" and os.clock()-lastGood<45
-        and (job.mode=="sae_egg" or job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_treadmill")
+        and (job.mode=="sae_egg" or job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_treadmill" or job.mode=="sae_boss")
 end
-local function bossAllowed() return configured() and (job.mode=="sae_egg_boss" or job.mode=="sae_bundle") end
+local function bossAllowed() return configured() and (job.mode=="sae_egg_boss" or job.mode=="sae_bundle" or job.mode=="sae_boss") end
 local function fetchJob()
     local url="https://ggx-automation-backend-production.up.railway.app/api/public/runtime-jobs/"
         ..http:UrlEncode(player.Name).."?game=steal_an_egg"
@@ -2261,6 +2261,18 @@ task.spawn(function()
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
             signature=nil
             if not Rift.inside() then Treadmill.step() end
+        elseif job.mode=="sae_boss" then
+            -- ★ ตีบอสอย่างเดียว: ไม่แตะไข่/ลู่ — มีบอส/อยู่ในบอส → ตี, ไม่มี → รอ
+            if Collector.isRunning() then Collector.stop() end
+            Treadmill.stop()
+            signature=nil
+            if (Rift.available() or Rift.inside()) and not recoveryThread then
+                recoveryThread=task.spawn(function()
+                    local okRift,err=pcall(Rift.run,bossAllowed)
+                    if not okRift then warn("[GGX SAE BOSS] "..tostring(err)); Rift.stop() end
+                    recoveryThread=nil
+                end)
+            end
         else
             local areas,rarities,targets=settings(job)
             local key=tostring(job.id).."|"..tostring(job.mode).."|"..table.concat(split(job.eggAreas),",").."|"..table.concat(split(job.eggRarity),",")
