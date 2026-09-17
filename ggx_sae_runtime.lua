@@ -970,7 +970,17 @@ local function teleToMap(targetPos)
     end)
 end
 
+local eggFullUntil=0
+local fullPauseLogged=false
+table.insert(ownedConnections,game:GetService("LogService").MessageOut:Connect(function(message)
+    local text=tostring(message):lower()
+    if text:find("your egg inventory is full",1,true) or text:find("egg inventory full!",1,true) then
+        eggFullUntil=os.clock()+60
+    end
+end))
 local function firePromptOnce(prompt)
+    if os.clock()<eggFullUntil then return false end
+
     if not isRunning or not prompt or not prompt.Parent or not allowPrompt(prompt, true) then return false end
     forceRunningState()  -- ⭐ v9.3: force trước khi fire
     pcall(function()
@@ -1349,6 +1359,19 @@ local function mainLoop()
             task.wait(0.5)
             continue
         end
+        if os.clock()<eggFullUntil then
+            waitingForWork=true
+            if not fullPauseLogged then
+                fullPauseLogged=true
+                local r=getHRP()
+                if r then r.AssemblyLinearVelocity=Vector3.zero end
+                log("[BAG BLOCKED] Pickup denied; pause collection for 60s before retry")
+            end
+            task.wait(0.25)
+            continue
+        end
+        waitingForWork=false
+        fullPauseLogged=false
         forestPreparation = false
         pcall(checkEggReset)
         if arenaCheck and arenaCheck() then
@@ -1422,7 +1445,7 @@ local function mainLoop()
                     end
                     task.wait(0.3)
                     local stolen, slotName = hasStolenSlot(forestBefore)
-                    if stolen then
+                    if stolen and isCarryingEgg() then
                         log("🎒 Forest OK: " .. slotName)
                         break
                     end
@@ -1430,6 +1453,12 @@ local function mainLoop()
                         log("🎒 Forest OK (carry check)")
                         break
                     end
+                end
+                if not isCarryingEgg() then
+                    forestPreparation=false
+                    log("[PREP] No local egg confirmed; skip guard wait")
+                    task.wait(1)
+                    continue
                 end
                 stolenPrompts[prompt] = true
                 task.wait(0.1)
