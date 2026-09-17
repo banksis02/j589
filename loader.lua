@@ -37,7 +37,7 @@ if pid == 107778070777162 then
     -- Start presentation suppression immediately, independently of startup hopping.
     task.spawn(function()
         local ok, err = pcall(function()
-            local src = game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_visual_cull.lua?v=3")
+            local src = game:HttpGet("https://raw.githubusercontent.com/banksis02/j589/main/steal_an_egg_visual_cull.lua?v=4")
             local chunk, compileError = loadstring(src)
             assert(chunk, compileError)
             chunk()
