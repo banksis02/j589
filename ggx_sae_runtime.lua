@@ -1108,6 +1108,7 @@ local function goHomeWithRecovery()
             if nearHome and arrived then return stop('Released at home', true) end
             return stop('Egg lost; retry collection', false)
         end
+        forceRunningState()
         if nearHome then
             arrived = true
             r.AssemblyLinearVelocity = Vector3.zero
@@ -1220,6 +1221,7 @@ local function stealAtPos(targetPos, label, expectedIncome)
         end
     end
 
+    if isCarryingEgg() then return true end
     local prompt = findPromptSteal(targetPos, 150)
     if not prompt then log("⚠ Không có prompt"); return false end
 
@@ -1235,7 +1237,12 @@ local function stealAtPos(targetPos, label, expectedIncome)
             local p2 = findPromptSteal(h2.Position, 150)
             if p2 then firePromptOnce(p2) end
         end
-        task.wait(config.STEAL_VERIFY_WAIT)
+        local verifyUntil=os.clock()+(config.STEAL_VERIFY_WAIT or 0.35)
+        repeat
+            if not isRunning then return false end
+            if isCarryingEgg() then return true end
+            task.wait(0.03)
+        until os.clock()>=verifyUntil
         local _, countNow = getSlotSet()
         local stolen, slotName = hasStolenSlot(slotsBefore)
         if stolen and isCarryingEgg() then
@@ -1533,7 +1540,7 @@ local function mainLoop()
                             if stolen then
                                 local delivered=goHomeWithRecovery()
                                 if not delivered then deliveryFailed=true end
-                                task.wait(config.CHAT_WAIT)
+                                if delivered then task.wait(config.CHAT_WAIT) end
                                 if deliveryFailed then
                                     log("❌ Chat báo fail — RETRY")
                                     task.wait(0.2)
