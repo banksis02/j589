@@ -1079,195 +1079,53 @@ end
 
 -- ⭐⭐⭐ v9.3-FIXED: goHomeWithRecovery — FIX LỤM EGG KHÔNG VỀ HOME
 local function goHomeWithRecovery()
-    log("🏃 BAY VỀ HOME (Y=" .. (config.HOME_FLY_ABSOLUTE_Y or 100) .. ")")
-    if not isCarryingEgg() then return false end
-    local startTime = os.clock()
-    local lastHealth = nil
-    local recoveryAttempts = 0
-    local MAX_RECOVERY = config.MAX_RECOVERY or 3
-    local flyY = config.HOME_FLY_ABSOLUTE_Y or 100
-    local totalTimeout = config.HOME_TIMEOUT or 60
-
-    while os.clock() - startTime < totalTimeout do
-        if not isRunning then return false end
-
-        local hum, r = getHum(), getHRP()
-        if not hum or not r then break end
-        if not isCarryingEgg() and dist(r.Position,config.HOME_POS)>30 then
-            r.AssemblyLinearVelocity=Vector3.zero
-            log("[CARRY] Egg lost; stop delivery and retry collection")
-            return false
+    local start = os.clock()
+    local initialRoot = getHRP()
+    local initialHum = getHum()
+    local function stop(reason, result)
+        local r = getHRP()
+        if r then
+            r.AssemblyLinearVelocity = Vector3.zero
+            r.AssemblyAngularVelocity = Vector3.zero
         end
-        keepHealth()
-        forceRunningState()  -- ⭐ v9.3
-
-        -- ⭐ FIX: Y quá thấp → force tele
-        if r.Position.Y < 10 then
-            log("🚨 Y < 10 → force tele home")
-            forceTeleHome()
-            break
-        end
-
-        local vel = r.AssemblyLinearVelocity
-        local speed = vel.Magnitude
-        local state = hum:GetState()
-        local hpNow = hum.Health
-
-        -- Detect knockback
-        local gotHit = false
-        if state == Enum.HumanoidStateType.Physics and speed > 30 then
-            gotHit = true
-        elseif state == Enum.HumanoidStateType.PlatformStanding
-            or state == Enum.HumanoidStateType.FallingDown
-            or state == Enum.HumanoidStateType.Ragdoll then
-            gotHit = true
-        elseif lastHealth and math.abs(hpNow - lastHealth) > 0.3 then
-            gotHit = true
-        end
-        lastHealth = hpNow
-
-        if gotHit and recoveryAttempts < MAX_RECOVERY then
-            recoveryAttempts = recoveryAttempts + 1
-            log(string.format("💥 KNOCKBACK (attempt %d/%d)",
-                recoveryAttempts, MAX_RECOVERY))
-            task.wait(config.RECOVERY_WAIT or 0.3)
-
-            local r2 = getHRP()
-            if r2 then
-                -- Tìm egg rớt gần nhất
-                local nearestPrompt, nearestPos, nearestDist = nil, nil, config.RECOVERY_RADIUS or 500
-                for _, v in ipairs(promptList()) do
-                    if v:IsA("ProximityPrompt") and v.Enabled and not stolenPrompts[v] then
-                        local isEgg = v.Name == "CarryAreaEgg"
-                            or ((v.ObjectText or "") == "Egg"
-                                and (v.ActionText or ""):lower():find("steal", 1, true))
-                        if isEgg and allowPrompt(v) then
-                            local part = v.Parent
-                            local ppos
-                            if part and part:IsA("BasePart") then ppos = part.Position
-                            elseif part and part:IsA("Attachment") then ppos = part.WorldPosition
-                            elseif part and part.Parent and part.Parent:IsA("BasePart") then
-                                ppos = part.Parent.Position end
-                            if ppos then
-                                local d = dist(ppos, r2.Position)
-                                if d < nearestDist then
-                                    nearestPrompt, nearestPos, nearestDist = v, ppos, d
-                                end
-                            end
-                        end
-                    end
-                end
-
-                if nearestPrompt and nearestPos then
-                    log(string.format("🎯 Egg rớt cách %.0f studs → CHẠY LẠI", nearestDist))
-
-                    -- Bay tới egg
-                    if nearestDist > 200 then
-                        velocityFlyTo(nearestPos, 15, config.SPEED_CAP)
-                    else
-                        velocityMoveTo(nearestPos, 12)
-                    end
-                    task.wait(0.15)
-
-                    -- ⭐ Lụm egg và VERIFY
-                    local slotsBefore = getSlotSet()
-                    local pickedUp = false
-                    for i = 1, config.MAX_FIRES do
-                        if not isRunning then break end
-                        forceRunningState()
-
-                        local h3 = getHRP()
-                        if h3 then
-                            local p3 = findPromptSteal(h3.Position, 150)
-                            if p3 then
-                                firePromptOnce(p3)
-                            end
-                        end
-                        task.wait(config.STEAL_VERIFY_WAIT)
-
-                        -- Check slot mất
-                        local stolen = hasStolenSlot(slotsBefore)
-                        if stolen then
-                            pickedUp = true
-                            break
-                        end
-                        -- Check carry state
-                        if isCarryingEgg() then
-                            pickedUp = true
-                            break
-                        end
-                    end
-
-                    if pickedUp then
-                        log("✅ Đã lượm lại egg → BAY VỀ HOME NGAY")
-                        -- ⭐ FIX: Bay về home luôn, KHÔNG chờ while
-                        velocityFlyTo(config.HOME_POS, 10, config.FLY_HOME_SPEED or 500)
-
-                        -- Verify đã về home
-                        local r3 = getHRP()
-                        if r3 and dist(r3.Position, config.HOME_POS) > 50 then
-                            log("⚠ Chưa về home → thử lại lần 2")
-                            velocityFlyTo(config.HOME_POS, 8, config.FLY_HOME_SPEED or 500)
-                        end
-
-                        log("✅ Đã về home sau khi lụm egg")
-                        local rEnd = getHRP()
-                        if rEnd then pcall(function()
-                            rEnd.AssemblyLinearVelocity = Vector3.zero
-                            rEnd.AssemblyAngularVelocity = Vector3.zero
-                        end) end
-                        forceRunningState()
-                        log(string.format("✅ Về home (%.2fs, recovery x%d)",
-                            os.clock() - startTime, recoveryAttempts))
-                        return true
-                    else
-                        log("⚠ Lụm không được → tiếp tục về home")
-                    end
-                else
-                    log("⚠ Không tìm thấy egg rớt → tiếp tục về")
-                end
-            end
-            -- ⭐ FIX: Reset lastHealth để không detect lại liên tục
-            lastHealth = nil
-        end
-
-        -- Bay về home
-        local dx = config.HOME_POS.X - r.Position.X
-        local dz = config.HOME_POS.Z - r.Position.Z
-        local hd = math.sqrt(dx*dx + dz*dz)
-
-        if hd < 30 then
-            log("📍 Đến home → rớt xuống")
-            break
-        end
-
-        pcall(function()
-            local targetAir = Vector3.new(config.HOME_POS.X, flyY, config.HOME_POS.Z)
-            local dir = targetAir - r.Position
-            if dir.Magnitude > 0 then
-                r.AssemblyLinearVelocity = dir.Unit * (config.FLY_HOME_SPEED or 500)
-            end
-        end)
-        task.wait(0.01)
+        log('[DELIVERY] ' .. reason)
+        return result
     end
-
-    -- Rớt xuống home
-    log("⬇ Rớt xuống home")
-    velocityFlyTo(config.HOME_POS, 5, config.DROP_SPEED or 250)
-
-    local rEnd = getHRP()
-    if rEnd then pcall(function()
-        rEnd.AssemblyLinearVelocity = Vector3.zero
-        rEnd.AssemblyAngularVelocity = Vector3.zero
-    end) end
-    forceRunningState()
-
-    log(string.format("✅ Về home (%.2fs, recovery x%d)",
-        os.clock() - startTime, recoveryAttempts))
-    return true
+    if not initialRoot or not initialHum or not isCarryingEgg() then
+        return stop('No local egg; retry collection', false)
+    end
+    local arrived = false
+    while isRunning and os.clock()-start < (config.HOME_TIMEOUT or 60) do
+        local r, hum = getHRP(), getHum()
+        if r ~= initialRoot or hum ~= initialHum or not hum or hum.Health <= 0 then
+            return stop('Character changed; retry collection', false)
+        end
+        if deliveryFailed then return stop('Delivery rejected; retry collection', false) end
+        -- Only disappearance inside the delivery zone can count as delivery.
+        -- A drop anywhere else cancels movement before another home command.
+        local nearHome = dist(r.Position, config.HOME_POS) <= 12
+        if not isCarryingEgg() then
+            if nearHome and arrived then return stop('Released at home', true) end
+            return stop('Egg lost; retry collection', false)
+        end
+        if nearHome then
+            arrived = true
+            r.AssemblyLinearVelocity = Vector3.zero
+        else
+            local delta = config.HOME_POS-r.Position
+            local horizontal = Vector3.new(delta.X,0,delta.Z).Magnitude
+            local target = horizontal > 25
+                and Vector3.new(config.HOME_POS.X,config.HOME_FLY_ABSOLUTE_Y or 100,config.HOME_POS.Z)
+                or config.HOME_POS
+            local direction = target-r.Position
+            local speed = math.min(config.FLY_HOME_SPEED or 500,direction.Magnitude/0.05)
+            r.AssemblyLinearVelocity = direction.Magnitude > 0 and direction.Unit*speed or Vector3.zero
+        end
+        task.wait(0.05)
+    end
+    return stop('Stopped or timed out; delivery not confirmed', false)
 end
 
--- ⭐⭐⭐ v9.3-FIXED: baitBoss nhạy hơn
 local function baitBoss(timeout)
     timeout = timeout or config.BAIT_TIMEOUT
     log("🎯 Bait boss...")
@@ -1449,7 +1307,7 @@ local function startWatchdog()
                         if dist(hrp.Position, lastMovePos) < 5 then
                             if os.clock() - lastMoveCheck > 15 then
                                 log("🚨 Đứng yên >15s → TELE HOME")
-                                forceTeleHome()
+                                log("[WATCHDOG] Collection stalled; home teleport suppressed")
                                 lastMoveCheck = os.clock()
                                 lastMovePos = nil
                             end
