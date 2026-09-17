@@ -1366,8 +1366,9 @@ local function approachForest(target,timeout)
         local delta=landing-r.Position
         local horizontal=Vector3.new(delta.X,0,delta.Z).Magnitude
         if delta.Magnitude<8 then return finish(true) end
+        -- ลอยปกติ: เคลื่อนแนวนอนที่ระดับความสูงเดิมตรงไปที่ไข่ (ไม่พุ่งขึ้นสูงแล้วดิ่งลง)
         local waypoint=horizontal>25
-            and Vector3.new(landing.X,config.HOME_FLY_ABSOLUTE_Y or 100,landing.Z)
+            and Vector3.new(landing.X,r.Position.Y,landing.Z)
             or landing
         local direction=waypoint-r.Position
         local remaining=delta.Magnitude
