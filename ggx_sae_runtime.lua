@@ -1348,37 +1348,40 @@ end
 local function approachForest(target,timeout)
     local h,r=getHum(),getHRP()
     if not h or not r or h.Health<=0 then return false end
-    local oldSpeed=h.WalkSpeed
-    local setSpeed
     local function finish(ok)
-        if h.Parent then
-            h:Move(Vector3.zero,false)
-            h:MoveTo(r.Position)
-            if setSpeed and h.WalkSpeed==setSpeed then h.WalkSpeed=oldSpeed end
+        if r.Parent then
+            r.AssemblyLinearVelocity=Vector3.zero
+            r.AssemblyAngularVelocity=Vector3.zero
         end
-        if r.Parent then r.AssemblyLinearVelocity=Vector3.zero end
         return ok
     end
+    -- Use the delivery flight profile for both Forest staging and nest approach.
+    local landing=target+Vector3.new(0,3,0)
     local began=os.clock()
     local best=math.huge
     local progress=os.clock()
-    while isRunning and os.clock()-began<timeout do
+    log('[FOREST FLIGHT] Approaching at up to '..tostring(config.FLY_HOME_SPEED or 600))
+    while isRunning and os.clock()-began<(timeout or 30) do
         if getHRP()~=r or getHum()~=h or h.Health<=0 then return finish(false) end
-        local delta=target-r.Position
+        local delta=landing-r.Position
         local horizontal=Vector3.new(delta.X,0,delta.Z).Magnitude
-        if horizontal<8 and math.abs(delta.Y)<12 then return finish(true) end
-        if horizontal<best-1 then best=horizontal;progress=os.clock() end
+        if delta.Magnitude<8 then return finish(true) end
+        local waypoint=horizontal>25
+            and Vector3.new(landing.X,config.HOME_FLY_ABSOLUTE_Y or 100,landing.Z)
+            or landing
+        local direction=waypoint-r.Position
+        local remaining=delta.Magnitude
+        if remaining<best-1 then best=remaining;progress=os.clock() end
         if os.clock()-progress>5 then
-            log(string.format('[FOREST MOVE] No progress; distance=%.1f height=%.1f',horizontal,delta.Y))
+            log(string.format('[FOREST FLIGHT] No progress; distance=%.1f',remaining))
             return finish(false)
         end
-        -- Ground approach: no CFrame nudges, forced velocity or repeated jumps.
-        setSpeed=math.clamp(horizontal*1.5,8,28)
-        h.WalkSpeed=setSpeed
-        h:MoveTo(Vector3.new(target.X,r.Position.Y,target.Z))
+        forceRunningState()
+        local speed=math.min(config.FLY_HOME_SPEED or 600,direction.Magnitude/0.05)
+        r.AssemblyLinearVelocity=direction.Magnitude>0 and direction.Unit*speed or Vector3.zero
         task.wait(0.05)
     end
-    log('[FOREST MOVE] Stopped or timed out')
+    log('[FOREST FLIGHT] Stopped or timed out')
     return finish(false)
 end
 
