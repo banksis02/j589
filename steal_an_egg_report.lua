@@ -188,6 +188,17 @@ local function bossMasteryStats()
         numberAt({"BossMastery","Frame","Header","CurrencyHolder","Amount"})
             or numberAt({"BossShop","Main","Main","Header","CurrencyHolder","Amount"})
 end
+-- ค่าเงินอีเวนต์ Dr. Scramble (ขวดเขียว) — โชว์การ์ดเหมือน Boss Mastery
+local function scrambleTokensStat()
+    local pg=player:FindFirstChild("PlayerGui")
+    local obj=pg
+    for _,name in ipairs({"DrScrambleEventUI","DRScrambleEventUIMain","CurrencyHolder","QuantityLabel"}) do
+        obj=obj and obj:FindFirstChild(name)
+    end
+    if not obj or not (obj:IsA("TextLabel") or obj:IsA("TextButton")) then return nil end
+    local value=obj.Text:gsub(",", ""):match("^%s*(%d+)%s*$")
+    return value and tonumber(value) or nil
+end
 local function saveData()
     if Save and type(Save.Get)=="function" then local ok,data=pcall(Save.Get); if ok and type(data)=="table" then return data end end
 end
@@ -336,8 +347,9 @@ local function send()
         report.collectedEggs=#batch>0 and batch or nil
         local money,speed=hud("Money"),hud("Speed")
         local bossMastery,bossTokens=bossMasteryStats()
+        local scrambleTokens=scrambleTokensStat()
         local payload={gameServerId=game.JobId,manualHopCapable=ENV.GGX_SAE_RUNTIME~=nil and ENV.GGX_SAE_RUNTIME.manualHopVersion==1,username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
-            currentStats={petInventoryFullAt=petFullSeenAt>0 and petFullSeenAt or nil,eggInventoryFullAt=eggFullSeenAt>0 and eggFullSeenAt or nil,money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens},stealReport=report,
+            currentStats={petInventoryFullAt=petFullSeenAt>0 and petFullSeenAt or nil,eggInventoryFullAt=eggFullSeenAt>0 and eggFullSeenAt or nil,money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens,scrambleTokens=scrambleTokens},stealReport=report,
             matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
         for _,kind in ipairs({"pets","eggs"}) do if report[kind] and #report[kind]==0 then report[kind]="__SAE_EMPTY_ARRAY__" end end
