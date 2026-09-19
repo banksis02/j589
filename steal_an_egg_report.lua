@@ -188,16 +188,25 @@ local function bossMasteryStats()
         numberAt({"BossMastery","Frame","Header","CurrencyHolder","Amount"})
             or numberAt({"BossShop","Main","Main","Header","CurrencyHolder","Amount"})
 end
--- ค่าเงินอีเวนต์ Dr. Scramble (ขวดเขียว) — โชว์การ์ดเหมือน Boss Mastery
-local function scrambleTokensStat()
+-- ค่าเงิน+ไอคอนอีเวนต์ Dr. Scramble (ขวดเขียว) — โชว์การ์ดเหมือน Boss Mastery (ดึงรูปจากเกม)
+local function scrambleStat()
     local pg=player:FindFirstChild("PlayerGui")
-    local obj=pg
-    for _,name in ipairs({"DrScrambleEventUI","DRScrambleEventUIMain","CurrencyHolder","QuantityLabel"}) do
-        obj=obj and obj:FindFirstChild(name)
+    local holder=pg
+    for _,name in ipairs({"DrScrambleEventUI","DRScrambleEventUIMain","CurrencyHolder"}) do
+        holder=holder and holder:FindFirstChild(name)
     end
-    if not obj or not (obj:IsA("TextLabel") or obj:IsA("TextButton")) then return nil end
-    local value=obj.Text:gsub(",", ""):match("^%s*(%d+)%s*$")
-    return value and tonumber(value) or nil
+    if not holder then return nil,nil end
+    local tokens
+    local q=holder:FindFirstChild("QuantityLabel")
+    if q and (q:IsA("TextLabel") or q:IsA("TextButton")) then
+        local v=q.Text:gsub(",", ""):match("^%s*(%d+)%s*$")
+        tokens=v and tonumber(v) or nil
+    end
+    local icon
+    for _,d in ipairs(holder:GetDescendants()) do
+        if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image and d.Image~="" then icon=d.Image; break end
+    end
+    return tokens,icon
 end
 local function saveData()
     if Save and type(Save.Get)=="function" then local ok,data=pcall(Save.Get); if ok and type(data)=="table" then return data end end
@@ -347,9 +356,9 @@ local function send()
         report.collectedEggs=#batch>0 and batch or nil
         local money,speed=hud("Money"),hud("Speed")
         local bossMastery,bossTokens=bossMasteryStats()
-        local scrambleTokens=scrambleTokensStat()
+        local scrambleTokens,scrambleIcon=scrambleStat()
         local payload={gameServerId=game.JobId,manualHopCapable=ENV.GGX_SAE_RUNTIME~=nil and ENV.GGX_SAE_RUNTIME.manualHopVersion==1,username=player.Name,userId=player.UserId,gameId="steal_an_egg",serviceName="Steal An Egg",farming=true,
-            currentStats={petInventoryFullAt=petFullSeenAt>0 and petFullSeenAt or nil,eggInventoryFullAt=eggFullSeenAt>0 and eggFullSeenAt or nil,money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens,scrambleTokens=scrambleTokens},stealReport=report,
+            currentStats={petInventoryFullAt=petFullSeenAt>0 and petFullSeenAt or nil,eggInventoryFullAt=eggFullSeenAt>0 and eggFullSeenAt or nil,money=money,speed=speed,bossMastery=bossMastery,bossTokens=bossTokens,scrambleTokens=scrambleTokens,scrambleIcon=scrambleIcon},stealReport=report,
             matchInfo={map=tostring(player:GetAttribute("AreaId") or "Steal An Egg"),wave=0,playerCount=#Players:GetPlayers()}}
         -- Empty Lua tables encode as objects: explicitly encode known empty bags as arrays.
         for _,kind in ipairs({"pets","eggs"}) do if report[kind] and #report[kind]==0 then report[kind]="__SAE_EMPTY_ARRAY__" end end
