@@ -20,20 +20,21 @@ local function char() return plr.Character end
 local function root() local c=char(); return c and c:FindFirstChild("HumanoidRootPart") end
 local function hum() local c=char(); return c and c:FindFirstChildOfClass("Humanoid") end
 
--- ---- อาวุธ (Katana / IsBat / Gear ที่เป็นดาบ) ----
-local function isWeapon(t)
-    if not t:IsA("Tool") then return false end
-    if t:GetAttribute("IsBat")==true then return true end
-    if t:GetAttribute("ItemType")~="Gear" then return false end
-    local words={}
-    for wd in tostring(t:GetAttribute("GearName") or t.Name):lower():gmatch("%a+") do words[wd]=true end
-    if words.trap then return false end
-    return words.katana or words.sword or words.blade or words.axe or words.bat or false
+-- ---- อาวุธ: ใช้ของลูกค้าที่มี (Gear ที่ไม่ใช่ Trap) — ไม่ฟิก Katana ----
+local function isTrap(t) return tostring(t:GetAttribute("GearName") or t.Name):lower():find("trap")~=nil end
+local function isGearWeapon(t)
+    return t:IsA("Tool") and t:GetAttribute("ItemType")=="Gear" and not isTrap(t)
 end
 local function findWeapon()
-    for _,holder in ipairs({char(),plr:FindFirstChild("Backpack")}) do
-        if holder then for _,t in ipairs(holder:GetChildren()) do if isWeapon(t) then return t end end end
-    end
+    -- 1) ที่ถืออยู่ (equipped) ก่อน ถ้าเป็นอาวุธ
+    local c=char()
+    if c then for _,t in ipairs(c:GetChildren()) do if isGearWeapon(t) then return t end end end
+    -- 2) อาวุธ Gear ชิ้นแรกใน backpack (= อาวุธของลูกค้า ช่อง 1)
+    local bp=plr:FindFirstChild("Backpack")
+    if bp then for _,t in ipairs(bp:GetChildren()) do if isGearWeapon(t) then return t end end end
+    -- 3) fallback: tool แรกสุดที่ถืออยู่/ในกระเป๋า
+    if c then for _,t in ipairs(c:GetChildren()) do if t:IsA("Tool") then return t end end end
+    return bp and bp:FindFirstChildWhichIsA("Tool") or nil
 end
 local lastEquip=-math.huge
 local function ensureEquipped()
@@ -49,30 +50,59 @@ local function ensureEquipped()
     return t
 end
 
--- ---- หาบอทโดรน ----
+-- ---- หาบอทโดรน + อ่าน HP ----
 local function dronePart(m)
-    return m:FindFirstChild("RootPart") or m:FindFirstChildWhichIsA("BasePart")
+    return m:FindFirstChild("RootPart") or m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart")
 end
 local function isDrone(m)
     if not m:IsA("Model") then return false end
     if m:GetAttribute("ScrambleTier")~=nil or m:GetAttribute("ScrambleAnimatedRig")==true then return true end
     return m.Name:find("Drone")~=nil
 end
-local function nearestDrone()
-    local folder=workspace:FindFirstChild("ScrambleLocalVisuals")
-    if not folder then return nil end
-    local r=root(); if not r then return nil end
-    local best,bestD
-    for _,m in ipairs(folder:GetChildren()) do
-        if isDrone(m) then
-            local p=dronePart(m)
-            if p then
-                local d=(p.Position-r.Position).Magnitude
-                if not bestD or d<bestD then best,bestD=m,d end
+-- อ่าน HP จากป้าย 'X/Y' ที่เป็น descendant ของโดรน (คืน cur,max)
+local function readHP(m)
+    for _,d in ipairs(m:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") then
+            local a,b=tostring(d.Text):match("(%d+)%s*/%s*(%d+)")
+            if a then return tonumber(a),tonumber(b) end
+        end
+    end
+    return nil,nil
+end
+-- รวมโดรนทั้งหมด (ScrambleLocalVisuals เป็นหลัก + เผื่อ ACTUAL_DRONES)
+local function allDrones()
+    local list={}
+    local seen={}
+    for _,folderName in ipairs({"ScrambleLocalVisuals","ACTUAL_DRONES"}) do
+        local folder=workspace:FindFirstChild(folderName)
+        if folder then
+            for _,m in ipairs(folder:GetChildren()) do
+                if isDrone(m) and not seen[m] then
+                    local p=dronePart(m)
+                    if p then seen[m]=true; list[#list+1]={model=m,part=p} end
+                end
             end
         end
     end
-    return best,bestD
+    return list
+end
+-- เลือกเป้า: HP มากก่อน (10/10 > 5/5 > 3/3) แล้วค่อยใกล้สุด
+local function pickTarget()
+    local r=root(); if not r then return nil end
+    local list=allDrones()
+    if #list==0 then return nil,0 end
+    for _,e in ipairs(list) do
+        local cur,max=readHP(e.model)
+        e.hp=max or 0
+        e.cur=cur or 1
+        e.dist=(e.part.Position-r.Position).Magnitude
+    end
+    table.sort(list,function(a,b)
+        if a.hp~=b.hp then return a.hp>b.hp end   -- HP สูงก่อน
+        return a.dist<b.dist                        -- เท่ากัน = ใกล้ก่อน
+    end)
+    local t=list[1]
+    return t.model, t.dist, t.hp, t.part, #list
 end
 
 -- ---- ตี ----
@@ -95,17 +125,15 @@ local function loop()
         local h=hum()
         if not h or h.Health<=0 or not root() then state="no character"; task.wait(0.4); continue end
         local tool=ensureEquipped()
-        if not tool then state="waiting Katana"; task.wait(0.3); continue end
-        local drone,dist=nearestDrone()
-        if not drone then state="no drones (waiting)"; if h then h:Move(Vector3.zero) end; task.wait(CFG.SEARCH_WAIT); continue end
-        local p=dronePart(drone)
-        if not p then task.wait(0.1); continue end
+        if not tool then state="waiting weapon"; task.wait(0.3); continue end
+        local drone,dist,thp,p=pickTarget()
+        if not drone or not p then state="no drones (waiting)"; if h then h:Move(Vector3.zero) end; task.wait(CFG.SEARCH_WAIT); continue end
         if dist>CFG.MELEE then
-            state=string.format("moving → drone (%.0f)",dist)
+            state=string.format("moving → drone HP%d (%.0f)",thp or 0,dist)
             h:MoveTo(p.Position)
             task.wait(0.12)
         else
-            state=string.format("ATTACK drone (%.0f)",dist)
+            state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,dist)
             h:Move(Vector3.zero)          -- หยุดเดินตอนตี
             faceAndSwing(p.Position,tool)
             task.wait(0.06)
@@ -117,7 +145,7 @@ end
 
 ENV.SAE_SCRAMBLE_ON=function()
     if running then print("[SCRAMBLE] กำลังทำงานอยู่แล้ว"); return end
-    print("[SCRAMBLE] เริ่มตีบอท (Katana melee)")
+    print("[SCRAMBLE] เริ่มตีบอท (ใช้อาวุธในช่อง 1, ตีตัว HP มากก่อน)")
     task.spawn(loop)
 end
 ENV.SAE_SCRAMBLE_OFF=function()
@@ -126,10 +154,9 @@ ENV.SAE_SCRAMBLE_OFF=function()
     print("[SCRAMBLE] หยุด")
 end
 ENV.SAE_SCRAMBLE_STATUS=function()
-    local d,dist=nearestDrone()
-    local folder=workspace:FindFirstChild("ScrambleLocalVisuals")
-    local n=0; if folder then for _,m in ipairs(folder:GetChildren()) do if isDrone(m) then n+=1 end end end
-    print(string.format("[SCRAMBLE] running=%s | state=%s | drones=%d | nearest=%s",tostring(running),state,n,d and string.format("%.0f",dist or -1) or "none"))
+    local d,dist,thp,_,n=pickTarget()
+    print(string.format("[SCRAMBLE] running=%s | state=%s | drones=%d | target=%s",
+        tostring(running),state,n or 0,d and string.format("HP%d @ %.0f",thp or 0,dist or -1) or "none"))
 end
 
 print("[SCRAMBLE] โหลดแล้ว — พิมพ์ SAE_SCRAMBLE_ON() เพื่อเริ่มตีบอท / SAE_SCRAMBLE_OFF() หยุด / SAE_SCRAMBLE_STATUS() เช็ค")
