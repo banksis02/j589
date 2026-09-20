@@ -1905,10 +1905,16 @@ function M.onBelt()
  local _,root=character()
  return root~=nil and currentBelt(root)~=nil
 end
-function M.leave()
+function M.leave(forceJump)
  M.stop()
  local h,r=character()
  if not h or not r or h.Health<=0 then return false end
+ -- Event entry must release the treadmill even when belt detection misses it.
+ if forceJump then
+  h:Move(Vector3.zero,false);h:MoveTo(r.Position);h.Jump=true
+  task.wait(0.3)
+  if not r.Parent or h.Health<=0 or player.Character~=h.Parent then return false end
+ end
  local belt=currentBelt(r)
  -- Already away from the treadmill: no jump confirmation is needed.
  if not belt or not nearBelt(r,belt) then entered=false;return true end
@@ -2098,7 +2104,7 @@ task.spawn(function()
             if eventCharacter~=player.Character or (eventReleased and Treadmill.onBelt()) then
                 Rift.stop();eventReleased=false;eventCharacter=player.Character
             end
-            if not eventReleased then eventReleased=Treadmill.leave() end
+            if not eventReleased then eventReleased=Treadmill.leave(true) end
             if eventReleased and bossAllowed() and Rift.available() then Rift.step() end
         elseif job.mode=="sae_treadmill" then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
