@@ -14,7 +14,7 @@ local plr=Players.LocalPlayer
 _G.SAE_SCRAMBLE_GEN=(_G.SAE_SCRAMBLE_GEN or 0)+1
 local GEN=_G.SAE_SCRAMBLE_GEN
 
-local CFG={ MELEE=16, ATTACK_GAP=0.3, REEQUIP_GAP=1.0, SEARCH_WAIT=0.4 }
+local CFG={ MELEE=13, STAND_GAP=5, STEP=8, ATTACK_GAP=0.3, REEQUIP_GAP=1.0, SEARCH_WAIT=0.4 }
 
 local function char() return plr.Character end
 local function root() local c=char(); return c and c:FindFirstChild("HumanoidRootPart") end
@@ -107,14 +107,27 @@ end
 
 -- ---- ตี ----
 local lastSwing=0
-local function faceAndSwing(targetPos,tool)
-    local r=root(); if not r then return end
-    -- หันหน้าเข้าหาบอท (rotation อย่างเดียว ปลอดภัย)
-    pcall(function() r.CFrame=CFrame.lookAt(r.Position,Vector3.new(targetPos.X,r.Position.Y,targetPos.Z)) end)
+local function swing(tool)
     if os.clock()-lastSwing>=CFG.ATTACK_GAP and tool.Enabled and tool:GetAttribute("CooldownActive")~=true then
         pcall(function() tool:Deactivate(); tool:Activate() end)
         lastSwing=os.clock()
     end
+end
+-- ลอยเข้าหาโดรน (ขยับ HRP 3D ทีละ STEP ที่ความสูงของโดรน + หันหน้าเข้าเป้า) — เหมือนตีหินบอส
+-- คืนระยะจากตัวเรา→เป้า (center) หลังก้าว
+local function flyStep(targetPos)
+    local r=root(); if not r then return math.huge end
+    local flat=Vector3.new(r.Position.X-targetPos.X,0,r.Position.Z-targetPos.Z)
+    local dir=flat.Magnitude>0.1 and flat.Unit or Vector3.new(0,0,1)
+    local dest=Vector3.new(targetPos.X,targetPos.Y,targetPos.Z)+dir*CFG.STAND_GAP  -- ยืนห่าง STAND_GAP ที่ความสูงเป้า
+    local delta=dest-r.Position
+    local d=delta.Magnitude
+    local newPos = d>0.5 and (r.Position+delta.Unit*math.min(CFG.STEP,d)) or dest
+    pcall(function()
+        r.CFrame=CFrame.lookAt(newPos,Vector3.new(targetPos.X,newPos.Y,targetPos.Z))
+        r.AssemblyLinearVelocity=Vector3.zero
+    end)
+    return (newPos-targetPos).Magnitude
 end
 
 local running=false
@@ -126,18 +139,16 @@ local function loop()
         if not h or h.Health<=0 or not root() then state="no character"; task.wait(0.4); continue end
         local tool=ensureEquipped()
         if not tool then state="waiting weapon"; task.wait(0.3); continue end
-        local drone,dist,thp,p=pickTarget()
-        if not drone or not p then state="no drones (waiting)"; if h then h:Move(Vector3.zero) end; task.wait(CFG.SEARCH_WAIT); continue end
-        if dist>CFG.MELEE then
-            state=string.format("moving → drone HP%d (%.0f)",thp or 0,dist)
-            h:MoveTo(p.Position)
-            task.wait(0.12)
+        local drone,_,thp,p=pickTarget()
+        if not drone or not p then state="no drones (waiting)"; task.wait(CFG.SEARCH_WAIT); continue end
+        local after=flyStep(p.Position)         -- ลอยเข้าหาโดรน 3D
+        if after<=CFG.MELEE then
+            state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,after)
+            swing(tool)
         else
-            state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,dist)
-            h:Move(Vector3.zero)          -- หยุดเดินตอนตี
-            faceAndSwing(p.Position,tool)
-            task.wait(0.06)
+            state=string.format("flying → drone HP%d (%.0f)",thp or 0,after)
         end
+        RunService.Heartbeat:Wait()             -- ก้าวทุกเฟรม (ลื่น + คุมความเร็วต่ำกว่า AC)
     end
     running=false
     state="stopped"
