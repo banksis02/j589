@@ -143,6 +143,15 @@ local function loop()
     state="stopped"
 end
 
+-- เข้าโซนอีเวนต์ (วาปเข้าไปหาโดรน) — ยิง remote ของเกมเอง เหมือน AskEnter ของบอส
+local function net() return RS:FindFirstChild("Packages") and RS.Packages:FindFirstChild("Networking") end
+ENV.SAE_SCRAMBLE_ENTER=function()
+    local n=net()
+    local rf=n and (n:FindFirstChild("RF/MonsterEvent/RequestTeleport") or n:FindFirstChild("RF/Scramble/Request"))
+    if not rf then warn("[SCRAMBLE] ไม่พบ remote เข้าอีเวนต์ (RF/MonsterEvent/RequestTeleport)"); return end
+    local ok,res=pcall(function() return rf:InvokeServer() end)
+    print("[SCRAMBLE] ENTER ("..rf.Name..") fired: ok="..tostring(ok).." res="..tostring(res))
+end
 ENV.SAE_SCRAMBLE_ON=function()
     if running then print("[SCRAMBLE] กำลังทำงานอยู่แล้ว"); return end
     print("[SCRAMBLE] เริ่มตีบอท (ใช้อาวุธในช่อง 1, ตีตัว HP มากก่อน)")
