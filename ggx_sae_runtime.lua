@@ -1815,13 +1815,9 @@ function M.available()
     local timer=corner and corner:FindFirstChild('ExperimentTimer')
     local value=timer and timer:FindFirstChild('Value')
     if not timer or not value then return false end
-    local node=timer
-    while node and node~=pg do
-        if node:IsA('GuiObject') and not node.Visible then return false end
-        if node:IsA('LayerCollector') and not node.Enabled then return false end
-        node=node.Parent
-    end
-    if not value.Visible then return false end
+    -- Treadmill mode hides GameHUD while ExperimentTimer keeps updating.
+    -- Only the timer's own visibility marks its event transition.
+    if not timer.Visible or not value.Visible then return false end
     local text=value.Text:gsub('<[^>]+>',''):lower()
     if not text:match('^%s*event ends in%s+') then return false end
     local minutes=tonumber(text:match('(%d+)%s*m')) or 0
