@@ -146,7 +146,11 @@ local function loop()
         local tool=ensureEquipped()
         if not tool then state="waiting weapon"; task.wait(0.3); continue end
         local drone,_,thp,p=pickTarget()
-        if not drone or not p then state="no drones (waiting)"; cancelMove(); task.wait(CFG.SEARCH_WAIT); continue end
+        if not drone or not p then
+            -- ไม่เจอบอท = อาจอยู่นอกโซน → วาปเข้าเองทุก 5 วิ
+            if os.clock()-lastEnter>5 then state="no drones — เข้าโซน"; enterZone() else state="no drones (waiting)" end
+            cancelMove(); task.wait(CFG.SEARCH_WAIT); continue
+        end
         local dist=glideTo(p.Position)          -- ลอยเข้าหาโดรนแบบลื่น (tween)
         if dist<=CFG.MELEE then
             state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,dist)
@@ -168,11 +172,17 @@ local function findRemote(name)
         if (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) and d.Name==name then return d end
     end
 end
-ENV.SAE_SCRAMBLE_ENTER=function()
+local lastEnter=-math.huge
+local function enterZone()
     local rf=findRemote("RF/MonsterEvent/RequestTeleport") or findRemote("RF/Scramble/Request")
-    if not rf then warn("[SCRAMBLE] ไม่พบ remote เข้าอีเวนต์"); return end
+    if not rf then return false,"no remote" end
     local ok,res=pcall(function() return rf:InvokeServer() end)
-    print("[SCRAMBLE] ENTER ("..rf.Name..") fired: ok="..tostring(ok).." res="..tostring(res))
+    lastEnter=os.clock()
+    return ok,rf.Name
+end
+ENV.SAE_SCRAMBLE_ENTER=function()
+    local ok,info=enterZone()
+    print("[SCRAMBLE] ENTER fired: ok="..tostring(ok).." ("..tostring(info)..")")
 end
 ENV.SAE_SCRAMBLE_ON=function()
     if running then print("[SCRAMBLE] กำลังทำงานอยู่แล้ว"); return end
