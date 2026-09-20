@@ -1893,11 +1893,23 @@ local function nearBelt(root,belt)
  return math.abs(point.X)<=belt.Size.X/2+3
   and math.abs(point.Z)<=belt.Size.Z/2+3 and math.abs(point.Y)<=12
 end
+-- Departure depends on the belt under the character, not its owner sign.
+local function currentBelt(root)
+ local plots=workspace:FindFirstChild('Plots')
+ for _,plot in ipairs(plots and plots:GetChildren() or {}) do
+  local belt=plot:FindFirstChild('TreadmillBottom')
+  if belt and belt:IsA('BasePart') and nearBelt(root,belt) then return belt end
+ end
+end
+function M.onBelt()
+ local _,root=character()
+ return root~=nil and currentBelt(root)~=nil
+end
 function M.leave()
  M.stop()
  local h,r=character()
  if not h or not r or h.Health<=0 then return false end
- local belt=ownBelt()
+ local belt=currentBelt(r)
  -- Already away from the treadmill: no jump confirmation is needed.
  if not belt or not nearBelt(r,belt) then entered=false;return true end
  if not h:GetStateEnabled(Enum.HumanoidStateType.Jumping) then
@@ -1935,6 +1947,7 @@ local signature=nil
 local recoveryThread=nil
 local eventOwned=false
 local eventReleased=false
+local eventCharacter=nil
 local hopping=false
 local function configured()
     return active and not hopping and job and job.status=="active" and os.clock()-lastGood<45
@@ -1982,9 +1995,12 @@ local function settings(j)
     return areas,rarities,targets
 end
 Collector.setIdleHandler(function()
-    if configured() and job.mode=="sae_bundle" then
+    if configured() and not eventOwned and job.mode=="sae_bundle" then
         local untilAt=os.clock()+1
-        repeat Treadmill.step();task.wait(0.05) until os.clock()>=untilAt or not configured()
+        repeat
+            if eventOwned then break end
+            Treadmill.step();task.wait(0.05)
+        until os.clock()>=untilAt or not configured() or eventOwned
     end
 end, function() return false end)
 -- SAFE ZONE measured by the user in-game.
@@ -2065,7 +2081,7 @@ task.spawn(function()
         if env.GGX_SAE_MANUAL_HOP then manualHop(env.GGX_SAE_MANUAL_HOP) end
         local eventNow=bossAllowed() and Rift.available()
         if eventOwned and not eventNow then
-            Rift.stop();eventOwned=false;eventReleased=false;signature=nil
+            Rift.stop();eventOwned=false;eventReleased=false;eventCharacter=nil;signature=nil
             print('[GGX SCRAMBLE] Event ended or job changed; resume normal job')
         end
         if not configured() then
@@ -2074,11 +2090,16 @@ task.spawn(function()
             signature=nil
         elseif eventNow then
             if not eventOwned then
-                Collector.stop();Treadmill.stop();signature=nil;eventOwned=true
+                eventOwned=true
+                Collector.stop();Treadmill.stop();signature=nil
                 print('[GGX SCRAMBLE] Event priority: interrupt eggs/treadmill')
             end
+            -- A respawn or late server snap-back must go through departure again.
+            if eventCharacter~=player.Character or (eventReleased and Treadmill.onBelt()) then
+                Rift.stop();eventReleased=false;eventCharacter=player.Character
+            end
             if not eventReleased then eventReleased=Treadmill.leave() end
-            if eventReleased then Rift.step() end
+            if eventReleased and bossAllowed() and Rift.available() then Rift.step() end
         elseif job.mode=="sae_treadmill" then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
             signature=nil
