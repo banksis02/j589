@@ -8,13 +8,14 @@
 if game.PlaceId~=107778070777162 then return end
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
+local TweenService=game:GetService("TweenService")
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 local plr=Players.LocalPlayer
 
 _G.SAE_SCRAMBLE_GEN=(_G.SAE_SCRAMBLE_GEN or 0)+1
 local GEN=_G.SAE_SCRAMBLE_GEN
 
-local CFG={ MELEE=13, STAND_GAP=5, STEP=8, ATTACK_GAP=0.3, REEQUIP_GAP=1.0, SEARCH_WAIT=0.4 }
+local CFG={ MELEE=13, STAND_GAP=5, MOVE_SPEED=90, ATTACK_GAP=0.3, REEQUIP_GAP=1.0, SEARCH_WAIT=0.4 }
 
 local function char() return plr.Character end
 local function root() local c=char(); return c and c:FindFirstChild("HumanoidRootPart") end
@@ -113,21 +114,25 @@ local function swing(tool)
         lastSwing=os.clock()
     end
 end
--- ลอยเข้าหาโดรน (ขยับ HRP 3D ทีละ STEP ที่ความสูงของโดรน + หันหน้าเข้าเป้า) — เหมือนตีหินบอส
--- คืนระยะจากตัวเรา→เป้า (center) หลังก้าว
-local function flyStep(targetPos)
+-- ลอยเข้าหาโดรนแบบลื่นด้วย TweenService (เหมือนตีหินบอส Rift) — ไม่ใช่ set CFrame ตรง = ไม่โดนดึงกลับ
+local moveTween,curGoal
+local function cancelMove() if moveTween then moveTween:Cancel(); moveTween=nil end curGoal=nil end
+local function glideTo(targetPos)
     local r=root(); if not r then return math.huge end
     local flat=Vector3.new(r.Position.X-targetPos.X,0,r.Position.Z-targetPos.Z)
     local dir=flat.Magnitude>0.1 and flat.Unit or Vector3.new(0,0,1)
     local dest=Vector3.new(targetPos.X,targetPos.Y,targetPos.Z)+dir*CFG.STAND_GAP  -- ยืนห่าง STAND_GAP ที่ความสูงเป้า
-    local delta=dest-r.Position
-    local d=delta.Magnitude
-    local newPos = d>0.5 and (r.Position+delta.Unit*math.min(CFG.STEP,d)) or dest
-    pcall(function()
-        r.CFrame=CFrame.lookAt(newPos,Vector3.new(targetPos.X,newPos.Y,targetPos.Z))
-        r.AssemblyLinearVelocity=Vector3.zero
-    end)
-    return (newPos-targetPos).Magnitude
+    local goalCF=CFrame.lookAt(dest,Vector3.new(targetPos.X,dest.Y,targetPos.Z))
+    -- สร้าง tween ใหม่เฉพาะตอนเป้าขยับ/tween จบ (กันกระตุก)
+    if (not moveTween) or moveTween.PlaybackState~=Enum.PlaybackState.Playing
+       or (not curGoal) or (curGoal-dest).Magnitude>3 then
+        cancelMove()
+        curGoal=dest
+        local dur=math.max(0.08,(dest-r.Position).Magnitude/CFG.MOVE_SPEED)
+        moveTween=TweenService:Create(r,TweenInfo.new(dur,Enum.EasingStyle.Linear),{CFrame=goalCF})
+        moveTween:Play()
+    end
+    return (r.Position-targetPos).Magnitude
 end
 
 local running=false
@@ -136,19 +141,19 @@ local function loop()
     running=true
     while GEN==_G.SAE_SCRAMBLE_GEN and running do
         local h=hum()
-        if not h or h.Health<=0 or not root() then state="no character"; task.wait(0.4); continue end
+        if not h or h.Health<=0 or not root() then state="no character"; cancelMove(); task.wait(0.4); continue end
         local tool=ensureEquipped()
         if not tool then state="waiting weapon"; task.wait(0.3); continue end
         local drone,_,thp,p=pickTarget()
-        if not drone or not p then state="no drones (waiting)"; task.wait(CFG.SEARCH_WAIT); continue end
-        local after=flyStep(p.Position)         -- ลอยเข้าหาโดรน 3D
-        if after<=CFG.MELEE then
-            state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,after)
+        if not drone or not p then state="no drones (waiting)"; cancelMove(); task.wait(CFG.SEARCH_WAIT); continue end
+        local dist=glideTo(p.Position)          -- ลอยเข้าหาโดรนแบบลื่น (tween)
+        if dist<=CFG.MELEE then
+            state=string.format("ATTACK drone HP%d (%.0f)",thp or 0,dist)
             swing(tool)
         else
-            state=string.format("flying → drone HP%d (%.0f)",thp or 0,after)
+            state=string.format("gliding → drone HP%d (%.0f)",thp or 0,dist)
         end
-        RunService.Heartbeat:Wait()             -- ก้าวทุกเฟรม (ลื่น + คุมความเร็วต่ำกว่า AC)
+        RunService.Heartbeat:Wait()
     end
     running=false
     state="stopped"
@@ -170,6 +175,7 @@ ENV.SAE_SCRAMBLE_ON=function()
 end
 ENV.SAE_SCRAMBLE_OFF=function()
     running=false
+    cancelMove()
     local h=hum(); if h then h:Move(Vector3.zero) end
     print("[SCRAMBLE] หยุด")
 end
