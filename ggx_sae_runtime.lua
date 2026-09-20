@@ -1724,275 +1724,116 @@ return M
 
 end)()
 local Rift=(function()
--- GGX Rift test 0.3. Entry remote retained from the user's steal_an_egg_boss.lua.
--- Separate egg collector. Phase signals derived from three user arena snapshots.
-local moveSpeed = 150
-local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local player = Players.LocalPlayer
-local running, worker, tween, movePart, goal = false, nil, nil, nil, nil
-local enteredAt, entryAt, lastSwing, deadBoss = 0, -math.huge, 0, nil
-local state, detail = "STOPPED", "กด START เพื่อรอประตู Rift"
-local function root() return player.Character and player.Character:FindFirstChild("HumanoidRootPart") end
-local function humanoid() return player.Character and player.Character:FindFirstChildOfClass("Humanoid") end
-local function arena() return workspace:FindFirstChild("BossArena") end
-local function boss() local a=arena(); return a and a:FindFirstChild("Boss") end
--- Same location check as the user's working entry script; shown in diagnostics.
-local function inside() local r=root(); return r and r.Position.X < -1000 end
-local function part(obj)
-    if not obj then return nil end
-    if obj:IsA("BasePart") then return obj end
-    return (obj:IsA("Model") and obj.PrimaryPart) or obj:FindFirstChildWhichIsA("BasePart",true)
+-- Headless adapter of user-verified movement-only Scramble test.
+local player=game:GetService('Players').LocalPlayer
+local TweenService=game:GetService('TweenService')
+local ENTRY=Vector3.new(2211.3125,69.64420318603516,-360.2830810546875)
+local running=false
+local target,move,moveRoot,moveGoal,lastChar
+local entered=false
+local nextPick=0
+local lastMessage
+local function show(s) if lastMessage~=s then lastMessage=s;print('[GGX SCRAMBLE] '..s) end end
+local function cancel()
+    if move then move:Cancel();move=nil end
+    if moveRoot and moveRoot.Parent then moveRoot.AssemblyLinearVelocity=Vector3.zero end
+    moveRoot=nil;moveGoal=nil
 end
-local function hp(obj)
-    if not obj then return nil end
-    for _, d in ipairs(obj:GetDescendants()) do
-        if d:IsA("TextLabel") or d:IsA("TextButton") then
-            local a,b=d.Text:match("([%d,]+)%s*/%s*([%d,]+)")
-            if a then return tonumber((a:gsub(",",""))),tonumber((b:gsub(",",""))) end
-        end
-    end
+local function hp(model)
+    if not model or not model.Parent then return end
+    local r=model:FindFirstChild('RootPart')
+    local board=r and r:FindFirstChild('ScrambleHealth')
+    local bar=board and board:FindFirstChild('HealthProgress')
+    local text=bar and bar:FindFirstChild('TextLabel')
+    if not board or not board.Enabled or not text or not text.Visible then return end
+    local a,b=text.Text:match('(%d+)%s*/%s*(%d+)%s*HP')
+    return tonumber(a),tonumber(b),r
 end
-local function bossHealth()
-    local pg=player:FindFirstChildOfClass("PlayerGui")
-    local ui=pg and pg:FindFirstChild("BossFightUI")
-    local amount=ui and ui:FindFirstChild("HealthAmount",true)
-    if amount and amount:IsA("TextLabel") then
-        local a,b=amount.Text:match("([%d,]+)%s*/%s*([%d,]+)")
-        if a then return tonumber((a:gsub(",",""))),tonumber((b:gsub(",",""))) end
-    end
-    return hp(boss())
+local function glide(root,pos)
+    if move and move.PlaybackState==Enum.PlaybackState.Playing and moveRoot==root and (moveGoal-pos).Magnitude<5 then return end
+    cancel();moveRoot=root;moveGoal=pos
+    move=TweenService:Create(root,TweenInfo.new(math.max(0.1,(root.Position-pos).Magnitude/150),Enum.EasingStyle.Linear),{CFrame=CFrame.new(pos)})
+    move:Play()
 end
-local function show(s,d)
-    if state~=s or detail~=d then print("[GGX RIFT] "..s.." | "..d) end
-    state,detail=s,d
-end
-local function cancelMove()
-    if tween then tween:Cancel(); tween=nil end
-    movePart,goal=nil,nil
-end
-local function stop()
-    running=false
-    cancelMove()
-    if worker and worker~=coroutine.running() then pcall(task.cancel,worker) end
-    worker=nil
-    show("STOPPED","หยุดแล้ว")
-end
-local function isWeapon(tool)
-    if not tool:IsA("Tool") or tool:GetAttribute("ItemType")~="Gear" then return false end
-    if tool:GetAttribute("IsBat")==true then return true end
-    local words={}
-    for word in tostring(tool:GetAttribute("GearName") or tool.Name):lower():gmatch("%a+") do words[word]=true end
-    if words.trap then return false end
-    return words.katana or words.sword or words.blade or words.axe or words.battleaxe or false
-end
-local function weapon()
-    local holders={}
-    if player.Character then table.insert(holders,player.Character) end
-    local backpack=player:FindFirstChild("Backpack")
-    if backpack then table.insert(holders,backpack) end
-    for _,holder in ipairs(holders) do
-        for _,tool in ipairs(holder:GetChildren()) do
-            if isWeapon(tool) then return tool end
-        end
-    end
-end
-local function targetPosition(target)
-    if target:IsA("Bone") then return target.TransformedWorldCFrame.Position end
-    if target:IsA("Attachment") then return target.WorldPosition end
-    if target:IsA("BasePart") then return target.Position end
-end
-local function closestPosition(target, position)
-    if not target:IsA("BasePart") then return targetPosition(target) end
-    local localPoint=target.CFrame:PointToObjectSpace(position)
-    local half=target.Size/2
-    return target.CFrame:PointToWorldSpace(Vector3.new(
-        math.clamp(localPoint.X,-half.X,half.X),math.clamp(localPoint.Y,-half.Y,half.Y),math.clamp(localPoint.Z,-half.Z,half.Z)))
-end
-local lastEquip=-math.huge
-local trackedTarget,lastTargetHealth,healthAt=nil,nil,0
-local swingAttempts=0
-local lastCharacter,lastHumanoid,selectedStone=nil,nil,nil
-local function resetWeapon(tool,h)
-    local ok,err=pcall(function()
-        tool:Deactivate()
-        h:UnequipTools()
-        h:EquipTool(tool)
-    end)
-    lastEquip=os.clock()
-    if not ok then warn("[GGX RIFT] Equip failed: "..tostring(err)) end
-end
-local function continuousAttack()
-    local h=humanoid()
-    if not h or h.Health<=0 then return end
-    local tool=weapon()
-    if not tool then show("NO_WEAPON","รออาวุธ Gear/IsBat โหลด");return end
-    if tool.Parent~=player.Character then
-        if os.clock()-lastEquip>=1 then resetWeapon(tool,h) end
-        return
-    end
-    if os.clock()-lastEquip<0.3 then return end
-    if not tool.Enabled or tool:GetAttribute("CooldownActive")==true then return end
-    if os.clock()-lastSwing>=0.35 then
-        local ok,err=pcall(function() tool:Deactivate(); tool:Activate() end)
-        if ok then swingAttempts+=1 end
-        lastSwing=os.clock()
-        if not ok then warn("[GGX RIFT] Attack failed: "..tostring(err)) end
-    end
-end
-local function approachAndHit(target)
-    local r,h=root(),humanoid()
-    if not r or not h or h.Health<=0 or not target.Parent then cancelMove(); return end
-    -- Equip while approaching as well as while in attack range.
-    local tool=weapon()
-    local equipped=tool and tool.Parent==player.Character
-    if tool and not equipped and os.clock()-lastEquip>=1 then
-        resetWeapon(tool,h)
-    elseif not tool then
-        show("NO_WEAPON","ไม่พบอาวุธ Gear; รออาวุธโหลด ไม่เลือกสัตว์แทน")
-    end
-    local center=targetPosition(target)
-    if not center then cancelMove(); return end
-    local closest=closestPosition(target,r.Position)
-    local contactRange=target:IsA("BasePart") and 1 or 3
-    if (closest-r.Position).Magnitude>contactRange then
-        local away=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
-        if away.Magnitude<0.1 then away=Vector3.new(1,0,0) end
-        local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+away.Unit*(target:IsA("BasePart") and 0.25 or 1.5)
-        if movePart~=target or not goal or (goal-destination).Magnitude>3 or not tween or tween.PlaybackState~=Enum.PlaybackState.Playing then
-            cancelMove(); goal=destination; movePart=target
-            tween=TweenService:Create(r,TweenInfo.new(math.max(0.1,(destination-r.Position).Magnitude/moveSpeed),Enum.EasingStyle.Linear),{CFrame=CFrame.new(destination)})
-            tween:Play()
-        end
-        return
-    end
-    cancelMove()
-    local flat=Vector3.new(center.X,r.Position.Y,center.Z)
-    if (flat-r.Position).Magnitude>0.1 then r.CFrame=CFrame.lookAt(r.Position,flat) end
-    if not tool or tool.Parent~=player.Character or not isWeapon(tool) then return end
-    if os.clock()-lastEquip<0.3 then return end
-    local targetHealth=target:IsA("BasePart") and target:GetAttribute("Health") or bossHealth()
-    if trackedTarget~=target or targetHealth~=lastTargetHealth then
-        trackedTarget=target;lastTargetHealth=targetHealth;healthAt=os.clock();swingAttempts=0
-    elseif type(targetHealth)=="number" and targetHealth>0 and swingAttempts>=6 and os.clock()-healthAt>=4 then
-        warn("[GGX RIFT] HP unchanged; re-equip "..tool.Name.." and approach again")
-        resetWeapon(tool,h)
-        healthAt=os.clock();swingAttempts=0
-        local offset=Vector3.new(r.Position.X-center.X,0,r.Position.Z-center.Z)
-        if offset.Magnitude>0.1 then
-            local destination=Vector3.new(closest.X,r.Position.Y,closest.Z)+offset.Unit*0.5
-            cancelMove();goal=destination;movePart=target
-            tween=TweenService:Create(r,TweenInfo.new(0.2,Enum.EasingStyle.Linear),{CFrame=CFrame.lookAt(destination,Vector3.new(center.X,destination.Y,center.Z))})
-            tween:Play()
-        end
-        return
-    end
-
-end
-local function stones()
-    local a=arena(); local folder=a and a:FindFirstChild("CrystalTowers")
-    local result,unknown={},0
-    if folder then for _, obj in ipairs(folder:GetChildren()) do
-        local p=obj:FindFirstChild("Hitbox")
-        local health=p and p:GetAttribute("Health")
-        if type(health)~="number" then health=nil end
-        if p then
-            if health==nil then unknown+=1 elseif health>0 then table.insert(result,{part=p,health=health}) end
-        end
-    end end
-    local r=root()
-    if r then table.sort(result,function(a,b) return (a.part.Position-r.Position).Magnitude<(b.part.Position-r.Position).Magnitude end) end
-    return result,unknown
-end
-local function exposedHand()
-    local b=boss()
-    if not b or b:GetAttribute("Attacking")~=true then return nil end
-    local hand=b:FindFirstChild("UpperHand1.R",true)
-    if not hand or not (hand:IsA("Bone") or hand:IsA("Attachment") or hand:IsA("BasePart")) then return nil end
-    local health=hand:FindFirstChild("Health")
-    if not health or not health:IsA("BillboardGui") or not health.Enabled then return nil end
-    local label=health:FindFirstChildWhichIsA("TextLabel",true)
-    if not label or not label.Visible then return nil end
-    local current=hp(hand)
-    if not current or current<=0 then return nil end
-    return hand
-end
+local function stop() running=false;target=nil;cancel();show('หยุดแล้ว') end
 local function tick()
-    local char,h=player.Character,humanoid()
-    if char~=lastCharacter or h~=lastHumanoid then
-        cancelMove()
-        lastCharacter,lastHumanoid=char,h
-        trackedTarget,lastTargetHealth,selectedStone=nil,nil,nil
-        healthAt=os.clock();swingAttempts=0;lastEquip=-math.huge;lastSwing=0
+    if not running then return end
+    local c=player.Character
+    local root=c and c:FindFirstChild('HumanoidRootPart')
+    local h=c and c:FindFirstChildOfClass('Humanoid')
+    if c~=lastChar then cancel();target=nil;entered=false;lastChar=c end
+    if not root or not h or h.Health<=0 then cancel();target=nil;show('รอตัวละครเกิด • ไม่มีคำสั่งรีเซ็ต');return end
+    if not entered then
+        if (root.Position-ENTRY).Magnitude>10 then glide(root,ENTRY);show('ลอยเข้าโซนอีเวนต์ • 150 studs/s');return end
+        cancel();entered=true;nextPick=os.clock()+1
     end
-    if not h or h.Health<=0 or not root() then
-        cancelMove();selectedStone=nil
-        show("WAIT_RESPAWN","รอเกิดใหม่ แล้วตรวจอาวุธอีกครั้ง");return
+    if target then
+        local value=hp(target)
+        if not value or value<=0 then cancel();target=nil;nextPick=os.clock()+0.5;show('เป้าหมายหมดเลือดหรือหาย • หยุดติดตาม');return end
     end
-    if not inside() then
-        cancelMove()
-        if not workspace:FindFirstChild("BossArenaTeleport") then
-            show("WAIT_RIFT","รอประตูเกิดจริง • รอบ :00 / :30"); return
+    if not target then
+        if os.clock()<nextPick then return end
+        nextPick=os.clock()+1
+        local folder=workspace:FindFirstChild('ScrambleLocalVisuals')
+        local best=math.huge
+        for _,m in ipairs(folder and folder:GetChildren() or {}) do
+            if m:IsA('Model') and m.Name:match('^DroneVisual_') then
+                local value,_,part=hp(m)
+                if value and value>0 and part and part.Position.Y>20 then
+                    local d=(root.Position-part.Position).Magnitude
+                    if d<best then best=d;target=m end
+                end
+            end
         end
-        show("ENTERING","ใช้ AskEnter • รอยืนยันว่าเข้าห้องแล้ว")
-        if os.clock()-entryAt<5 then return end
-        entryAt=os.clock()
-        local packages=RS:FindFirstChild("Packages")
-        local net=packages and packages:FindFirstChild("Networking")
-        local remote=net and net:FindFirstChild("RF/BossEvent/AskEnter")
-        if not remote or not remote:IsA("RemoteFunction") then show("NO_REMOTE","ไม่พบ RF/BossEvent/AskEnter"); return end
-        remote:InvokeServer() -- A successful call alone does not mean entry succeeded.
-        return
+        if not target then cancel();show('อยู่ในโซนแล้ว • รอหุ่นโหลด/เกิด');return end
     end
-    if enteredAt==0 then enteredAt=os.clock() end
-    local b=boss()
-    if not b then cancelMove(); show("WAIT_ARENA","รอ BossArena.Boss โหลด • ไม่ถือว่าชนะเพียงเพราะโมเดลหาย"); return end
-    local current,maximum=bossHealth()
-    if current==0 or deadBoss==b then
-        deadBoss=b; cancelMove(); show("COMPLETE","บอส HP 0 • หยุดโจมตี รอออกจากห้อง"); return
+    local value,max,part=hp(target)
+    if not value or value<=0 or not part or part.Position.Y<20 then cancel();target=nil;return end
+    local offset=root.Position-part.Position
+    -- Stop outside the visual body; do not track into its centre.
+    local size=target:GetAttribute('VisualSize')
+    local radius=typeof(size)=='Vector3' and math.max(size.X,size.Z)/2+2 or 6
+    if offset.Magnitude<=radius+1.5 then
+        cancel();show('ถึงระยะแล้ว • ให้เกมตีเอง • '..value..'/'..max..' HP');return
     end
-    continuousAttack() -- Independent of distance, crystal HP maximum, or hand exposure.
-    local targets,unknown=stones()
-    if #targets>0 then
-        local chosen=targets[1]
-        for _,candidate in ipairs(targets) do if candidate.part==selectedStone then chosen=candidate;break end end
-        selectedStone=chosen.part
-        show("CRYSTALS","หินเหลือ "..#targets.." • เป้า "..chosen.part.Name.." HP "..chosen.health)
-        approachAndHit(chosen.part); return
-    end
-    selectedStone=nil
-    if unknown>0 then cancelMove(); show("NEED_DATA","อ่าน HP หินไม่ได้ "..unknown.." ก้อน • กด COPY DATA"); return end
-    local hand=exposedHand()
-    if hand then
-        show("HAND_OPEN",hand.Name.." • HP "..tostring(current).."/"..tostring(maximum).." • Attacking + ป้ายเลือดมือ")
-        approachAndHit(hand)
-    else cancelMove(); show("WAIT_HAND","รอมือลดลง • ถืออาวุธและตีต่อเนื่อง") end
+    local flat=Vector3.new(offset.X,0,offset.Z)
+    local side=flat.Magnitude>0.1 and flat.Unit or Vector3.new(1,0,0)
+    glide(root,part.Position+side*radius)
+    show('ลอยเข้าใกล้หุ่น • '..value..'/'..max..' HP')
 end
-local M = {}
-function M.inside() return inside() end
+local M={}
+function M.step()
+    if not running then running=true;entered=false;target=nil end
+    local ok,err=pcall(tick)
+    if not ok then stop();warn('[GGX SCRAMBLE] '..tostring(err)) end
+end
 function M.available()
-    local currentBoss=boss()
-    if deadBoss and currentBoss==deadBoss then
-        local health=bossHealth()
-        if health and health>0 then deadBoss=nil else return false end
+    local pg=player:FindFirstChild('PlayerGui')
+    local hud=pg and pg:FindFirstChild('HUD')
+    local gameHud=hud and hud:FindFirstChild('GameHUD')
+    local corner=gameHud and gameHud:FindFirstChild('BottomRight')
+    local timer=corner and corner:FindFirstChild('ExperimentTimer')
+    local value=timer and timer:FindFirstChild('Value')
+    if not timer or not value then return false end
+    local node=timer
+    while node and node~=pg do
+        if node:IsA('GuiObject') and not node.Visible then return false end
+        if node:IsA('LayerCollector') and not node.Enabled then return false end
+        node=node.Parent
     end
-    return workspace:FindFirstChild("BossArenaTeleport") ~= nil
+    if not value.Visible then return false end
+    local text=value.Text:gsub('<[^>]+>',''):lower()
+    if not text:match('^%s*event ends in%s+') then return false end
+    local minutes=tonumber(text:match('(%d+)%s*m')) or 0
+    local seconds=tonumber(text:match('(%d+)%s*s')) or 0
+    return minutes*60+seconds>0
 end
+function M.inside() return false end -- no separate boss arena in this event
 function M.run(allowed)
-    local sawInside=inside()
-    local began=os.clock()
-    entryAt=-math.huge
-    while allowed() do
-        if inside() then sawInside=true end
-        if sawInside and not inside() then break end
-        if not sawInside and (not M.available() or os.clock()-began>20) then break end
-        tick()
-        task.wait(0.25)
-    end
-    cancelMove()
+    while allowed() and M.available() do M.step();task.wait(0.1) end
+    stop()
 end
-function M.stop() cancelMove() end
+M.stop=stop
 return M
 
 end)()
@@ -2092,6 +1933,8 @@ local job=nil
 local lastGood=0
 local signature=nil
 local recoveryThread=nil
+local eventOwned=false
+local eventReleased=false
 local hopping=false
 local function configured()
     return active and not hopping and job and job.status=="active" and os.clock()-lastGood<45
@@ -2139,16 +1982,11 @@ local function settings(j)
     return areas,rarities,targets
 end
 Collector.setIdleHandler(function()
-    if bossAllowed() and (Rift.available() or Rift.inside()) then
-        if not Rift.inside() and not Treadmill.leave() then return end
-        print("[GGX SAE] Boss priority: entering Rift before next egg")
-        Rift.run(bossAllowed)
-        print("[GGX SAE] Rift finished or job stopped; rescan eggs")
-    elseif configured() and job.mode=="sae_bundle" then
+    if configured() and job.mode=="sae_bundle" then
         local untilAt=os.clock()+1
-        repeat Treadmill.step(); task.wait(0.05) until os.clock()>=untilAt or not configured()
+        repeat Treadmill.step();task.wait(0.05) until os.clock()>=untilAt or not configured()
     end
-end, function() return Rift.inside() or (bossAllowed() and Rift.available()) end)
+end, function() return false end)
 -- SAFE ZONE measured by the user in-game.
 local SAFE_ZONE=Vector3.new(534.4960327148438,69.64423370361328,-367.4530334472656)
 local initialDeparture=true
@@ -2225,10 +2063,22 @@ end)
 task.spawn(function()
     while active do
         if env.GGX_SAE_MANUAL_HOP then manualHop(env.GGX_SAE_MANUAL_HOP) end
+        local eventNow=bossAllowed() and Rift.available()
+        if eventOwned and not eventNow then
+            Rift.stop();eventOwned=false;eventReleased=false;signature=nil
+            print('[GGX SCRAMBLE] Event ended or job changed; resume normal job')
+        end
         if not configured() then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
             Treadmill.stop()
             signature=nil
+        elseif eventNow then
+            if not eventOwned then
+                Collector.stop();Treadmill.stop();signature=nil;eventOwned=true
+                print('[GGX SCRAMBLE] Event priority: interrupt eggs/treadmill')
+            end
+            if not eventReleased then eventReleased=Treadmill.leave() end
+            if eventReleased then Rift.step() end
         elseif job.mode=="sae_treadmill" then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
             signature=nil
