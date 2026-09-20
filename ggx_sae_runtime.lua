@@ -1912,10 +1912,21 @@ function M.leave()
  local belt=currentBelt(r)
  -- Already away from the treadmill: no jump confirmation is needed.
  if not belt or not nearBelt(r,belt) then entered=false;return true end
- if not h:GetStateEnabled(Enum.HumanoidStateType.Jumping) then
-  warn('[GGX TREADMILL] Jump unavailable; retry later');return false
+ -- Use the input path too: setting Jump alone may not notify the game's
+ -- treadmill controller. Always release Space even if the input call fails.
+ h:Move(Vector3.zero,false);h:MoveTo(r.Position)
+ local input
+ local pressed,err=pcall(function()
+  input=game:GetService('VirtualInputManager')
+  input:SendKeyEvent(true,Enum.KeyCode.Space,false,game)
+  task.wait(0.1)
+ end)
+ if input then pcall(function() input:SendKeyEvent(false,Enum.KeyCode.Space,false,game) end) end
+ if not pressed then
+  warn('[GGX TREADMILL] Jump input failed; departure held: '..tostring(err))
+  return false
  end
- h:Move(Vector3.zero,false);h:MoveTo(r.Position);h.Jump=true
+ h.Jump=true
  task.wait(0.3)
  if not r.Parent or h.Health<=0 or player.Character~=h.Parent then return false end
  -- The treadmill can release without an observable airborne frame.
