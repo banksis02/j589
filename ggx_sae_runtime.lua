@@ -2100,7 +2100,23 @@ task.spawn(function()
             if eventCharacter~=player.Character or (eventReleased and Treadmill.onBelt()) then
                 Rift.stop();eventReleased=false;eventCharacter=player.Character
             end
-            if not eventReleased then eventReleased=Treadmill.leave(true) end
+            if not eventReleased and Treadmill.leave(true) then
+                -- Stage every event departure at the saved central safe zone,
+                -- including starts away from a belt and returns after respawn.
+                local char=player.Character
+                local root=char and char:FindFirstChild('HumanoidRootPart')
+                local hum=char and char:FindFirstChildOfClass('Humanoid')
+                if root and hum and hum.Health>0 and bossAllowed() and Rift.available() then
+                    root.CFrame=CFrame.new(SAFE_ZONE)
+                    root.AssemblyLinearVelocity=Vector3.zero
+                    task.wait(0.3)
+                    eventReleased=player.Character==char and root.Parent~=nil and hum.Health>0
+                        and (root.Position-SAFE_ZONE).Magnitude<6
+                    if eventReleased then
+                        print('[GGX SCRAMBLE] Central safe zone confirmed; depart for event')
+                    end
+                end
+            end
             if eventReleased and bossAllowed() and Rift.available() then Rift.step() end
         elseif job.mode=="sae_treadmill" then
             if Collector.isRunning() then Collector.stop(); Rift.stop() end
