@@ -136,6 +136,23 @@ local function glideTo(targetPos)
     return (r.Position-targetPos).Magnitude
 end
 
+-- เข้าโซนอีเวนต์ (วาปเข้าไปหาโดรน) — ยิง remote ของเกมเอง เหมือน AskEnter ของบอส
+local function findRemote(name)
+    local direct=RS:FindFirstChild(name)   -- ชื่อมี "/" เป็นชื่อ child ตรงๆ ได้
+    if direct and (direct:IsA("RemoteFunction") or direct:IsA("RemoteEvent")) then return direct end
+    for _,d in ipairs(RS:GetDescendants()) do
+        if (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) and d.Name==name then return d end
+    end
+end
+local lastEnter=-math.huge
+local function enterZone()
+    local rf=findRemote("RF/MonsterEvent/RequestTeleport") or findRemote("RF/Scramble/Request")
+    if not rf then return false,"no remote" end
+    local ok=pcall(function() return rf:InvokeServer() end)
+    lastEnter=os.clock()
+    return ok,rf.Name
+end
+
 local running=false
 local state="idle"
 local function loop()
@@ -164,22 +181,6 @@ local function loop()
     state="stopped"
 end
 
--- เข้าโซนอีเวนต์ (วาปเข้าไปหาโดรน) — ยิง remote ของเกมเอง เหมือน AskEnter ของบอส
-local function findRemote(name)
-    local direct=RS:FindFirstChild(name)   -- ชื่อมี "/" เป็นชื่อ child ตรงๆ ได้
-    if direct and (direct:IsA("RemoteFunction") or direct:IsA("RemoteEvent")) then return direct end
-    for _,d in ipairs(RS:GetDescendants()) do
-        if (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) and d.Name==name then return d end
-    end
-end
-local lastEnter=-math.huge
-local function enterZone()
-    local rf=findRemote("RF/MonsterEvent/RequestTeleport") or findRemote("RF/Scramble/Request")
-    if not rf then return false,"no remote" end
-    local ok,res=pcall(function() return rf:InvokeServer() end)
-    lastEnter=os.clock()
-    return ok,rf.Name
-end
 ENV.SAE_SCRAMBLE_ENTER=function()
     local ok,info=enterZone()
     print("[SCRAMBLE] ENTER fired: ok="..tostring(ok).." ("..tostring(info)..")")
