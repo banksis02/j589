@@ -9,6 +9,7 @@ if game.PlaceId~=107778070777162 then return end
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
 local TweenService=game:GetService("TweenService")
+local RS=game:GetService("ReplicatedStorage")
 local ENV=(type(getgenv)=="function" and getgenv()) or _G
 local plr=Players.LocalPlayer
 
@@ -160,11 +161,16 @@ local function loop()
 end
 
 -- เข้าโซนอีเวนต์ (วาปเข้าไปหาโดรน) — ยิง remote ของเกมเอง เหมือน AskEnter ของบอส
-local function net() return RS:FindFirstChild("Packages") and RS.Packages:FindFirstChild("Networking") end
+local function findRemote(name)
+    local direct=RS:FindFirstChild(name)   -- ชื่อมี "/" เป็นชื่อ child ตรงๆ ได้
+    if direct and (direct:IsA("RemoteFunction") or direct:IsA("RemoteEvent")) then return direct end
+    for _,d in ipairs(RS:GetDescendants()) do
+        if (d:IsA("RemoteFunction") or d:IsA("RemoteEvent")) and d.Name==name then return d end
+    end
+end
 ENV.SAE_SCRAMBLE_ENTER=function()
-    local n=net()
-    local rf=n and (n:FindFirstChild("RF/MonsterEvent/RequestTeleport") or n:FindFirstChild("RF/Scramble/Request"))
-    if not rf then warn("[SCRAMBLE] ไม่พบ remote เข้าอีเวนต์ (RF/MonsterEvent/RequestTeleport)"); return end
+    local rf=findRemote("RF/MonsterEvent/RequestTeleport") or findRemote("RF/Scramble/Request")
+    if not rf then warn("[SCRAMBLE] ไม่พบ remote เข้าอีเวนต์"); return end
     local ok,res=pcall(function() return rf:InvokeServer() end)
     print("[SCRAMBLE] ENTER ("..rf.Name..") fired: ok="..tostring(ok).." res="..tostring(res))
 end
