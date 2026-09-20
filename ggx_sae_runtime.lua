@@ -1732,6 +1732,8 @@ local running=false
 local target,move,moveRoot,moveGoal,lastChar
 local entered=false
 local nextPick=0
+local nextNearbyCheck=0
+local noNearbySince=nil
 local lastMessage
 local function show(s) if lastMessage~=s then lastMessage=s;print('[GGX SCRAMBLE] '..s) end end
 local function cancel()
@@ -1755,14 +1757,42 @@ local function glide(root,pos)
     move=TweenService:Create(root,TweenInfo.new(math.max(0.1,(root.Position-pos).Magnitude/150),Enum.EasingStyle.Linear),{CFrame=CFrame.new(pos)})
     move:Play()
 end
-local function stop() running=false;target=nil;cancel();show('หยุดแล้ว') end
+local function stop() running=false;target=nil;noNearbySince=nil;nextNearbyCheck=0;cancel();show('หยุดแล้ว') end
 local function tick()
     if not running then return end
     local c=player.Character
     local root=c and c:FindFirstChild('HumanoidRootPart')
     local h=c and c:FindFirstChildOfClass('Humanoid')
-    if c~=lastChar then cancel();target=nil;entered=false;lastChar=c end
+    if c~=lastChar then cancel();target=nil;entered=false;lastChar=c;noNearbySince=nil;nextNearbyCheck=0 end
     if not root or not h or h.Health<=0 then cancel();target=nil;show('รอตัวละครเกิด • ไม่มีคำสั่งรีเซ็ต');return end
+    -- Check actual streamed robots, even while the entry tween is running.
+    -- A five-second grace lets visuals load without restarting every frame.
+    local now=os.clock()
+    if now>=nextNearbyCheck then
+        nextNearbyCheck=now+1
+        local nearby=false
+        local folder=workspace:FindFirstChild('ScrambleLocalVisuals')
+        for _,model in ipairs(folder and folder:GetChildren() or {}) do
+            if model:IsA('Model') and model.Name:match('^DroneVisual_') then
+                local health,_,part=hp(model)
+                if health and health>0 and part and part.Position.Y>20
+                    and (root.Position-part.Position).Magnitude<=200 then
+                    nearby=true;break
+                end
+            end
+        end
+        if nearby then
+            noNearbySince=nil
+        else
+            noNearbySince=noNearbySince or now
+            if now-noNearbySince>=5 then
+                cancel();target=nil;entered=false;nextPick=0;noNearbySince=now
+                glide(root,ENTRY)
+                show('ไม่พบหุ่นใกล้ตัว 5 วินาที • Tween ไปจุดอีเวนต์ใหม่')
+                return
+            end
+        end
+    end
     if not entered then
         if (root.Position-ENTRY).Magnitude>10 then glide(root,ENTRY);show('ลอยเข้าโซนอีเวนต์ • 150 studs/s');return end
         cancel();entered=true;nextPick=os.clock()+1
