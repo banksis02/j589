@@ -1513,7 +1513,7 @@ local function mainLoop()
 
                         local targetPos = eggPos + Vector3.new(0, 3, 0)
                         local success = false
-                        for attempt = 1, 1 do
+                        for attempt = 1, config.MAX_RETRY do
                             if not isRunning then break end
                             log("═══════════════════════")
                             log(string.format("🔄 ATTEMPT %d/%d", attempt, config.MAX_RETRY))
@@ -1544,8 +1544,11 @@ local function mainLoop()
                                     break
                                 end
                             else
-                                log("[COLLECTION] Pickup failed; no immediate retry")
-                                task.wait(0.2)
+                                -- คว้าไม่ติด (มักเพราะยัง knocked down จาก knockback บอส) →
+                                -- รอให้ตัวลุกก่อนแล้วค่อยลองใหม่ (ไม่เลิกทันที)
+                                log("[COLLECTION] Pickup failed; recover knockdown then retry")
+                                local rt=os.clock()
+                                repeat forceRunningState(); task.wait(0.15) until os.clock()-rt>=0.9 or not isRunning
                             end
                         end
 
